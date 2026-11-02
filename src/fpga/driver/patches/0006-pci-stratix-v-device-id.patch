@@ -1,0 +1,40 @@
+Subject: [PATCH 6/6] pci: match the Stratix V endpoint
+
+LitePCIe's Stratix V PHY (litepcie/phy/svpciephy.py) enumerates as 1172:e001 by default, and the ID
+table only lists the Xilinx, Lattice and Gowin endpoints, so the driver never binds to a Stratix V
+card.
+
+Signed-off-by: See docs/credits.txt
+
+--- a/config.h
++++ b/config.h
+@@ -17,6 +17,7 @@
+ #define PCIE_XILINX_VENDOR_ID  0x10ee
+ #define PCIE_LATTICE_VENDOR_ID 0x1204
+ #define PCIE_GOWIN_VENDOR_ID   0x22c2
++#define PCIE_ALTERA_VENDOR_ID  0x1172
+ 
+ /* PCIe PHY Device IDs */
+ 
+@@ -67,6 +68,9 @@
+ 
+ #define PCIE_GOWIN_DEVICE_ID_GW5AT_GEN2_X4 0x1100
+ 
++/* Altera */
++#define PCIE_ALTERA_DEVICE_ID_SV           0xe001
++
+ /* /!\ Keep in sync with csr.h  /!\ */
+ 
+ /* DMA Flags */
+--- a/main.c
++++ b/main.c
+@@ -1838,6 +1838,9 @@
+ 	/* Gowin */
+ 	{ PCI_DEVICE(PCIE_GOWIN_VENDOR_ID, PCIE_GOWIN_DEVICE_ID_GW5AT_GEN2_X4),  },
+ 
++	/* Altera */
++	{ PCI_DEVICE(PCIE_ALTERA_VENDOR_ID, PCIE_ALTERA_DEVICE_ID_SV), },
++
+ 	{ 0, }
+ };
+ MODULE_DEVICE_TABLE(pci, litepcie_pci_ids);
