@@ -65,9 +65,9 @@ RELEASES_DEF    := ../bridges/fpga/fpga_releases.def
 
 THREADS         ?= $(shell n=$$(nproc); [ $$n -gt 32 ] && echo 32 || echo $$n)
 
-ABI             := $(shell awk '/#define FPGA_ABI_CURRENT/ { print $$3 }' ../bridges/fpga/hcfpga.h)
+ABI             := $(shell awk '$$2 == "FPGA_ABI_CURRENT" { print $$3 }' ../bridges/fpga/hcfpga.h)
 
-SET             := $(shell awk '/#define FPGA_SET_CURRENT/ { print $$3 }' ../bridges/fpga/hcfpga.h)
+SET             := $(shell awk '$$2 == "FPGA_SET_CURRENT" { print $$3 }' ../bridges/fpga/hcfpga.h)
 
 STARTUP_SUFFIX  := _$(shell echo $(STARTUPCLK) | tr 'A-Z' 'a-z')
 

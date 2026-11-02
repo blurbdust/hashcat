@@ -3,7 +3,7 @@
 ## License.....: MIT
 ##
 
-ABI := $(shell awk '/#define FPGA_ABI_CURRENT/ { print $$3 }' ../../../../bridges/fpga/hcfpga.h)
+ABI := $(shell awk '$$2 == "FPGA_ABI_CURRENT" { print $$3 }' ../../../../bridges/fpga/hcfpga.h)
 
 CFLAGS=-O2 -Wall -g -I../../../driver -I../../../driver/build -Iliblitepcie -MMD -fPIC $(if $(ABI),-DHCFPGA_ABI=$(ABI),)
 LDFLAGS=-g
