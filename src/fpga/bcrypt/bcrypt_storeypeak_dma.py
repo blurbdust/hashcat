@@ -30,7 +30,7 @@ from gateware.bcrypt_dma_wrapper import BcryptDmaWrapper
 
 from hcfpga_abi import fpga_abi_current
 from hcfpga_litepcie import PCIE_CLASS_CODE, clock_mhz
-from hcfpga_stratixv import StratixVTemperature, StratixVChipID
+from hcfpga_stratixv import StratixVTemperature, StratixVChipID, sv_pcie_endpoint_params
 
 BOARD = "storeypeak"
 
@@ -121,6 +121,8 @@ class BcryptSoC(SoCMini):
             mgmt_rst      = self.crg.cd_pcie_mgmt.rst,
             mgmt_clk_name = "pcie_mgmt_clk",
         )
+        self.pcie_phy.hip_params.update(sv_pcie_endpoint_params("gen2", 8, 128))
+
         self.add_pcie(phy=self.pcie_phy, ndmas=1, address_width=64)
 
         # Quartus enables power optimisation by default and puts ALMs on the critical path into
@@ -142,7 +144,7 @@ class BcryptSoC(SoCMini):
         if with_led:
             self.leds = LedChaser(pads=platform.request_all("user_led"), sys_clk_freq=sys_clk_freq)
 
-        self.xadc = StratixVTemperature(cd="pcie_mgmt", clk_freq=PCIE_MGMT_FREQ)
+        self.xadc = StratixVTemperature(platform, cd="pcie_mgmt", clk_freq=PCIE_MGMT_FREQ)
         self.dna  = StratixVChipID(platform, cd="pcie_mgmt")
 
         self.bcrypt = BcryptDmaWrapper(platform, num_cores=num_cores,

@@ -20,6 +20,26 @@ from litex.soc.interconnect.csr import CSRStatus, CSRConstant
 # (the XADC) and S7DNA. These two modules give a Stratix V the same registers, the same sizes and
 # the same encodings, so it needs no special case on the host and passes check-headers.
 
+# PCIe hard IP ------------------------------------------------------------------------------------
+
+def sv_pcie_endpoint_params(speed="gen2", nlanes=8, data_width=128):
+  # Receive credits and timers as Intel's generator derives them for an endpoint with the default
+  # "balanced" allocation. LitePCIe releases before the fix leave the hard IP at its Verilog
+  # defaults, which advertise finite completion credits; the hard IP then occasionally drops the
+  # second completion of a split read without reporting an error, and DMA stalls for good. Setting
+  # them here keeps the board working on those releases too.
+  return dict(
+    p_vc0_rx_flow_ctrl_posted_header_hwtcl    = 50,
+    p_vc0_rx_flow_ctrl_posted_data_hwtcl      = 333,
+    p_vc0_rx_flow_ctrl_nonposted_header_hwtcl = 56,
+    p_vc0_rx_flow_ctrl_nonposted_data_hwtcl   = 0,
+    p_vc0_rx_flow_ctrl_compl_header_hwtcl     = 0,
+    p_vc0_rx_flow_ctrl_compl_data_hwtcl       = 0,
+    p_cpl_spc_header_hwtcl                    = 112,
+    p_cpl_spc_data_hwtcl                      = 420,
+    p_millisecond_cycle_count_hwtcl           = 248500 if (speed, nlanes, data_width) == ("gen2", 8, 128) else 124250,
+  )
+
 # Temperature --------------------------------------------------------------------------------------
 
 XADC_TEMP_SCALE      = 503975
@@ -49,7 +69,7 @@ class StratixVTemperature(LiteXModule):
   PCIe transceiver management clock is free running and in range, so it drives it. Supply rails are
   not measured on this part and read 0.
   """
-  def __init__(self, cd="pcie_mgmt", clk_freq=50e6, period_ms=50):
+  def __init__(self, platform, cd="pcie_mgmt", clk_freq=50e6, period_ms=50):
     assert 1e6 <= clk_freq <= 80e6
 
     self.expose_hwmon()
@@ -68,15 +88,15 @@ class StratixVTemperature(LiteXModule):
     tsdcaldone = Signal()
     clr        = Signal(reset=1)
 
-    self.specials += Instance("stratixv_tsdblock",
-      p_clock_divider_enable = "on",
-      p_clock_divider_value  = 80 if clk_freq > 40e6 else 40,
-      i_clk                  = ClockSignal(cd),
-      i_ce                   = 1,
-      i_clr                  = clr,
-      o_tsdcalo              = tsdcalo,
-      o_tsdcaldone           = tsdcaldone,
+    self.specials += Instance("hcfpga_sv_tsd",
+      p_CLOCK_DIVIDER_VALUE = 80 if clk_freq > 40e6 else 40,
+      i_clk                 = ClockSignal(cd),
+      i_clr                 = clr,
+      o_tsdcalo             = tsdcalo,
+      o_tsdcaldone          = tsdcaldone,
     )
+
+    platform.add_source (os.path.join (os.path.dirname (os.path.abspath (__file__)), "gateware", "stratixv", "hcfpga_sv_tsd.v"))
 
     # Clear, let one conversion complete, latch it, wait, repeat. A conversion takes on the order of
     # a millisecond, so the period only bounds how stale a reading can get.
