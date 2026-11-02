@@ -27,6 +27,7 @@
 // Device identity used to distinguish an unprogrammed fabric from an unloaded driver through sysfs.
 
 #define PCIE_XILINX_VENDOR_ID               0x10ee
+#define PCIE_ALTERA_VENDOR_ID               0x1172
 
 // LiteX targets advertise PCI class 0B/80 (Processor/Other), allowing hashcat designs to be
 // distinguished from other endpoints with the same vendor ID.

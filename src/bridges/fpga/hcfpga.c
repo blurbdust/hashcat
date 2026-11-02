@@ -774,7 +774,7 @@ void fpga_status_report (hashcat_ctx_t *hashcat_ctx, const fpga_status_t status,
       break;
 
     case FPGA_STATUS_NO_PCI_DEVICE:
-      event_log_error (hashcat_ctx, "FPGA bridge: no Xilinx PCIe device found.");
+      event_log_error (hashcat_ctx, "FPGA bridge: no FPGA PCIe device found.");
       event_log_info (hashcat_ctx, "No programmed FPGA endpoint was detected. Load a design before starting hashcat.");
       event_log_info (hashcat_ctx, NULL);
 
@@ -807,7 +807,7 @@ void fpga_status_report (hashcat_ctx_t *hashcat_ctx, const fpga_status_t status,
         break;
       }
 
-      event_log_error (hashcat_ctx, "FPGA bridge: Xilinx PCIe device present, but no /dev/litepcie* node.");
+      event_log_error (hashcat_ctx, "FPGA bridge: FPGA PCIe device present, but no /dev/litepcie* node.");
       event_log_info (hashcat_ctx, "The FPGA endpoint is present, but the LitePCIe kernel driver is not loaded:");
       event_log_info (hashcat_ctx, NULL);
 
@@ -1244,7 +1244,7 @@ static bool pci_device_present (void)
 
     if (rc != 1) continue;
 
-    if (vendor != PCIE_XILINX_VENDOR_ID) continue;
+    if ((vendor != PCIE_XILINX_VENDOR_ID) && (vendor != PCIE_ALTERA_VENDOR_ID)) continue;
 
     snprintf (path, sizeof (path), "/sys/bus/pci/devices/%s/class", entry->d_name);
 
