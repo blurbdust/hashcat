@@ -218,6 +218,8 @@ def main():
     parser.add_argument("--pcie-connector", type=int, default=0, choices=[0, 1], help="Which x8 half of the edge connector. 0 carries edge lanes 0-7.")
     parser.add_argument("--placement-margin", type=float, default=0.0, help="Extra ns of setup clock uncertainty on sys_clk to over-constrain placement.")
     parser.add_argument("--pcie-shim",    default=None, help="Prebuilt sv_pcie_hip_enable.so, otherwise built from source.")
+    parser.add_argument("--fitter-seed",  type=int, default=None, help="Quartus fitter seed. Different seeds give different placements and a spread of Fmax.")
+    parser.add_argument("--num-processors", type=int, default=None, help="Cap Quartus parallel processors, so several builds can share a machine.")
     args = parser.parse_args()
 
     mhz  = clock_mhz(args.sys_clk_freq)
@@ -254,6 +256,13 @@ def main():
         pcie_connector   = args.pcie_connector,
         placement_margin = args.placement_margin,
     )
+
+    if args.fitter_seed is not None:
+        soc.platform.toolchain.additional_qsf_commands += [f"set_global_assignment -name SEED {args.fitter_seed}"]
+        name += f"_s{args.fitter_seed}"
+
+    if args.num_processors is not None:
+        soc.platform.toolchain.additional_qsf_commands += [f"set_global_assignment -name NUM_PARALLEL_PROCESSORS {args.num_processors}"]
 
     output_dir = os.path.join("build", name)
 
