@@ -34,13 +34,26 @@ All under `gateware/scrypt/`, in upstream's directories (`scrypt/`, `util/`). Th
 | File | Change |
 |---|---|
 | `scrypt/romix.v`, `scrypt/v_table_bram.v`, `scrypt/blockmix.v`, `scrypt/salsa20_8.v`, `scrypt/pbkdf2_sha256.v`, `scrypt/hmac_sha256.v`, `scrypt/scrypt.vh`, `scrypt/main.vh`, `util/fifo_sync.v`, `util/log2.vh` | none |
-| `scrypt/scrypt_unit.v` | `main.vh` included (below) |
+| `scrypt/scrypt_unit.v` | `main.vh` included; full mode: byte order to and from `pbkdf2_sha256`, one start pulse per PBKDF2 call (below) |
+| `scrypt/sha256_core.v` | the message schedule of rounds 16 to 63 (below) |
 
 Not taken: upstream's arbiters (`arbiter_tx.v`, `arbiter_rx.v`), comparator (`comparator.v`, `scrypt_cmp_config.v`), its stream top (`scrypt_axis_8b.sv`), the packet layer (`gateware/pkt_comm/`), the LiteX wrappers and the DDR3 V table controller (`gateware/*.py`), `util/SRL16E.v`, `util/asymm_bram.v`, `util/delay.v`, `util/ff32.v`, `util/sync.v` (the unit does not use them), the sim and board targets and the host scripts. hashcat's engine and the template's collector replace the arbiters and the comparator.
 
 ### `main.vh`
 
 `scrypt_unit.v` takes its parameter defaults (`SCRYPT_R`, `N_LOG2_MAX`, `V_TABLE_EXTERNAL`) from `main.vh` without including it: upstream's LiteX wrapper adds `main.vh` as the first source, so the macros are global. The unit does not lint alone that way, so it now includes `main.vh` by name, found through the include path, as it already includes `scrypt.vh`. `main.vh` includes `log2.vh` by name.
+
+### Full mode
+
+hashcat uses the unit's full mode (`FULL_MODE` 1): password in, derived key out. Upstream's LiteX port only ran the SMix-only mode, where the host computes both PBKDF2 calls, and a bench of the unit alone against Python's `hashlib.scrypt` found that full mode computed no correct key. Three things were wrong, all fixed here; with them the unit agrees with `hashlib.scrypt` for every case the bench runs (keys of 0 to 64 bytes, salts of 0 to 32 bytes, N from 2 to 32768).
+
+- **`sha256_core.v`: the message schedule.** Rounds 16 to 63 added `W[round mod 16]`, which still holds the word of round - 16, instead of the word expanded for this round (`W_new`, which the same cycle writes into that slot for later rounds). Every hash came out wrong (`SHA-256("abc")` gave `84c010ce...`). `Wt` now takes `W_new` from round 16 on.
+- **`scrypt_unit.v`: byte order.** `pbkdf2_sha256` takes its key, its message and its result big-endian (byte 0 in the top bits, as SHA-256 reads a block); `romix` and the unit's registers keep byte 0 in bits 7:0 (the SMix-only mode feeds `romix` that way, and the bench checks `romix` alone against a Python ROMix). The unit wired them together unchanged. The key is now stored byte 0 first in the top bits, and `rev_bytes128`/`rev_bytes32` turn the 128-byte blocks between `pbkdf2_sha256` and `romix` and the 32-byte derived key around, so the unit returns the key byte 0 first, as its SMix-only mode returns ROMix's result.
+- **`scrypt_unit.v`: one start pulse per PBKDF2 call.** The unit held `pbkdf2_start_r` high until `done`. `pbkdf2_sha256` is idle again in the cycle its `done` shows and takes a start that is still high, so every call started a second, unwanted one, and the next call's `done` came from it. The start is now one cycle, set as the unit enters the state that waits for `done`, with the mode beside it.
+
+The SMix-only path holds `romix_start` high until `done` in the same way (`ST_RUN`). hashcat does not use that mode, so it is left as upstream wrote it and was not checked.
+
+The unit takes every payload byte before the 8 ID bytes as key and ignores the length (`pw_len_reg` is unused, `pbkdf2_sha256` ignores `password_len`). That is not changed: hashcat's engine sends the password zero filled to 64 bytes, which HMAC-SHA256 treats exactly as the password.
 
 ### Left as upstream wrote it
 
@@ -58,11 +71,19 @@ None of these changes behaviour hashcat relies on in simulation, so none is chan
 
 | File | Notes |
 |---|---|
+| `gateware/scrypt/hcfpga_scrypt_engine.v` | the engine: the units, the transmitter, the generation, the shared JtR collector |
 | `gateware/scrypt/hcfpga_scrypt_top.sv` | the datapath top |
 | `gateware/scrypt_dma_wrapper.py` | the LiteX wrapper |
 | `gateware/scrypt/tb_datapath.py`, `tb_dut.vh`, `scrypt_ref.py` | the datapath bench and its reference |
 
 Shared with every algorithm on the template: `src/fpga/common/` (see its README).
+
+## Other material derived from LiteX-Scrypt
+
+| Where | Derived from |
+|---|---|
+| `gateware/scrypt/hcfpga_scrypt_engine.v`, the unit packet | `scrypt_unit.v`'s header comment and its receive state: a type byte with `ctrl`, the 44 configuration bytes upstream's `arbiter_tx.v` reads from `scrypt_cmp_config.v` (log2 (N), salt length, 32 salt bytes, r), the payload, 8 ID bytes, an end byte with `ctrl` |
+| `src/fpga/common/rtl/hcfpga_jtr_unit_collect.v` (shared), the unit read | the unit's output states, which follow John the Ripper's `arbiter_rx.v`: one `rd_en` cycle, `2'b11`, `4 + 32/2` 16-bit words two bits at a time, `2'b00` |
 
 ## Toolchain
 

@@ -10,17 +10,18 @@
 // takes records from the intake, computes, and hands the tail whole 32-byte result records plus a
 // retire pulse per candidate.
 //
-// HCFPGA-TODO: hcfpga_scrypt_engine.v is a one-candidate stub with a toy hash, so this top builds,
-// lints and benches from the start. Replace it with the real cores, their distribution and
-// collection. If the cores cannot be reset in the middle of a job, add hcfpga_gen.v: the candidate
-// carries the generation, the collector drops results of another one without retiring them.
+// The engine (hcfpga_scrypt_engine.v) holds NUM_CORES LiteX-Scrypt units, the transmitter that
+// hands a record to an idle unit as one unit packet, the generation (the units cannot be reset) and
+// the shared JtR result collector. A packet once started is always finished, so the engine holds the
+// intake's record across a framing reset while it sends (hold).
+//
+// scrypt's own registers, from 0x3c: salt_len, then salt4..7 (salt bytes 16..31; salt0..3 carry
+// bytes 0..15). iter_count is N.
 
 `timescale 1ns / 1ps
 module hcfpga_scrypt_top #(
-  // The identity's cores= (the wrapper's core_count). The stub engine is one core.
-  /* verilator lint_off UNUSEDPARAM */
+  // The identity's cores= (the wrapper's core_count): scrypt units, one candidate in flight each.
   parameter NUM_CORES = 1,
-  /* verilator lint_on UNUSEDPARAM */
 
   parameter WITH_CMP = 1
 )(
@@ -39,6 +40,12 @@ module hcfpga_scrypt_top #(
   input  wire [31:0] salt2,
   input  wire [31:0] salt3,
   input  wire [31:0] iter_count,
+
+  input  wire [31:0] salt_len,
+  input  wire [31:0] salt4,
+  input  wire [31:0] salt5,
+  input  wire [31:0] salt6,
+  input  wire [31:0] salt7,
 
   input  wire [127:0] cmp_bitmap,
   input  wire         cmp_load,
@@ -70,6 +77,7 @@ module hcfpga_scrypt_top #(
   wire [PW_AW-1:0] pw_rd_addr;
   wire [31:0]      pw_rd_data;
   wire             rec_taken;
+  wire             send_busy;
 
   hcfpga_h2c_intake #(.PW_MAX(PW_MAX)) intake (
     .CLK(CLK), .rst(rst),
@@ -77,24 +85,27 @@ module hcfpga_scrypt_top #(
     .frame_status(intake_status),
     .rec_valid(rec_valid), .rec_len(rec_len), .rec_id(rec_id),
     .pw_rd_addr(pw_rd_addr), .pw_rd_data(pw_rd_data),
-    .rec_taken(rec_taken), .hold(1'b0)
+    .rec_taken(rec_taken), .hold(send_busy)
   );
 
   wire       retire;
+  wire [7:0] unit_errors;
 
   wire [7:0] r_data;
   wire       r_valid;
   wire       r_ready;
   wire       r_last;
 
-  hcfpga_scrypt_engine #(.PW_MAX(PW_MAX), .DIGEST_BYTES(DIGEST_BYTES), .WITH_CMP(WITH_CMP)) engine (
+  hcfpga_scrypt_engine #(.NUM_CORES(NUM_CORES), .PW_MAX(PW_MAX), .DIGEST_BYTES(DIGEST_BYTES), .WITH_CMP(WITH_CMP)) engine (
     .CLK(CLK), .rst(rst),
     .rec_valid(rec_valid), .rec_len(rec_len), .rec_id(rec_id),
-    .pw_rd_addr(pw_rd_addr), .pw_rd_data(pw_rd_data), .rec_taken(rec_taken),
+    .pw_rd_addr(pw_rd_addr), .pw_rd_data(pw_rd_data), .rec_taken(rec_taken), .hold(send_busy),
     .salt0(salt0), .salt1(salt1), .salt2(salt2), .salt3(salt3), .iter_count(iter_count),
+    .salt_len(salt_len), .salt4(salt4), .salt5(salt5), .salt6(salt6), .salt7(salt7),
     .cmp_bitmap(cmp_bitmap), .cmp_load(cmp_load),
     .batch_target(batch_target), .batch_arm(batch_arm),
     .retire(retire),
+    .err_count(unit_errors),
     .r_data(r_data), .r_valid(r_valid), .r_ready(r_ready), .r_last(r_last)
   );
 
@@ -107,7 +118,7 @@ module hcfpga_scrypt_top #(
     .m_data(m_data), .m_valid(m_valid), .m_ready(m_ready), .m_last(m_last)
   );
 
-  // The shared frame status. Bits 31:16 are the algorithm's (md5crypt counts unit errors there).
-  assign frame_status = {16'd0, intake_status[15:0]};
+  // The shared frame status; bits 23:16 count unit results whose framing was off, as md5crypt's do.
+  assign frame_status = {8'd0, unit_errors, intake_status[15:0]};
 
 endmodule
