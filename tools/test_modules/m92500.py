@@ -5,9 +5,9 @@
 ## License.....: MIT
 ##
 
-# wpa2 computed on an FPGA (fpga_wpa2 bridge). The oracle is mode 22000's; the constraints
-# are the device's. HCFPGA-TODO: module_generate_hash must only produce what the device computes (salt
-# lengths, rounds), or test.py feeds the bridge hashes it refuses.
+# wpa2 computed on an FPGA (fpga_wpa2 bridge). The oracle is mode 22000's; the constraints are the
+# device's. The device computes the PMK every record type shares, from a passphrase of 8 to 63 bytes
+# and an ESSID of 0 to 32 (mode 22000's own limits), so module_generate_hash is mode 22000's as is.
 
 import hashlib
 import hmac
@@ -32,8 +32,8 @@ from lib.test_helpers import random_number, random_bytes
 
 
 def module_constraints():
-  # HCFPGA-TODO: the device's limits: [pure pw, pure salt, optimized pw, optimized salt, combined].
-  # The salt entry is mode 22000's (a salt string length); narrow it to the salt strings the device takes.
+  # [pure pw, pure salt, optimized pw, optimized salt, combined]: the device's passphrases. The salt
+  # (the ESSID) is made inside module_generate_hash, 0 to 30 bytes, all of which the device takes.
   return [[8, 63], [-1, -1], [-1, -1], [-1, -1], [-1, -1]]
 
 
