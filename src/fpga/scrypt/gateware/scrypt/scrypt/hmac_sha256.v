@@ -2,7 +2,7 @@
 /*
  * This file is part of LiteX-Scrypt.
  *
- * hmac_sha256.v — HMAC-SHA256 for PBKDF2
+ * hmac_sha256.v: HMAC-SHA256 for PBKDF2
  *
  * Computes HMAC-SHA256(key, msg) where:
  *   - key is up to 64 bytes (pre-padded to 64 bytes by caller)

@@ -2,7 +2,7 @@
 /*
  * This file is part of LiteX-Scrypt.
  *
- * sha256_core.v — Simple iterative SHA-256 compression function
+ * sha256_core.v: simple iterative SHA-256 compression function
  *
  * Processes one 512-bit (64-byte) message block at a time.
  * 64 rounds, 1 round per cycle + load + finalize = 66 cycles per block.
@@ -13,7 +13,7 @@
  * For initial hash, state_in = SHA-256 IV.
  * For continuation, state_in = previous state_out.
  *
- * This is intentionally simple — no pipelining, no multi-context.
+ * This is intentionally simple: no pipelining, no multi-context.
  * Scrypt only needs PBKDF2-SHA256 with c=1, so throughput is not critical.
  */
 
