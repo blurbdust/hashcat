@@ -15,6 +15,13 @@
 #include <stdio.h>
 #include <string.h>
 
+static bool LXB_TRIED = false;
+
+bool fpga_transport_litexbone_tried (void)
+{
+  return LXB_TRIED;
+}
+
 #if defined (__linux__)
 
 #include <errno.h>
@@ -27,17 +34,26 @@
 
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <sys/file.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 
 // A LiteX board without PCIe: hashcat's bcrypt wrapper sits behind HcfpgaMemStream, two rings in CSR
 // space, and every access goes over a LiteX bus bridge. Etherbone over UDP, or UARTBone over a
 // serial port or a TCP connection to one. Boards are listed in HCFPGA_LITEXBONE, as
-// udp:HOST[:PORT], uart:DEVICE[:BAUD] or tcp:HOST:PORT, separated by commas or spaces.
+// udp:HOST[:PORT], uart:DEVICE[:BAUD] or tcp:HOST:PORT[:BAUD], separated by commas or spaces.
 
 #define LXB_SEPARATORS      ", \t\r\n"
 
 #define LXB_UDP_PORT        1234
 #define LXB_UART_BAUD       115200
+
+// ser2net does not say what rate it runs the port at, so bursts are sized for the slowest one in use
+
+#define LXB_TCP_BAUD        9600
+
+#define LXB_BAUD_MIN        1200
+#define LXB_BAUD_MAX        12000000
 
 #define LXB_SCRATCH_VALUE   0x12345678
 
@@ -60,12 +76,13 @@
 #define LXB_EB_HDR_BYTES    8
 #define LXB_EB_REC_BYTES    4
 
-// LiteEth drops a record longer than the SoC's etherbone buffer_depth whole and without a word.
-// 16 is LiteX's default. A write record carries one read as its acknowledgement, and a record
-// holds buffer_depth + 1 words of addresses and data, so 14 writes fit beside it.
+// An Etherbone record holds its base address and up to 15 words, which is what a buffer_depth of 16,
+// LiteX's default, carries in every LiteEth release. LiteEth up to 2026.08 waits for a longer record
+// forever, later versions drop it. Writes and reads never share a record: up to 2026.08 a read after
+// writes in one record takes the return address for its first read address.
 
-#define LXB_EB_DEPTH        16
-#define LXB_EB_WR_BURST     (LXB_EB_DEPTH - 2)
+#define LXB_EB_WORDS        15
+#define LXB_EB_PROBE_TRIES  2
 
 #define LXB_UB_CMD_WRITE    0x01
 #define LXB_UB_CMD_READ     0x02
@@ -77,6 +94,8 @@
 
 #define LXB_UB_BURST_MS     50
 #define LXB_UB_RESYNC_MS    200
+#define LXB_UB_QUIET_MS     20
+#define LXB_UB_TRIES        3
 
 #define LXB_REPLY_MS        500
 #define LXB_TRIES           6
@@ -88,6 +107,8 @@
 #define LXB_OUT_BYTES       (256 * 1024)
 
 #define LXB_HOST_MAX        1024
+#define LXB_PATH_MAX        (LXB_HOST_MAX + 64)
+#define LXB_IDENT_CHUNK     16
 
 typedef enum lxb_link
 {
@@ -97,6 +118,17 @@ typedef enum lxb_link
 
 } lxb_link_t;
 
+// What a write is checked against once the words read back: ACK only waits for the read, RETRY
+// rewrites a register that reads back different and accepts it in the end, STRICT fails.
+
+typedef enum lxb_check
+{
+  LXB_CHECK_ACK    = 0,
+  LXB_CHECK_RETRY  = 1,
+  LXB_CHECK_STRICT = 2,
+
+} lxb_check_t;
+
 typedef struct lxb_priv
 {
   lxb_link_t link;
@@ -104,15 +136,20 @@ typedef struct lxb_priv
   char  host[LXB_HOST_MAX];
   u32   port;
   u32   baud;
+  bool  baud_given;
 
   int   fd;
+  bool  busy;
+
+  char  why[160];
 
   hc_thread_mutex_t mux;
 
   u32   tag;
 
-  u32   wr_burst;
-  u32   rd_burst;
+  u32   burst;
+
+  bool  in_session;
 
   u32   h2c_depth;
   u32   c2h_depth;
@@ -182,13 +219,15 @@ static bool lxb_wait_in (const int fd, const u32 ms)
   return true;
 }
 
-static bool lxb_send_all (const int fd, const u8 *buf, const size_t len)
+// hashcat does not ignore SIGPIPE, so a peer that hung up must not raise it
+
+static bool lxb_send_all (const lxb_priv_t *priv, const u8 *buf, const size_t len)
 {
   size_t done = 0;
 
   while (done < len)
   {
-    const ssize_t n = write (fd, &buf[done], len - done);
+    const ssize_t n = (priv->link == LXB_LINK_UART) ? write (priv->fd, &buf[done], len - done) : send (priv->fd, &buf[done], len - done, MSG_NOSIGNAL);
 
     if ((n < 0) && (errno == EINTR)) continue;
 
@@ -228,6 +267,8 @@ static bool lxb_recv_exact (const int fd, u8 *buf, const size_t len, const u32 m
 
 static void lxb_drain (lxb_priv_t *priv)
 {
+  if (priv->fd < 0) return;
+
   if (priv->link == LXB_LINK_UART)
   {
     tcflush (priv->fd, TCIFLUSH);
@@ -245,10 +286,8 @@ static void lxb_drain (lxb_priv_t *priv)
 
 // Etherbone
 
-static bool eb_record (lxb_priv_t *priv, const u32 wr_addr, const u32 *wr, const u32 wcount, const u32 rd_addr, u32 *rd, const u32 rcount)
+static void eb_header (u8 *req, const u32 wcount, const u32 rcount)
 {
-  u8 req[LXB_EB_HDR_BYTES + LXB_EB_REC_BYTES + 8 + (LXB_EB_DEPTH * 8)];
-
   memset (req, 0, LXB_EB_HDR_BYTES);
 
   req[0] = 0x4e;
@@ -260,52 +299,76 @@ static bool eb_record (lxb_priv_t *priv, const u32 wr_addr, const u32 *wr, const
   req[ 9] = 0x0f;
   req[10] = (u8) wcount;
   req[11] = (u8) rcount;
+}
+
+static bool eb_send (lxb_priv_t *priv, const u8 *req, const u32 len)
+{
+  for (u32 attempt = 0; attempt < LXB_TRIES; attempt++)
+  {
+    if (send (priv->fd, req, len, MSG_NOSIGNAL) == (ssize_t) len) return true;
+
+    // a connected UDP socket reports an earlier ICMP port unreachable on the next send
+
+    if ((errno != ECONNREFUSED) && (errno != EINTR)) return false;
+
+    lxb_sleep_ms (LXB_REPLY_MS / 10);
+  }
+
+  return false;
+}
+
+static bool eb_write (lxb_priv_t *priv, const u32 addr, const u32 *wr, const u32 n)
+{
+  u8 req[LXB_EB_HDR_BYTES + LXB_EB_REC_BYTES + 4 + (LXB_EB_WORDS * 4)];
+
+  eb_header (req, n, 0);
 
   u32 off = LXB_EB_HDR_BYTES + LXB_EB_REC_BYTES;
 
-  if (wcount > 0)
+  lxb_put32 (&req[off], addr);
+
+  off += 4;
+
+  for (u32 i = 0; i < n; i++)
   {
-    lxb_put32 (&req[off], wr_addr);
+    lxb_put32 (&req[off], wr[i]);
 
     off += 4;
-
-    for (u32 i = 0; i < wcount; i++)
-    {
-      lxb_put32 (&req[off], wr[i]);
-
-      off += 4;
-    }
   }
+
+  const bool ok = eb_send (priv, req, off);
+
+  return ok;
+}
+
+static bool eb_read (lxb_priv_t *priv, const u32 addr, u32 *rd, const u32 n, const u32 tries)
+{
+  u8 req[LXB_EB_HDR_BYTES + LXB_EB_REC_BYTES + 4 + (LXB_EB_WORDS * 4)];
+
+  eb_header (req, 0, n);
 
   priv->tag++;
 
   const u32 tag = priv->tag;
 
+  u32 off = LXB_EB_HDR_BYTES + LXB_EB_REC_BYTES;
+
   lxb_put32 (&req[off], tag);
 
   off += 4;
 
-  for (u32 i = 0; i < rcount; i++)
+  for (u32 i = 0; i < n; i++)
   {
-    lxb_put32 (&req[off], rd_addr + (i * 4));
+    lxb_put32 (&req[off], addr + (i * 4));
 
     off += 4;
   }
 
-  const u32 want = LXB_EB_HDR_BYTES + LXB_EB_REC_BYTES + 4 + (rcount * 4);
+  const u32 want = LXB_EB_HDR_BYTES + LXB_EB_REC_BYTES + 4 + (n * 4);
 
-  for (u32 attempt = 0; attempt < LXB_TRIES; attempt++)
+  for (u32 attempt = 0; attempt < tries; attempt++)
   {
-    if (send (priv->fd, req, off, 0) != (ssize_t) off)
-    {
-      // a connected UDP socket reports an earlier ICMP port unreachable here
-
-      if ((errno != ECONNREFUSED) && (errno != EINTR)) return false;
-
-      lxb_sleep_ms (LXB_REPLY_MS / 10);
-
-      continue;
-    }
+    if (eb_send (priv, req, off) == false) return false;
 
     const u64 deadline = lxb_now_ms () + LXB_REPLY_MS;
 
@@ -319,25 +382,40 @@ static bool eb_record (lxb_priv_t *priv, const u32 wr_addr, const u32 *wr, const
 
       u8 rep[2048];
 
-      const ssize_t n = recv (priv->fd, rep, sizeof (rep), 0);
+      const ssize_t got = recv (priv->fd, rep, sizeof (rep), 0);
 
-      if (n < (ssize_t) want) continue;
+      if (got < (ssize_t) want) continue;
 
       if ((rep[0] != 0x4e) || (rep[1] != 0x6f)) continue;
 
-      if (rep[10] != rcount) continue;
+      if (rep[10] != n) continue;
 
       // a late answer to an earlier request carries an older tag
 
       if (lxb_get32 (&rep[LXB_EB_HDR_BYTES + LXB_EB_REC_BYTES]) != tag) continue;
 
-      for (u32 i = 0; i < rcount; i++) rd[i] = lxb_get32 (&rep[LXB_EB_HDR_BYTES + LXB_EB_REC_BYTES + 4 + (i * 4)]);
+      for (u32 i = 0; i < n; i++) rd[i] = lxb_get32 (&rep[LXB_EB_HDR_BYTES + LXB_EB_REC_BYTES + 4 + (i * 4)]);
 
       return true;
     }
   }
 
   return false;
+}
+
+// The largest read the board answers, 0 once it answers nothing. Records that are too long are dropped
+// by current LiteEth, and stall LiteEth up to 2026.08 until the board is reset.
+
+static u32 eb_probe_words (lxb_priv_t *priv)
+{
+  for (u32 n = LXB_EB_WORDS; n >= 1; n /= 2)
+  {
+    u32 words[LXB_EB_WORDS];
+
+    if (eb_read (priv, fpga_csr_map_no_cpu.base + fpga_csr_map_no_cpu.identifier_mem, words, n, LXB_EB_PROBE_TRIES) == true) return n;
+  }
+
+  return 0;
 }
 
 // UARTBone
@@ -351,7 +429,7 @@ static bool ub_read_once (lxb_priv_t *priv, const u32 addr, u32 *rd, const u32 n
 
   lxb_put32 (&cmd[2], addr >> 2);
 
-  if (lxb_send_all (priv->fd, cmd, sizeof (cmd)) == false) return false;
+  if (lxb_send_all (priv, cmd, sizeof (cmd)) == false) return false;
 
   u8 buf[LXB_UB_BURST_MAX * 4];
 
@@ -364,91 +442,102 @@ static bool ub_read_once (lxb_priv_t *priv, const u32 addr, u32 *rd, const u32 n
   return true;
 }
 
-static void ub_resync (lxb_priv_t *priv)
+static bool ub_write_once (lxb_priv_t *priv, const u32 addr, const u32 *wr, const u32 n)
 {
-  lxb_sleep_ms (LXB_UB_RESYNC_MS);
+  u8 buf[LXB_UB_HDR_BYTES + (LXB_UB_BURST_MAX * 4)];
 
-  lxb_drain (priv);
+  buf[0] = LXB_UB_CMD_WRITE;
+  buf[1] = (u8) n;
+
+  lxb_put32 (&buf[2], addr >> 2);
+
+  for (u32 i = 0; i < n; i++) lxb_put32 (&buf[LXB_UB_HDR_BYTES + (i * 4)], wr[i]);
+
+  const bool ok = lxb_send_all (priv, buf, LXB_UB_HDR_BYTES + (n * 4));
+
+  return ok;
 }
 
-static bool ub_read (lxb_priv_t *priv, const u32 addr, u32 *rd, const u32 n)
-{
-  for (u32 attempt = 0; attempt < LXB_TRIES; attempt++)
-  {
-    if (ub_read_once (priv, addr, rd, n) == true) return true;
+// Wait out UARTBone's command timeout, then read the scratch register until it answers with its
+// value and nothing follows: a late answer to an earlier read would otherwise shift every later one.
 
-    ub_resync (priv);
+static bool ub_sync (lxb_priv_t *priv)
+{
+  if (priv->fd < 0) return false;
+
+  for (u32 attempt = 0; attempt < LXB_UB_TRIES; attempt++)
+  {
+    lxb_sleep_ms (LXB_UB_RESYNC_MS);
+
+    lxb_drain (priv);
+
+    u32 scratch = 0;
+
+    if (ub_read_once (priv, fpga_csr_map_no_cpu.base + fpga_csr_map_no_cpu.scratch, &scratch, 1) == false) continue;
+
+    if (lxb_wait_in (priv->fd, LXB_UB_QUIET_MS) == true) continue;
+
+    if (scratch == LXB_SCRATCH_VALUE) return true;
   }
 
   return false;
 }
 
-// UARTBone does not answer a write. The bursts of one write go out back to back and the last word
-// is read back after them: a byte lost anywhere shifts the stream and that read does not come back.
+// UARTBone has no tags and does not answer writes, so after a lost or late byte nothing already sent
+// can be trusted. During a session the batch fails instead, and the bridge restarts the board and
+// writes its configuration again.
 
-static bool ub_write (lxb_priv_t *priv, const u32 addr, const u32 *wr, const u32 n, const bool verify)
+static bool ub_recover (lxb_priv_t *priv)
 {
-  for (u32 attempt = 0; attempt < LXB_TRIES; attempt++)
+  const bool synced = ub_sync (priv);
+
+  if (priv->in_session == true)
   {
-    bool sent = true;
+    priv->lost = true;
 
-    for (u32 done = 0; done < n; )
-    {
-      const u32 len = MIN (n - done, priv->wr_burst);
-
-      u8 buf[LXB_UB_HDR_BYTES + (LXB_UB_BURST_MAX * 4)];
-
-      buf[0] = LXB_UB_CMD_WRITE;
-      buf[1] = (u8) len;
-
-      lxb_put32 (&buf[2], (addr >> 2) + done);
-
-      for (u32 i = 0; i < len; i++) lxb_put32 (&buf[LXB_UB_HDR_BYTES + (i * 4)], wr[done + i]);
-
-      if (lxb_send_all (priv->fd, buf, LXB_UB_HDR_BYTES + (len * 4)) == false)
-      {
-        sent = false;
-
-        break;
-      }
-
-      done += len;
-    }
-
-    u32 back = 0;
-
-    if ((sent == true) && (ub_read_once (priv, addr + ((n - 1) * 4), &back, 1) == true))
-    {
-      if (verify == false) return true;
-
-      if (back == wr[n - 1]) return true;
-    }
-
-    ub_resync (priv);
+    return false;
   }
 
-  return false;
+  return synced;
 }
 
 // Either bridge
 
+static bool lxb_read_chunk (lxb_priv_t *priv, const u32 addr, u32 *rd, const u32 n)
+{
+  if (priv->link == LXB_LINK_UDP)
+  {
+    const bool ok = eb_read (priv, addr, rd, n, LXB_TRIES);
+
+    return ok;
+  }
+
+  const bool ok = ub_read_once (priv, addr, rd, n);
+
+  return ok;
+}
+
 static bool lxb_read (lxb_priv_t *priv, const u32 addr, u32 *rd, const u32 n)
 {
+  if (priv->fd < 0) return false;
+
   bool ok = true;
 
   hc_thread_mutex_lock (priv->mux);
 
   for (u32 done = 0; done < n; )
   {
-    const u32 len = MIN (n - done, priv->rd_burst);
+    const u32 len = MIN (n - done, priv->burst);
 
-    if (priv->link == LXB_LINK_UDP)
+    for (u32 attempt = 0; attempt < LXB_UB_TRIES; attempt++)
     {
-      ok = eb_record (priv, 0, NULL, 0, addr + (done * 4), &rd[done], len);
-    }
-    else
-    {
-      ok = ub_read (priv, addr + (done * 4), &rd[done], len);
+      ok = lxb_read_chunk (priv, addr + (done * 4), &rd[done], len);
+
+      if (ok == true) break;
+
+      if (priv->link == LXB_LINK_UDP) break;
+
+      if (ub_recover (priv) == false) break;
     }
 
     if (ok == false) break;
@@ -461,43 +550,70 @@ static bool lxb_read (lxb_priv_t *priv, const u32 addr, u32 *rd, const u32 n)
   return ok;
 }
 
-static bool lxb_write (lxb_priv_t *priv, const u32 addr, const u32 *wr, const u32 n, const bool verify)
+// One write burst, then a read of what it wrote. Neither bridge answers a write, and the read
+// is what tells that it arrived: a lost datagram reads back the old words, a lost byte shifts the
+// UARTBone stream so that the read does not come back.
+
+static bool lxb_write_chunk (lxb_priv_t *priv, const u32 addr, const u32 *wr, const u32 n, const lxb_check_t check)
 {
+  const bool udp = (priv->link == LXB_LINK_UDP);
+
+  const u32 back_cnt  = (check == LXB_CHECK_ACK) ? 1 : n;
+  const u32 back_addr = (check == LXB_CHECK_ACK) ? addr + ((n - 1) * 4) : addr;
+
+  bool answered = false;
+
+  for (u32 attempt = 0; attempt < LXB_TRIES; attempt++)
+  {
+    const bool sent = (udp == true) ? eb_write (priv, addr, wr, n) : ub_write_once (priv, addr, wr, n);
+
+    u32 back[LXB_UB_BURST_MAX];
+
+    const bool got = (sent == true) ? lxb_read_chunk (priv, back_addr, back, back_cnt) : false;
+
+    if (got == false)
+    {
+      if (udp == true) return false;
+
+      if (ub_recover (priv) == false) return false;
+
+      continue;
+    }
+
+    answered = true;
+
+    if (check == LXB_CHECK_ACK) return true;
+
+    if (memcmp (back, wr, n * 4) == 0) return true;
+
+    if ((udp == false) && (check == LXB_CHECK_STRICT))
+    {
+      if (ub_recover (priv) == false) return false;
+    }
+  }
+
+  const bool ok = ((check == LXB_CHECK_RETRY) && (answered == true));
+
+  return ok;
+}
+
+static bool lxb_write (lxb_priv_t *priv, const u32 addr, const u32 *wr, const u32 n, const lxb_check_t check)
+{
+  if (priv->fd < 0) return false;
+
   bool ok = true;
 
   hc_thread_mutex_lock (priv->mux);
 
-  if (priv->link == LXB_LINK_UDP)
+  for (u32 done = 0; done < n; )
   {
-    for (u32 done = 0; done < n; )
-    {
-      const u32 len = MIN (n - done, priv->wr_burst);
+    const u32 len = MIN (n - done, priv->burst);
 
-      const u32 last = addr + ((done + len - 1) * 4);
+    ok = lxb_write_chunk (priv, addr + (done * 4), &wr[done], len, check);
 
-      u32 back = 0;
+    if (ok == false) break;
 
-      for (u32 attempt = 0; attempt < LXB_TRIES; attempt++)
-      {
-        ok = eb_record (priv, addr + (done * 4), &wr[done], len, last, &back, 1);
-
-        if (ok == false) break;
-
-        if (verify == false) break;
-
-        if (back == wr[done + len - 1]) break;
-
-        ok = false;
-      }
-
-      if (ok == false) break;
-
-      done += len;
-    }
-  }
-  else
-  {
-    ok = ub_write (priv, addr, wr, n, verify);
+    done += len;
   }
 
   hc_thread_mutex_unlock (priv->mux);
@@ -512,9 +628,9 @@ static bool lxb_read1 (lxb_priv_t *priv, const u32 addr, u32 *val)
   return ok;
 }
 
-static bool lxb_write1 (lxb_priv_t *priv, const u32 addr, const u32 val)
+static bool lxb_write1 (lxb_priv_t *priv, const u32 addr, const u32 val, const lxb_check_t check)
 {
-  const bool ok = lxb_write (priv, addr, &val, 1, false);
+  const bool ok = lxb_write (priv, addr, &val, 1, check);
 
   return ok;
 }
@@ -561,25 +677,46 @@ static bool lxb_speed_find (const u32 baud, speed_t *speed)
   return false;
 }
 
-static int lxb_open_uart (const lxb_priv_t *priv)
+static int lxb_open_uart (lxb_priv_t *priv)
 {
   speed_t speed = B115200;
 
-  if (lxb_speed_find (priv->baud, &speed) == false)
+  lxb_speed_find (priv->baud, &speed);
+
+  const int fd = open (priv->host, O_RDWR | O_NOCTTY | O_NONBLOCK);
+
+  if (fd < 0)
   {
-    errno = EINVAL;
+    // another process holds the port with TIOCEXCL
+
+    if (errno == EBUSY) priv->busy = true;
+
+    snprintf (priv->why, sizeof (priv->why), "%s", strerror (errno));
 
     return -1;
   }
 
-  const int fd = open (priv->host, O_RDWR | O_NOCTTY | O_NONBLOCK);
+  // a second hashcat, or a terminal program, would interleave its bytes with ours
 
-  if (fd < 0) return -1;
+  if (flock (fd, LOCK_EX | LOCK_NB) != 0)
+  {
+    priv->busy = true;
+
+    snprintf (priv->why, sizeof (priv->why), "%s", strerror (errno));
+
+    close (fd);
+
+    return -1;
+  }
+
+  ioctl (fd, TIOCEXCL);
 
   struct termios tio;
 
   if (tcgetattr (fd, &tio) < 0)
   {
+    snprintf (priv->why, sizeof (priv->why), "%s", strerror (errno));
+
     close (fd);
 
     return -1;
@@ -598,6 +735,8 @@ static int lxb_open_uart (const lxb_priv_t *priv)
 
   if (tcsetattr (fd, TCSANOW, &tio) < 0)
   {
+    snprintf (priv->why, sizeof (priv->why), "%s", strerror (errno));
+
     close (fd);
 
     return -1;
@@ -612,7 +751,7 @@ static int lxb_open_uart (const lxb_priv_t *priv)
   return fd;
 }
 
-static int lxb_open_inet (const lxb_priv_t *priv, const int socktype)
+static int lxb_open_inet (lxb_priv_t *priv, const int socktype)
 {
   struct addrinfo hints;
 
@@ -627,9 +766,11 @@ static int lxb_open_inet (const lxb_priv_t *priv, const int socktype)
 
   struct addrinfo *res = NULL;
 
-  if (getaddrinfo (priv->host, port, &hints, &res) != 0)
+  const int gai = getaddrinfo (priv->host, port, &hints, &res);
+
+  if (gai != 0)
   {
-    errno = EHOSTUNREACH;
+    snprintf (priv->why, sizeof (priv->why), "%s", gai_strerror (gai));
 
     return -1;
   }
@@ -638,6 +779,8 @@ static int lxb_open_inet (const lxb_priv_t *priv, const int socktype)
 
   if (fd < 0)
   {
+    snprintf (priv->why, sizeof (priv->why), "%s", strerror (errno));
+
     freeaddrinfo (res);
 
     return -1;
@@ -649,9 +792,11 @@ static int lxb_open_inet (const lxb_priv_t *priv, const int socktype)
 
   int rc = connect (fd, res->ai_addr, res->ai_addrlen);
 
+  int err = (rc < 0) ? errno : 0;
+
   freeaddrinfo (res);
 
-  if ((rc < 0) && (errno == EINPROGRESS))
+  if (err == EINPROGRESS)
   {
     struct pollfd pfd;
 
@@ -659,7 +804,7 @@ static int lxb_open_inet (const lxb_priv_t *priv, const int socktype)
     pfd.events  = POLLOUT;
     pfd.revents = 0;
 
-    int err = ETIMEDOUT;
+    err = ETIMEDOUT;
 
     if (poll (&pfd, 1, LXB_CONNECT_MS) > 0)
     {
@@ -667,19 +812,13 @@ static int lxb_open_inet (const lxb_priv_t *priv, const int socktype)
 
       getsockopt (fd, SOL_SOCKET, SO_ERROR, &err, &len);
     }
-
-    rc = (err == 0) ? 0 : -1;
-
-    errno = err;
   }
 
-  if (rc < 0)
+  if (err != 0)
   {
-    const int saved = errno;
+    snprintf (priv->why, sizeof (priv->why), "%s", strerror (err));
 
     close (fd);
-
-    errno = saved;
 
     return -1;
   }
@@ -714,21 +853,18 @@ static bool lxb_link_open (lxb_priv_t *priv)
   switch (priv->link)
   {
     case LXB_LINK_UDP:
-      priv->fd       = lxb_open_inet (priv, SOCK_DGRAM);
-      priv->wr_burst = LXB_EB_WR_BURST;
-      priv->rd_burst = LXB_EB_DEPTH;
+      priv->fd    = lxb_open_inet (priv, SOCK_DGRAM);
+      priv->burst = LXB_EB_WORDS;
       break;
 
     case LXB_LINK_UART:
-      priv->fd       = lxb_open_uart (priv);
-      priv->wr_burst = lxb_ub_burst (priv->baud);
-      priv->rd_burst = priv->wr_burst;
+      priv->fd    = lxb_open_uart (priv);
+      priv->burst = lxb_ub_burst (priv->baud);
       break;
 
     case LXB_LINK_TCP:
-      priv->fd       = lxb_open_inet (priv, SOCK_STREAM);
-      priv->wr_burst = lxb_ub_burst (priv->baud);
-      priv->rd_burst = priv->wr_burst;
+      priv->fd    = lxb_open_inet (priv, SOCK_STREAM);
+      priv->burst = lxb_ub_burst (priv->baud);
       break;
   }
 
@@ -737,8 +873,8 @@ static bool lxb_link_open (lxb_priv_t *priv)
   return true;
 }
 
-// udp:HOST[:PORT], uart:DEVICE[:BAUD], tcp:HOST:PORT. A device path may hold colons of its own, so
-// only a final all-digit field is taken for the number.
+// udp:HOST[:PORT], uart:DEVICE[:BAUD], tcp:HOST:PORT[:BAUD]. A device path may hold colons of its own,
+// so only trailing all-digit fields are taken for numbers.
 
 static bool lxb_parse (const char *spec, lxb_priv_t *priv)
 {
@@ -757,16 +893,33 @@ static bool lxb_parse (const char *spec, lxb_priv_t *priv)
 
   size_t host_len = strlen (rest);
 
-  u32 num = 0;
+  const u32 nums_max = (priv->link == LXB_LINK_TCP) ? 2 : 1;
 
-  bool has_num = false;
+  u32 nums[2] = { 0, 0 };
 
-  const char *last = strrchr (rest, ':');
+  u32 nums_cnt = 0;
 
-  if ((last != NULL) && (last[1] != 0) && (strspn (&last[1], "0123456789") == strlen (&last[1])) && (strlen (&last[1]) <= 9))
+  while (nums_cnt < nums_max)
   {
-    num      = (u32) strtoul (&last[1], NULL, 10);
-    has_num  = true;
+    const char *last = NULL;
+
+    for (size_t i = 0; i < host_len; i++)
+    {
+      if (rest[i] == ':') last = &rest[i];
+    }
+
+    if (last == NULL) break;
+
+    const size_t digits = host_len - (size_t) (last - rest) - 1;
+
+    if ((digits == 0) || (digits > 9)) break;
+
+    if (strspn (&last[1], "0123456789") < digits) break;
+
+    nums[nums_cnt] = (u32) strtoul (&last[1], NULL, 10);
+
+    nums_cnt++;
+
     host_len = (size_t) (last - rest);
   }
 
@@ -778,16 +931,17 @@ static bool lxb_parse (const char *spec, lxb_priv_t *priv)
 
   priv->host[host_len] = 0;
 
-  priv->port = 0;
-  priv->baud = LXB_UART_BAUD;
+  priv->port       = 0;
+  priv->baud       = LXB_UART_BAUD;
+  priv->baud_given = false;
 
   if (priv->link == LXB_LINK_UDP)
   {
-    priv->port = (has_num == true) ? num : LXB_UDP_PORT;
+    priv->port = (nums_cnt == 1) ? nums[0] : LXB_UDP_PORT;
   }
   else if (priv->link == LXB_LINK_UART)
   {
-    if (has_num == true) priv->baud = num;
+    if (nums_cnt == 1) priv->baud = nums[0];
 
     speed_t speed = B115200;
 
@@ -795,9 +949,14 @@ static bool lxb_parse (const char *spec, lxb_priv_t *priv)
   }
   else
   {
-    if (has_num == false) return false;
+    if (nums_cnt == 0) return false;
 
-    priv->port = num;
+    priv->port = (nums_cnt == 2) ? nums[1] : nums[0];
+    priv->baud = (nums_cnt == 2) ? nums[0] : LXB_TCP_BAUD;
+
+    priv->baud_given = (nums_cnt == 2);
+
+    if ((priv->baud < LXB_BAUD_MIN) || (priv->baud > LXB_BAUD_MAX)) return false;
   }
 
   if ((priv->link != LXB_LINK_UART) && ((priv->port == 0) || (priv->port > 65535))) return false;
@@ -811,7 +970,17 @@ static void lxb_describe (const lxb_priv_t *priv, char *buf, const size_t len)
   {
     case LXB_LINK_UDP:  snprintf (buf, len, "udp:%s:%u",  priv->host, priv->port); break;
     case LXB_LINK_UART: snprintf (buf, len, "uart:%s:%u", priv->host, priv->baud); break;
-    case LXB_LINK_TCP:  snprintf (buf, len, "tcp:%s:%u",  priv->host, priv->port); break;
+
+    case LXB_LINK_TCP:
+
+      if (priv->baud_given == true)
+      {
+        snprintf (buf, len, "tcp:%s:%u:%u", priv->host, priv->port, priv->baud);
+        break;
+      }
+
+      snprintf (buf, len, "tcp:%s:%u", priv->host, priv->port);
+      break;
   }
 }
 
@@ -842,6 +1011,17 @@ static int lxb_enumerate (hashcat_ctx_t *hashcat_ctx, fpga_dev_t *devs, const in
 
   if (list == NULL) return 0;
 
+  char *seen = (char *) hccalloc (FPGA_MAX_DEVICES, LXB_PATH_MAX);
+
+  if (seen == NULL)
+  {
+    hcfree (list);
+
+    return 0;
+  }
+
+  int seen_cnt = 0;
+
   int cnt = 0;
 
   char *saveptr = NULL;
@@ -849,6 +1029,8 @@ static int lxb_enumerate (hashcat_ctx_t *hashcat_ctx, fpga_dev_t *devs, const in
   for (char *spec = strtok_r (list, LXB_SEPARATORS, &saveptr); spec != NULL; spec = strtok_r (NULL, LXB_SEPARATORS, &saveptr))
   {
     if (cnt >= max) break;
+
+    if (seen_cnt >= FPGA_MAX_DEVICES) break;
 
     lxb_priv_t *priv = (lxb_priv_t *) hccalloc (1, sizeof (lxb_priv_t));
 
@@ -860,24 +1042,44 @@ static int lxb_enumerate (hashcat_ctx_t *hashcat_ctx, fpga_dev_t *devs, const in
 
     if (lxb_parse (spec, priv) == false)
     {
-      event_log_warning (hashcat_ctx, "FPGA bridge: %s entry '%s' is not udp:HOST[:PORT], uart:DEVICE[:BAUD] or tcp:HOST:PORT, and is ignored.", FPGA_LITEXBONE_ENV, spec);
+      event_log_warning (hashcat_ctx, "FPGA bridge: %s entry '%s' is not udp:HOST[:PORT], uart:DEVICE[:BAUD] or tcp:HOST:PORT[:BAUD] with a supported baud rate, and is ignored.", FPGA_LITEXBONE_ENV, spec);
 
       lxb_free (priv);
 
       continue;
     }
 
-    char path[FPGA_PATH_MAX];
+    char *path = &seen[seen_cnt * LXB_PATH_MAX];
 
-    lxb_describe (priv, path, sizeof (path));
+    lxb_describe (priv, path, LXB_PATH_MAX);
 
-    if (lxb_link_open (priv) == false)
+    bool dup = false;
+
+    for (int i = 0; i < seen_cnt; i++)
     {
-      const int err = errno;
+      if (strcmp (&seen[i * LXB_PATH_MAX], path) == 0) dup = true;
+    }
 
-      event_log_error (hashcat_ctx, "FPGA bridge: cannot open %s: %s.", path, strerror (err));
+    if (dup == true)
+    {
+      event_log_warning (hashcat_ctx, "FPGA bridge: %s lists %s twice. The second entry is ignored.", FPGA_LITEXBONE_ENV, path);
 
-      if ((priv->link == LXB_LINK_UART) && (err == EACCES))
+      lxb_free (priv);
+
+      continue;
+    }
+
+    seen_cnt++;
+
+    LXB_TRIED = true;
+
+    const bool opened = lxb_link_open (priv);
+
+    if ((opened == false) && (priv->busy == false))
+    {
+      event_log_error (hashcat_ctx, "FPGA bridge: cannot open %s: %s.", path, priv->why);
+
+      if ((priv->link == LXB_LINK_UART) && (access (priv->host, R_OK | W_OK) != 0) && (errno == EACCES))
       {
         event_log_info (hashcat_ctx, "Add this account to the group that owns %s, usually dialout, then log in again.", priv->host);
         event_log_info (hashcat_ctx, NULL);
@@ -888,26 +1090,55 @@ static int lxb_enumerate (hashcat_ctx_t *hashcat_ctx, fpga_dev_t *devs, const in
       continue;
     }
 
-    u32 scratch = 0;
+    // a port held by another process is not probed: its bytes would land in that process's stream
 
-    if (lxb_read1 (priv, fpga_csr_map_no_cpu.base + fpga_csr_map_no_cpu.scratch, &scratch) == false)
+    if (opened == true)
     {
-      event_log_error (hashcat_ctx, "FPGA bridge: nothing answered at %s.", path);
+      u32 scratch = 0;
+
+      if (lxb_read1 (priv, fpga_csr_map_no_cpu.base + fpga_csr_map_no_cpu.scratch, &scratch) == false)
+      {
+        event_log_error (hashcat_ctx, "FPGA bridge: nothing answered at %s.", path);
+
+        if (priv->link == LXB_LINK_UDP)
+        {
+          event_log_info (hashcat_ctx, "Check the address and port, that this host routes to it, and that the board is programmed.");
+        }
+        else
+        {
+          event_log_info (hashcat_ctx, "Check that the board is programmed and that the baud rate matches the one it was built with.");
+        }
+
+        event_log_info (hashcat_ctx, NULL);
+
+        lxb_free (priv);
+
+        continue;
+      }
 
       if (priv->link == LXB_LINK_UDP)
       {
-        event_log_info (hashcat_ctx, "Check the address and port, that this host routes to it, and that the board is programmed.");
+        const u32 words = eb_probe_words (priv);
+
+        if (words == 0)
+        {
+          event_log_error (hashcat_ctx, "FPGA bridge: %s stopped answering after a %u word Etherbone read.", path, (u32) LXB_EB_WORDS);
+          event_log_info (hashcat_ctx, "Its etherbone buffer_depth is below 16, and LiteEth up to 2026.08 stalls on a longer record until reset.");
+          event_log_info (hashcat_ctx, "Rebuild the SoC with a buffer_depth of 16 or more, LiteX's default, and reset the board.");
+          event_log_info (hashcat_ctx, NULL);
+
+          lxb_free (priv);
+
+          continue;
+        }
+
+        if (words < LXB_EB_WORDS)
+        {
+          event_log_warning (hashcat_ctx, "FPGA bridge: %s answers Etherbone records of up to %u words only. Its buffer_depth is below 16, which slows it down.", path, words);
+        }
+
+        priv->burst = words;
       }
-      else
-      {
-        event_log_info (hashcat_ctx, "Check that the board is programmed and that the baud rate matches the one it was built with.");
-      }
-
-      event_log_info (hashcat_ctx, NULL);
-
-      lxb_free (priv);
-
-      continue;
     }
 
     fpga_dev_t *dev = &devs[cnt];
@@ -922,6 +1153,7 @@ static int lxb_enumerate (hashcat_ctx_t *hashcat_ctx, fpga_dev_t *devs, const in
     cnt++;
   }
 
+  hcfree (seen);
   hcfree (list);
 
   if (cnt > 0) *status = FPGA_STATUS_OK;
@@ -936,11 +1168,33 @@ static void lxb_close (fpga_dev_t *dev)
   dev->priv = NULL;
 }
 
+// a board that -d leaves out gives its port back, so another hashcat can use it
+
+static void lxb_release (fpga_dev_t *dev)
+{
+  lxb_priv_t *priv = (lxb_priv_t *) dev->priv;
+
+  if (priv == NULL) return;
+
+  priv->in_session = false;
+
+  if (priv->fd >= 0) close (priv->fd);
+
+  priv->fd = -1;
+
+  hcfree (priv->pend);
+
+  priv->pend      = NULL;
+  priv->pend_size = 0;
+}
+
 static fpga_status_t lxb_identify (fpga_dev_t *dev)
 {
   lxb_priv_t *priv = (lxb_priv_t *) dev->priv;
 
   if (priv == NULL) return FPGA_STATUS_NO_PCI_DEVICE;
+
+  if (priv->busy == true) return FPGA_STATUS_IN_USE;
 
   u32 scratch = 0;
 
@@ -954,9 +1208,9 @@ static fpga_status_t lxb_identify (fpga_dev_t *dev)
 
   while (len < (FPGA_IDENT_MAX - 1))
   {
-    u32 words[LXB_EB_DEPTH];
+    u32 words[LXB_IDENT_CHUNK];
 
-    const u32 n = MIN ((u32) LXB_EB_DEPTH, (u32) (FPGA_IDENT_MAX - 1) - len);
+    const u32 n = MIN ((u32) LXB_IDENT_CHUNK, (u32) (FPGA_IDENT_MAX - 1) - len);
 
     if (lxb_read (priv, dev->csr_base + dev->map->identifier_mem + (len * 4), words, n) == false) return FPGA_STATUS_NO_PCI_DEVICE;
 
@@ -992,7 +1246,7 @@ static fpga_status_t lxb_identify (fpga_dev_t *dev)
 
   if (getenv ("HCFPGA_DEBUG") != NULL)
   {
-    fprintf (stderr, "[hcfpga] %s memstream h2c %u words, c2h %u words, bursts %u/%u words\n", dev->path, h2c_depth, c2h_depth, priv->wr_burst, priv->rd_burst);
+    fprintf (stderr, "[hcfpga] %s memstream h2c %u words, c2h %u words, bursts of %u words\n", dev->path, h2c_depth, c2h_depth, priv->burst);
   }
 
   // a design without memstream at its pinned location cannot take candidates over this transport
@@ -1024,7 +1278,7 @@ static bool lxb_csr_write (fpga_dev_t *dev, const u32 addr, const u32 val)
 
   if (priv == NULL) return false;
 
-  const bool ok = lxb_write1 (priv, dev->csr_base + addr, val);
+  const bool ok = lxb_write1 (priv, dev->csr_base + addr, val, LXB_CHECK_RETRY);
 
   return ok;
 }
@@ -1033,13 +1287,16 @@ static bool lxb_ms_reset (fpga_dev_t *dev)
 {
   lxb_priv_t *priv = (lxb_priv_t *) dev->priv;
 
-  if (lxb_write1 (priv, dev->csr_base + LXB_MS_CTRL, 1) == false) return false;
+  if (lxb_write1 (priv, dev->csr_base + LXB_MS_CTRL, 1, LXB_CHECK_ACK) == false) return false;
 
-  u32 ptr[2];
+  u32 ptr[4];
 
-  if (lxb_read (priv, dev->csr_base + LXB_MS_H2C_WR, ptr, 2) == false) return false;
+  if (lxb_read (priv, dev->csr_base + LXB_MS_H2C_WR, ptr, 4) == false) return false;
 
-  if ((ptr[0] != 0) || (ptr[1] != 0)) return false;
+  for (u32 i = 0; i < 4; i++)
+  {
+    if ((ptr[i] & LXB_PTR_MASK) != 0) return false;
+  }
 
   priv->h2c_wr = 0;
   priv->c2h_rd = 0;
@@ -1053,9 +1310,12 @@ static bool lxb_session_open (fpga_dev_t *dev)
 
   if (priv == NULL) return false;
 
-  priv->lost = false;
+  priv->lost       = false;
+  priv->in_session = true;
 
   const bool ok = lxb_ms_reset (dev);
+
+  if (ok == false) priv->in_session = false;
 
   return ok;
 }
@@ -1065,6 +1325,8 @@ static void lxb_session_close (fpga_dev_t *dev)
   lxb_priv_t *priv = (lxb_priv_t *) dev->priv;
 
   if (priv == NULL) return;
+
+  priv->in_session = false;
 
   hcfree (priv->pend);
 
@@ -1078,13 +1340,27 @@ static bool lxb_session_refresh (fpga_dev_t *dev)
 
   if (priv == NULL) return false;
 
+  priv->in_session = false;
+
   hc_thread_mutex_lock (priv->mux);
 
-  lxb_drain (priv);
+  bool synced = true;
+
+  if (priv->link == LXB_LINK_UDP)
+  {
+    lxb_drain (priv);
+  }
+  else
+  {
+    synced = ub_sync (priv);
+  }
 
   hc_thread_mutex_unlock (priv->mux);
 
-  priv->lost = false;
+  if (synced == false) return false;
+
+  priv->lost       = false;
+  priv->in_session = true;
 
   const bool ok = lxb_ms_reset (dev);
 
@@ -1155,7 +1431,7 @@ static bool lxb_c2h_pull (fpga_dev_t *dev, const u32 c2h_wr, bool *moved)
 
   priv->c2h_rd = (priv->c2h_rd + take) & LXB_PTR_MASK;
 
-  if (lxb_write1 (priv, dev->csr_base + LXB_MS_C2H_RD, priv->c2h_rd) == false) return false;
+  if (lxb_write1 (priv, dev->csr_base + LXB_MS_C2H_RD, priv->c2h_rd, LXB_CHECK_STRICT) == false) return false;
 
   if (moved != NULL) *moved = true;
 
@@ -1206,7 +1482,7 @@ static bool lxb_batch_begin (fpga_dev_t *dev, MAYBE_UNUSED const u64 out_bytes, 
 
   priv->c2h_rd = c2h_wr;
 
-  const bool ok = lxb_write1 (priv, dev->csr_base + LXB_MS_C2H_RD, priv->c2h_rd);
+  const bool ok = lxb_write1 (priv, dev->csr_base + LXB_MS_C2H_RD, priv->c2h_rd, LXB_CHECK_STRICT);
 
   return ok;
 }
@@ -1231,14 +1507,14 @@ static bool lxb_h2c_put (fpga_dev_t *dev, const u8 *src, const u32 n)
     const u32 idx = (priv->h2c_wr + done) % priv->h2c_depth;
     const u32 len = MIN (n - done, priv->h2c_depth - idx);
 
-    if (lxb_write (priv, dev->csr_base + LXB_MS_H2C_MEM + (idx * 4), &words[done], len, true) == false) return false;
+    if (lxb_write (priv, dev->csr_base + LXB_MS_H2C_MEM + (idx * 4), &words[done], len, LXB_CHECK_STRICT) == false) return false;
 
     done += len;
   }
 
   priv->h2c_wr = (priv->h2c_wr + n) & LXB_PTR_MASK;
 
-  const bool ok = lxb_write1 (priv, dev->csr_base + LXB_MS_H2C_WR, priv->h2c_wr);
+  const bool ok = lxb_write1 (priv, dev->csr_base + LXB_MS_H2C_WR, priv->h2c_wr, LXB_CHECK_STRICT);
 
   return ok;
 }
@@ -1416,7 +1692,8 @@ static bool lxb_link_str (fpga_dev_t *dev, char *buf, const size_t len)
 
 static int lxb_enumerate (MAYBE_UNUSED hashcat_ctx_t *hashcat_ctx, MAYBE_UNUSED fpga_dev_t *devs, MAYBE_UNUSED const int max, fpga_status_t *status) { *status = FPGA_STATUS_UNSUPPORTED_OS; return 0; }
 static fpga_status_t lxb_identify (MAYBE_UNUSED fpga_dev_t *dev) { return FPGA_STATUS_UNSUPPORTED_OS; }
-static void lxb_close (MAYBE_UNUSED fpga_dev_t *dev) { }
+static void lxb_close   (MAYBE_UNUSED fpga_dev_t *dev) { }
+static void lxb_release (MAYBE_UNUSED fpga_dev_t *dev) { }
 
 static u32  lxb_csr_read  (MAYBE_UNUSED fpga_dev_t *dev, MAYBE_UNUSED const u32 addr) { return 0; }
 static bool lxb_csr_write (MAYBE_UNUSED fpga_dev_t *dev, MAYBE_UNUSED const u32 addr, MAYBE_UNUSED const u32 val) { return false; }
@@ -1451,6 +1728,7 @@ const fpga_transport_t fpga_transport_litexbone =
 
   .enumerate       = lxb_enumerate,
   .close           = lxb_close,
+  .release         = lxb_release,
   .identify        = lxb_identify,
   .confirm         = NULL,
 

@@ -192,6 +192,8 @@ extern const fpga_transport_t fpga_transport_xrt;
 extern const fpga_transport_t fpga_transport_artyz7;
 extern const fpga_transport_t fpga_transport_litexbone;
 
+bool fpga_transport_litexbone_tried (void);
+
 extern const fpga_transport_t *const fpga_transports[];
 extern const int                     fpga_transports_cnt;
 

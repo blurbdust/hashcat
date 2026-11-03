@@ -775,7 +775,7 @@ void fpga_status_report (hashcat_ctx_t *hashcat_ctx, const fpga_status_t status,
 
     case FPGA_STATUS_NO_PCI_DEVICE:
 
-      if (getenv (FPGA_LITEXBONE_ENV) != NULL)
+      if (fpga_transport_litexbone_tried () == true)
       {
         event_log_error (hashcat_ctx, "FPGA bridge: no board listed in %s answered, and no other FPGA was found.", FPGA_LITEXBONE_ENV);
         break;
