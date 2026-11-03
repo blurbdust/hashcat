@@ -21,7 +21,7 @@ Host side: `src/bridges/bridge_fpga_scrypt.c` (the hooks of `src/bridges/fpga/hc
 ## The engine
 
 - **Transmitter.** Takes a record from the intake when a unit is idle and writes the unit packet into that unit's input FIFO, one byte every other cycle (the FIFO reports full with no margin, so the transmitter checks the flag before each write as it is, not registered). The packet: a type byte with `ctrl`; log2 (N) from `iter_count`, the salt length, 32 salt bytes from `salt0..3` and `salt4..7` and r from the `r` register, each field little-endian as the unit reads them; the password zero filled to 64 bytes; the 8 ID bytes (candidate id, generation, zero); an end byte with `ctrl`. While a packet goes out the intake holds its record across a framing reset (`hold`), because a unit given half a packet would take the next packet's bytes as the rest of it.
-- **Units.** `scrypt_unit` with `FULL_MODE` 1, `R` = `R_MAX` (8), `N_LOG2_MAX` 15 and the V table in block RAM, 2^`N_LOG2_MAX` blocks of 128 `R_MAX` bytes. `R_MAX` and `N_LOG2_MAX` are parameters of the top (the wrapper's `r_max` and `n_log2_max`); the simulated board uses these defaults, which are the module's limits. A unit is idle (`unit_in_ready`) only before it takes a packet; it stays busy through PBKDF2, ROMix, PBKDF2 and until its result has been read.
+- **Units.** `scrypt_unit` with `FULL_MODE` 1, `R` = `R_MAX` (8), `N_LOG2_MAX` 15, a lookup gap G = 2^`GAP_LOG2` (1) and the V table in block RAM, 2^`N_LOG2_MAX` / G blocks of 128 `R_MAX` bytes. `R_MAX`, `N_LOG2_MAX` and `GAP_LOG2` are parameters of the top (the wrapper's `r_max`, `n_log2_max` and `gap`); the simulated board uses these defaults, whose limits are the module's. A unit is idle (`unit_in_ready`) only before it takes a packet; it stays busy through PBKDF2, ROMix, PBKDF2 and until its result has been read.
 - **Collector.** `src/fpga/common/rtl/hcfpga_jtr_unit_collect.v` with `RESULT_LEN` 32: one `rd_en` cycle, the `2'b11` marker, 160 dibits (the 8 ID bytes, then the 32-byte derived key), `2'b00`. It drops a result of another generation without retiring it, looks the low 7 bits of the key's byte 0 up in the bitmap, and sends a 32-byte C2H record for a hit or retires a miss at once.
 
 A candidate takes 52 r + 11 cycles per step of N (two BlockMix calls of 2 r Salsa20/8 calls each, 13 cycles a call: 63 cycles at r = 1, 427 at r = 8) and about 1,230 r + 850 cycles more for PBKDF2 (EXPAND is 4 r HMAC calls of 4 SHA-256 blocks, DERIVE 2 r + 4 blocks, 66 cycles a block) and the packets. One candidate on one unit, from the bench's `cycles` case:
@@ -30,6 +30,15 @@ A candidate takes 52 r + 11 cycles per step of N (two BlockMix calls of 2 r Sals
 |---|---|---|
 | 1024 | 66,589 cycles | 447,935 cycles |
 | 16384 | 1,034,269 cycles | 7,006,655 cycles |
+
+With a lookup gap G (below) the mix recomputes (G - 1) / 2 BlockMix calls per step on average, and a candidate takes about 1 + (G - 1) / 4 times as long. One candidate on one unit, cycles, from `--case cycles --gap G`:
+
+| G | V table | N = 1024, r = 1 | N = 1024, r = 8 | N = 16384, r = 1 | N = 16384, r = 8 |
+|---|---|---|---|---|---|
+| 1 | N blocks | 66,589 | 447,935 | 1,034,269 | 7,006,655 |
+| 2 | N / 2 | 81,669 | 550,271 | 1,272,157 | 8,744,451 |
+| 4 | N / 4 | 110,843 | 768,445 | 1,750,715 | 12,200,209 |
+| 8 | N / 8 | 169,771 | 1,207,325 | 2,702,379 | 19,175,025 |
 
 ## Decisions
 
@@ -42,7 +51,8 @@ A candidate takes 52 r + 11 cycles per step of N (two BlockMix calls of 2 r Sals
 - **The units cannot be reset in the middle of a job.** The generation (`hcfpga_gen.v`) rides in the candidate's ID bytes, the unit echoes them ahead of its result, and the collector drops a result of another generation without retiring it. A packet once started is always finished.
 - **Extra registers: `salt_len` at 0x3c, then `salt4..salt7` at 0x40..0x4c** (salt bytes 16..31, hashcat's `salt_buf[4..7]`), **then `r` at 0x50.** `salt0..3` carry bytes 0..15, and `iter_count` carries N. The register is `r`, not `scrypt_r` (which is how `csr.csv` shows it): the template's offset check takes the bank's name off any register name that starts with it.
 - **Grain: 1 per identity core.** A unit holds one candidate, and the identity's `cores=` counts units. The bridge's batch grain is `cores * 1`.
-- **Batch timeout:** `wait_cycles_per_iter` 2000. One step of N takes 63 cycles at r = 1 and 427 at r = 8; a candidate also spends 2,000 to 11,000 cycles in PBKDF2 and its packets, which the timeout has to cover at N = 2 as well; the simulated board runs below the 1 MHz it declares; the bridge multiplies by 4.
+- **Lookup gap: a build parameter, G = 1, 2, 4 or 8 (`GAP_LOG2` 0 to 3), 1 in the simulated board.** ROMix stores every G-th block of V, so the table shrinks by G, and a read of V[j] loads V[j - j mod G] and recomputes j mod G BlockMix steps (`PROVENANCE.md`, lookup gap). It trades time for block RAM on a board that cannot hold enough units otherwise. It changes nothing hashcat sees: the bridge, the module and the registers are the same for every G.
+- **Batch timeout:** `wait_cycles_per_iter` 2000. One step of N takes 63 cycles at r = 1 and 427 at r = 8, and about 1,170 at r = 8 with G = 8; a candidate also spends 2,000 to 11,000 cycles in PBKDF2 and its packets, which the timeout has to cover at N = 2 as well; the simulated board runs below the 1 MHz it declares; the bridge multiplies by 4.
 
 ## H2C record (bcrypt's)
 
@@ -113,4 +123,4 @@ HCFPGA_LITEXBONE=tcp:127.0.0.1:2430 ./hashcat -m 98900 hash.txt words.txt
 
 `--uart-port` moves the UARTBone port when another sim has 2430, `--units` sets the number of scrypt units. Etherbone (`--bridge etherbone`, `HCFPGA_LITEXBONE=udp:192.168.9.50`) needs a tap, so run the sim and hashcat under the LiteX hashcat Guide's `debug/simns.sh`. The simulated board declares 1 MHz, and with this design (one unit, `R_MAX` 8) Verilator runs it at about 400 to 600 kHz: the example hash (N = 16384, r = 8, 7 million cycles) takes about 12 s a candidate there, so keep N and r small in tests (the test module uses N = 16).
 
-The bench, which needs Verilator only: `make -C src/fpga sim ALGO=scrypt`. It builds the simulated board's parameters (2 units, `N_LOG2_MAX` 15, `R_MAX` 8); `tb_datapath.py --r-max <r> --n-log2-max <n> --units <u>` builds others, each in a directory of its own, `--case cycles` prints the cycles of one candidate at N = 1024 and 16384 with r = 1 and `R_MAX`, and `--case example` runs mode 8900's example hash.
+The bench, which needs Verilator only: `make -C src/fpga sim ALGO=scrypt`. It builds the simulated board's parameters (2 units, `N_LOG2_MAX` 15, `R_MAX` 8); `tb_datapath.py --r-max <r> --n-log2-max <n> --gap <G> --units <u>` builds others, each in a directory of its own, `--case cycles` prints the cycles of one candidate at N = 1024 and 16384 with r = 1 and `R_MAX`, and `--case example` runs mode 8900's example hash.
