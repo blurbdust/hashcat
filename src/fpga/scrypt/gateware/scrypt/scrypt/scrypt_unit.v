@@ -162,6 +162,22 @@ module scrypt_unit #(
    wire pbkdf2_done_w;
    wire [DATA_WIDTH-1:0] pbkdf2_dk_out_w;
 
+   // pbkdf2_sha256 takes and gives bytes big-endian (byte 0 in the top bits, as SHA-256 reads a
+   // block); romix and this unit's registers keep byte 0 in bits 7:0. Full mode is R=1: 128 bytes.
+   function [1023:0] rev_bytes128;
+      input [1023:0] v;
+      integer b;
+      for (b = 0; b < 128; b = b + 1)
+         rev_bytes128[8*b +: 8] = v[1016 - 8*b +: 8];
+   endfunction
+
+   function [255:0] rev_bytes32;
+      input [255:0] v;
+      integer b;
+      for (b = 0; b < 32; b = b + 1)
+         rev_bytes32[8*b +: 8] = v[248 - 8*b +: 8];
+   endfunction
+
    generate if (FULL_MODE) begin : gen_pbkdf2
       pbkdf2_sha256 u_pbkdf2 (
          .CLK(CLK),
@@ -170,7 +186,7 @@ module scrypt_unit #(
          .password_len(pw_len_reg),
          .salt(salt_reg),
          .salt_len(salt_len_reg),
-         .b_mixed(romix_out),
+         .b_mixed(rev_bytes128(romix_out[1023:0])),
          .mode(pbkdf2_mode_r),
          .dk_out(pbkdf2_dk_out_w),
          .done(pbkdf2_done_w)
@@ -309,7 +325,7 @@ module scrypt_unit #(
                   // Shift into pw_reg for full mode (64 bytes max password)
                   if (FULL_MODE) begin
                      if (payload_cnt < 64) begin
-                        pw_reg[payload_cnt*8 +: 8] <= ififo_data;
+                        pw_reg[504 - payload_cnt*8 +: 8] <= ififo_data;
                      end
                      // Always keep last 8 bytes as potential IDs
                      ids <= {ififo_data, ids[63:8]};
@@ -336,8 +352,12 @@ module scrypt_unit #(
 
       // -------------------------------------------------------
       ST_RST_SETTLE: begin
-         if (FULL_MODE)
+         if (FULL_MODE) begin
+            // One start pulse: pbkdf2_sha256 starts again if start is still high when it is idle.
+            pbkdf2_mode_r <= 0;  // EXPAND mode
+            pbkdf2_start_r <= 1;
             state <= ST_PBKDF2_EXPAND;
+         end
          else begin
             romix_in <= B_reg;
             state <= ST_RUN;
@@ -367,11 +387,8 @@ module scrypt_unit #(
       // =========================================================
       ST_PBKDF2_EXPAND: begin
          if (FULL_MODE) begin
-            pbkdf2_mode_r <= 0;  // EXPAND mode
-            pbkdf2_start_r <= 1;
             if (pbkdf2_done_w) begin
-               pbkdf2_start_r <= 0;
-               romix_in <= pbkdf2_dk_out_w;
+               romix_in <= rev_bytes128(pbkdf2_dk_out_w[1023:0]);
                state <= ST_ROMIX_START;
             end
          end
@@ -385,6 +402,8 @@ module scrypt_unit #(
       ST_ROMIX_WAIT: begin
          if (romix_done) begin
             if (FULL_MODE) begin
+               pbkdf2_mode_r <= 1;  // DERIVE mode
+               pbkdf2_start_r <= 1;
                state <= ST_PBKDF2_DERIVE;
             end else begin
                state <= ST_IDLE;
@@ -394,12 +413,9 @@ module scrypt_unit #(
 
       ST_PBKDF2_DERIVE: begin
          if (FULL_MODE) begin
-            pbkdf2_mode_r <= 1;  // DERIVE mode
-            pbkdf2_start_r <= 1;
             if (pbkdf2_done_w) begin
-               pbkdf2_start_r <= 0;
                out_sr <= {{(OUT_BITS_MAX-320){1'b0}},
-                          pbkdf2_dk_out_w[255:0], ids};
+                          rev_bytes32(pbkdf2_dk_out_w[255:0]), ids};
                out_count <= 0;
                empty <= 0;
                state <= ST_OUT_READY;

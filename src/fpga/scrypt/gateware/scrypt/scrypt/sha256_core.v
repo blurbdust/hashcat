@@ -17,6 +17,9 @@
  * Scrypt only needs PBKDF2-SHA256 with c=1, so throughput is not critical.
  */
 
+// Modified for hashcat from LiteX-Scrypt's original.
+// src/fpga/scrypt/PROVENANCE.md lists every change.
+
 module sha256_core (
    input CLK,
    input start,
@@ -123,7 +126,8 @@ module sha256_core (
 
    // For rounds 0-15: W[round] from loaded block
    // For rounds 16-63: expanded value
-   assign Wt = W[round[3:0]];
+   // Rounds 16..63 use the word expanded for this round, not the one it replaces.
+   assign Wt = (round < 16) ? W[round[3:0]] : W_new;
 
    // W expansion: W[i] = gamma1(W[i-2]) + W[i-7] + gamma0(W[i-15]) + W[i-16]
    assign W_new = gamma1(W[(round-2) & 4'hF]) + W[(round-7) & 4'hF]

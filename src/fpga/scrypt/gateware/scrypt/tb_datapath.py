@@ -31,24 +31,28 @@ sys.path.insert(0, COMMON)
 
 import hcfpga_bench as hb
 
-from scrypt_ref import scrypt_digest, PW_MAX, DIGEST_BYTES, SALT, ROUNDS, CANARY_PW, extra_regs
+from scrypt_ref import scrypt_digest, PW_MAX, DIGEST_BYTES, SALT, SALT_MAX, ROUNDS, N_LOG2_MAX, CANARY_PW, salt_regs, extra_regs
 
-# HCFPGA-TODO: the core's files instead of the stub's (the engine stub).
+# LiteX-Scrypt's unit and what it instantiates (see PROVENANCE.md), and util/'s FIFO.
+CORE = os.path.join(HERE, "scrypt")
+UTIL = os.path.join(HERE, "util")
+
 SOURCES = [os.path.join(HERE, f) for f in [
-  "hcfpga_scrypt_top.sv",
-]] + hb.RTL_TAIL + [os.path.join(HERE, "hcfpga_scrypt_engine.v")]
+  "hcfpga_scrypt_top.sv", "hcfpga_scrypt_engine.v",
+]] + [os.path.join(CORE, f) for f in [
+  "scrypt_unit.v", "romix.v", "v_table_bram.v", "blockmix.v", "salsa20_8.v", "pbkdf2_sha256.v", "hmac_sha256.v", "sha256_core.v",
+]] + [os.path.join(UTIL, "fifo_sync.v")] + hb.RTL_TAIL + [os.path.join(hb.RTL, "hcfpga_jtr_unit_collect.v")]
 
-# HCFPGA-TODO: the core's include directories.
-INCLUDES = [HERE]
+INCLUDES = [HERE, CORE, UTIL]
 
 def run_batch(exe, work, salt, rounds, cands, bitmap, gaps=1, pad_recs=1):
-  return hb.run_batch(exe, work, hb.salt_words(salt), rounds, cands, bitmap, gaps=gaps, pad_recs=pad_recs,
+  return hb.run_batch(exe, work, salt_regs(salt), rounds, cands, bitmap, gaps=gaps, pad_recs=pad_recs,
                       extra=extra_regs(salt, rounds))
 
 def check(name, salt, rounds, cands, bitmap_idx, recs, done, errs, pad, pad_recs=1):
   want = {cid: scrypt_digest(pw, salt, rounds) for cid, pw in cands}
   return hb.check(name, cands, want, bitmap_idx, recs, done, errs, pad, pad_recs=pad_recs,
-                  digest_bytes=DIGEST_BYTES, core_name="cores")
+                  digest_bytes=DIGEST_BYTES, core_name="units")
 
 def main():
   ap = argparse.ArgumentParser(description="scrypt datapath bench")
@@ -71,14 +75,38 @@ def main():
   def rnd(n):
     return bytes(rng.choice(b"abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(n))
 
+  def rbin(n):
+    return bytes(rng.randrange(256) for _ in range(n))
+
   results = []
 
-  # HCFPGA-TODO: every length class the core branches on (block boundaries of its hash), and PW_MAX.
+  # The unit takes the key zero filled to 64 bytes (HMAC's own padding), so every length is one
+  # class to the core; the intake's word boundaries, PW_MAX, zero and top-bit bytes are the cases.
   if args.case in ("all", "lengths"):
-    lens = sorted({0, 1, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, PW_MAX - 1, PW_MAX} & set(range(PW_MAX + 1)))
-    cands = [(i, rnd(n)) for i, n in enumerate(lens)] + [(len(lens), b"hashcat"), (hb.CANARY_ID, CANARY_PW)]
+    lens = [0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 55, 56, 63, 64]
+    cands = [(i, rnd(n)) for i, n in enumerate(lens)]
+    cands += [(100 + i, rbin(n)) for i, n in enumerate([1, 13, 64])]
+    cands += [(200, b"a\x00b"), (201, b"\x00"), (202, b"hashcat"), (hb.CANARY_ID, CANARY_PW)]
     recs, done, errs, pad = run_batch(exe, work, salt, R, cands, [0xffffffff] * 4)
     results.append(check("lengths", salt, R, cands, None, recs, done, errs, pad))
+
+  # Every salt length the core takes: the expand step's message moves with it, and bytes 16..31
+  # come from salt4..7.
+  if args.case in ("all", "salts"):
+    ok = True
+    for n in range(0, SALT_MAX + 1):
+      s = rbin(n)
+      cands = [(0, b"hashcat"), (1, rnd(9))]
+      recs, done, errs, pad = run_batch(exe, work, s, R, cands, [0xffffffff] * 4)
+      ok &= check("salt%d" % n, s, R, cands, None, recs, done, errs, pad)
+    results.append(ok)
+
+  # The cost at both ends: N = 2, and N = 2^N_LOG2_MAX, the whole V table.
+  if args.case in ("all", "costs"):
+    for n in (2, 1 << N_LOG2_MAX):
+      cands = [(i, rnd(6 + i)) for i in range(args.units)]
+      recs, done, errs, pad = run_batch(exe, work, salt, n, cands, [0xffffffff] * 4)
+      results.append(check("n%d" % n, salt, n, cands, None, recs, done, errs, pad))
 
   # Several wrong candidates and one right one, the bitmap holding only the target's index:
   # the comparator has to pass the target and drop (but retire) everything that misses.
@@ -107,8 +135,8 @@ def main():
   # Granule padding: EOB records repeat until the record count is a multiple of pad_recs.
   if args.case in ("all", "pad"):
     cands = [(i, rnd(5)) for i in range(3)]
-    recs, done, errs, pad = run_batch(exe, work, salt, 7, cands, [0xffffffff] * 4, pad_recs=4)
-    results.append(check("pad", salt, 7, cands, None, recs, done, errs, pad, pad_recs=4))
+    recs, done, errs, pad = run_batch(exe, work, salt, 8, cands, [0xffffffff] * 4, pad_recs=4)
+    results.append(check("pad", salt, 8, cands, None, recs, done, errs, pad, pad_recs=4))
 
   print("ALL PASS" if all(results) else "*** FAIL ***")
   return 0 if all(results) else 1
