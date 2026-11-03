@@ -8,7 +8,10 @@
  *
  */
 
-`include "../md5.vh"
+// Modified for hashcat from John the Ripper's original.
+// src/fpga/md5crypt/PROVENANCE.md lists every change.
+
+`include "md5.vh"
 
 `ifndef SIMULATION
 

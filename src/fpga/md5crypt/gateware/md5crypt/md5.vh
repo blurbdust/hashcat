@@ -7,9 +7,17 @@
  *
  */
 
+// Modified for hashcat from John the Ripper's original.
+// src/fpga/md5crypt/PROVENANCE.md lists every change.
+
+`include "log2.vh"
+
 // Include Verilog code for "blackbox" modules
 // (ISE Project Navigator requires restart after switching this)
-//`define	SIMULATION
+//
+// hashcat build: enabled. The macro name is JtR's and it misleads: it selects the real,
+// synthesisable cores, CPU and engine instead of the empty partition stubs.
+`define	SIMULATION
 
 
 // ===== Algorithm constants and operations =====
