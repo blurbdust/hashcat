@@ -1051,6 +1051,8 @@ src/fpga/bcrypt/software/user/hcfpga_step --spread 2048 --quiet
 
 `--spread K` sends K candidates per core and ends with a table of right and wrong digests per core. A few cores returning wrong digests, at a rate that rises as the card warms up, means those cores miss timing at the clock the design was built for: rebuild it at a lower clock. `--hex` also dumps the raw records, and `--cost` and `--salt` change the configuration. The tool needs the DMA engines to itself, so stop hashcat first.
 
+`--wave-model` times four batches and prints the board's row for `WAVE_MODELS` in `src/bridges/bridge_fpga_bcrypt.c`, which lets hashcat size batches for a board of that core count without autotuning.
+
 ## The card is missing and looks dead
 
 The host must see an endpoint answer during POST. When none does, the root port is hidden from the operating system as well, so `lspci` shows neither the card nor the bridge it should sit behind, and a PCIe rescan recovers neither. That looks exactly like a dead board and usually is not one.

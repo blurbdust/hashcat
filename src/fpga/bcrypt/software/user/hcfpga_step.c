@@ -19,6 +19,7 @@
 //                   answers several times, then print a table of right and wrong digests per core
 //   --hex           also dump each H2C record and each raw C2H record
 //   --quiet         with --spread, print only the per-core table
+//   --wave-model    time four batches and print this board's row for the bridge's WAVE_MODELS table
 //
 // With no passwords and no --spread it sends "hashcat".
 
@@ -43,20 +44,22 @@
 #define CSR(off) (CSR_BASE + (off))
 
 #define H2C_ALIGN      32
-#define MAX_RECS       8192
+#define MAX_RECS       131072
 #define MAX_CORES      65536
 
 static int  g_fd  = -1;
 static bool g_hex = false;
 
-static uint64_t now_ms (void)
+static uint64_t now_us (void)
 {
   struct timespec ts;
 
   clock_gettime (CLOCK_MONOTONIC, &ts);
 
-  return ((uint64_t) ts.tv_sec * 1000) + ((uint64_t) ts.tv_nsec / 1000000);
+  return ((uint64_t) ts.tv_sec * 1000000) + ((uint64_t) ts.tv_nsec / 1000);
 }
+
+static uint64_t now_ms (void) { return now_us () / 1000; }
 
 static uint32_t rd (const uint32_t off)                 { return litepcie_readl (g_fd, CSR (off)); }
 static void     wr (const uint32_t off, const uint32_t v) { litepcie_writel (g_fd, CSR (off), v); }
@@ -140,80 +143,14 @@ static cand_t g_cand[MAX_RECS];
 static uint32_t g_core_ok [MAX_CORES];
 static uint32_t g_core_bad[MAX_CORES];
 
-int main (int argc, char **argv)
+static bool run_batch (const uint32_t cores, const uint32_t cost, const uint8_t *salt, const uint32_t spread, const bool quiet,
+                       const char **pws, uint32_t npw, uint64_t *took_out)
 {
-  const char *node   = "/dev/litepcie0";
-  uint32_t    cost   = 5;
-  uint32_t    spread = 0;
-  bool        quiet  = false;
-
-  uint8_t salt[16];
-
-  for (int i = 0; i < 16; i++) salt[i] = (uint8_t) i;
-
-  const char *pws[MAX_RECS];
-  uint32_t    npw = 0;
-
-  for (int i = 1; i < argc; i++)
-  {
-    if      ((strcmp (argv[i], "--node")   == 0) && (i + 1 < argc)) node   = argv[++i];
-    else if ((strcmp (argv[i], "--cost")   == 0) && (i + 1 < argc)) cost   = (uint32_t) strtoul (argv[++i], NULL, 0);
-    else if ((strcmp (argv[i], "--spread") == 0) && (i + 1 < argc)) spread = (uint32_t) strtoul (argv[++i], NULL, 0);
-    else if  (strcmp (argv[i], "--hex")    == 0) g_hex = true;
-    else if  (strcmp (argv[i], "--quiet")  == 0) quiet = true;
-    else if ((strcmp (argv[i], "--salt")   == 0) && (i + 1 < argc))
-    {
-      const char *h = argv[++i];
-
-      if (strlen (h) != 32) { fprintf (stderr, "--salt takes 32 hex digits\n"); return 1; }
-
-      for (int k = 0; k < 16; k++) { unsigned v; sscanf (&h[2 * k], "%2x", &v); salt[k] = (uint8_t) v; }
-    }
-    else if ((strcmp (argv[i], "--help") == 0) || (strcmp (argv[i], "-h") == 0))
-    {
-      fprintf (stderr, "usage: %s [--node PATH] [--cost N] [--salt HEX32] [--spread K] [--hex] [--quiet] [password ...]\n", argv[0]);
-      return 0;
-    }
-    else if (npw < MAX_RECS) pws[npw++] = argv[i];
-  }
-
-  if ((cost < 4) || (cost > 31)) { fprintf (stderr, "cost %u is outside bcrypt's 4..31\n", cost); return 1; }
-
-  printf ("[1] open %s\n", node);
-
-  g_fd = open (node, O_RDWR | O_CLOEXEC);
-
-  if (g_fd < 0) { printf ("  !! %s: %s\n", node, strerror (errno)); return 1; }
-
-  char ident[257];
-
-  int n = 0;
-
-  for (; n < 256; n++)
-  {
-    ident[n] = (char) litepcie_readl (g_fd, CSR_IDENTIFIER_MEM_BASE + (uint32_t) (4 * n));
-
-    if (ident[n] == 0) break;
-  }
-
-  ident[n] = 0;
-
-  const uint32_t cores  = rd (HCFPGA_CSR_CORE_COUNT);
-  const uint32_t status = rd (HCFPGA_CSR_STATUS);
-
-  printf ("  identity: %s\n", ident);
-  printf ("  cores %u, status 0x%08x (framing slip %u, buffer end seen %u, slip count %u)\n",
-    cores, status, status & 1, (status >> 1) & 1, (status >> 8) & 0xff);
-
-#ifdef CSR_XADC_TEMPERATURE_ADDR
-  const uint32_t t = litepcie_readl (g_fd, CSR_XADC_TEMPERATURE_ADDR);
-
-  printf ("  die temperature %.1f C\n", ((double) t * 503.975 / 4096.0) - 273.15);
-#endif
-
-  if ((cores == 0) || (cores > MAX_CORES)) { printf ("  !! a core count of %u is not believable, stopping\n", cores); return 1; }
-
   // Candidates.
+
+  memset (g_cand,     0, sizeof (g_cand));
+  memset (g_core_ok,  0, sizeof (g_core_ok));
+  memset (g_core_bad, 0, sizeof (g_core_bad));
 
   uint32_t nrec = 0;
 
@@ -298,14 +235,14 @@ int main (int argc, char **argv)
 
   memset (&info, 0, sizeof (info));
 
-  if (ioctl (g_fd, LITEPCIE_IOCTL_MMAP_DMA_INFO, &info) < 0) { printf ("  !! MMAP_DMA_INFO: %s\n", strerror (errno)); return 1; }
+  if (ioctl (g_fd, LITEPCIE_IOCTL_MMAP_DMA_INFO, &info) < 0) { printf ("  !! MMAP_DMA_INFO: %s\n", strerror (errno)); return false; }
 
   const size_t ring = (size_t) info.dma_tx_buf_size * info.dma_tx_buf_count;
 
   uint8_t *tx = mmap (NULL, ring, PROT_READ | PROT_WRITE, MAP_SHARED, g_fd, (off_t) info.dma_tx_buf_offset);
   uint8_t *rx = mmap (NULL, ring, PROT_READ | PROT_WRITE, MAP_SHARED, g_fd, (off_t) info.dma_rx_buf_offset);
 
-  if ((tx == MAP_FAILED) || (rx == MAP_FAILED)) { printf ("  !! mmap of the DMA rings failed: %s\n", strerror (errno)); return 1; }
+  if ((tx == MAP_FAILED) || (rx == MAP_FAILED)) { printf ("  !! mmap of the DMA rings failed: %s\n", strerror (errno)); return false; }
 
   static uint8_t h2c[MAX_RECS * HCFPGA_H2C_REC_BYTES_MAX + H2C_ALIGN];
 
@@ -328,7 +265,7 @@ int main (int argc, char **argv)
 
   c2h_bytes = ((c2h_bytes + DMA_BUFFER_SIZE - 1) / DMA_BUFFER_SIZE) * DMA_BUFFER_SIZE;
 
-  if ((used > ring) || (c2h_bytes > ring)) { printf ("  !! batch of %u records does not fit the %zu byte ring\n", nrec, ring); return 1; }
+  if ((used > ring) || (c2h_bytes > ring)) { printf ("  !! batch of %u records does not fit the %zu byte ring\n", nrec, ring); return false; }
 
   printf ("[3] DMA: %zu bytes out (%u records, zero padded to %u bytes), %llu bytes armed in\n",
     used, nrec, H2C_ALIGN, (unsigned long long) c2h_bytes);
@@ -344,13 +281,13 @@ int main (int argc, char **argv)
   {
     printf ("  !! the DMA engines are in use by another process (hashcat?)\n");
 
-    return 1;
+    return false;
   }
 
   struct litepcie_ioctl_dma lb;             memset (&lb, 0, sizeof (lb));  ioctl (g_fd, LITEPCIE_IOCTL_DMA, &lb);
   struct litepcie_ioctl_dma_oneshot os;     memset (&os, 0, sizeof (os));  os.enable = 1;
 
-  if (ioctl (g_fd, LITEPCIE_IOCTL_DMA_ONESHOT, &os) < 0) { printf ("  !! this driver has no one-shot DMA, build the one in src/fpga/driver\n"); return 1; }
+  if (ioctl (g_fd, LITEPCIE_IOCTL_DMA_ONESHOT, &os) < 0) { printf ("  !! this driver has no one-shot DMA, build the one in src/fpga/driver\n"); return false; }
 
   struct litepcie_ioctl_dma_writer we; memset (&we, 0, sizeof (we)); we.enable = 1; ioctl (g_fd, LITEPCIE_IOCTL_DMA_WRITER, &we);
   struct litepcie_ioctl_dma_reader re; memset (&re, 0, sizeof (re)); re.enable = 1; ioctl (g_fd, LITEPCIE_IOCTL_DMA_READER, &re);
@@ -364,7 +301,7 @@ int main (int argc, char **argv)
   arm.count       = (uint32_t) (c2h_bytes / DMA_BUFFER_SIZE);
   arm.last_length = 0;
 
-  if (ioctl (g_fd, LITEPCIE_IOCTL_DMA_WRITER_ARM, &arm) < 0) { printf ("  !! arming the C2H engine failed\n"); return 1; }
+  if (ioctl (g_fd, LITEPCIE_IOCTL_DMA_WRITER_ARM, &arm) < 0) { printf ("  !! arming the C2H engine failed\n"); return false; }
 
   memcpy (tx, h2c, used);
 
@@ -374,8 +311,9 @@ int main (int argc, char **argv)
   arm.last_length = (uint32_t) (used % DMA_BUFFER_SIZE);
 
   const uint64_t t0 = now_ms ();
+  const uint64_t t0_us = now_us ();
 
-  if (ioctl (g_fd, LITEPCIE_IOCTL_DMA_READER_ARM, &arm) < 0) { printf ("  !! arming the H2C engine failed\n"); return 1; }
+  if (ioctl (g_fd, LITEPCIE_IOCTL_DMA_READER_ARM, &arm) < 0) { printf ("  !! arming the H2C engine failed\n"); return false; }
 
   // A wave is one candidate per core. Upstream's cycle model puts one at about 19k cycles per round
   // plus a fixed cost; allow ten times that at 50 MHz before calling the card stuck.
@@ -492,7 +430,8 @@ int main (int argc, char **argv)
     ioctl (g_fd, LITEPCIE_IOCTL_MMAP_DMA_WRITER_UPDATE, &upd);
   }
 
-  const uint64_t took = now_ms () - t0;
+  const uint64_t took_us = now_us () - t0_us;
+  const uint64_t took    = took_us / 1000;
 
   const uint32_t retired = rd (HCFPGA_CSR_RETIRED);
   const uint32_t status2 = rd (HCFPGA_CSR_STATUS);
@@ -541,6 +480,152 @@ int main (int argc, char **argv)
   const bool pass = eob && (bad_n == 0) && (foreign == 0) && (missing == 0) && (err_n == 0);
 
   printf ("%s\n", pass ? "PASS" : "FAIL");
+
+  if (took_out) *took_out = took_us;
+
+  munmap (tx, ring);
+  munmap (rx, ring);
+
+  return pass;
+
+}
+
+int main (int argc, char **argv)
+{
+  const char *node   = "/dev/litepcie0";
+  uint32_t    cost   = 5;
+  uint32_t    spread = 0;
+  bool        quiet  = false;
+  bool        wave_model = false;
+
+  uint8_t salt[16];
+
+  for (int i = 0; i < 16; i++) salt[i] = (uint8_t) i;
+
+  const char *pws[MAX_RECS];
+  uint32_t    npw = 0;
+
+  for (int i = 1; i < argc; i++)
+  {
+    if      ((strcmp (argv[i], "--node")   == 0) && (i + 1 < argc)) node   = argv[++i];
+    else if ((strcmp (argv[i], "--cost")   == 0) && (i + 1 < argc)) cost   = (uint32_t) strtoul (argv[++i], NULL, 0);
+    else if ((strcmp (argv[i], "--spread") == 0) && (i + 1 < argc)) spread = (uint32_t) strtoul (argv[++i], NULL, 0);
+    else if  (strcmp (argv[i], "--hex")    == 0) g_hex = true;
+    else if  (strcmp (argv[i], "--quiet")  == 0) quiet = true;
+    else if  (strcmp (argv[i], "--wave-model") == 0) wave_model = true;
+    else if ((strcmp (argv[i], "--salt")   == 0) && (i + 1 < argc))
+    {
+      const char *h = argv[++i];
+
+      if (strlen (h) != 32) { fprintf (stderr, "--salt takes 32 hex digits\n"); return 1; }
+
+      for (int k = 0; k < 16; k++) { unsigned v; sscanf (&h[2 * k], "%2x", &v); salt[k] = (uint8_t) v; }
+    }
+    else if ((strcmp (argv[i], "--help") == 0) || (strcmp (argv[i], "-h") == 0))
+    {
+      fprintf (stderr, "usage: %s [--node PATH] [--cost N] [--salt HEX32] [--spread K] [--hex] [--quiet] [--wave-model] [password ...]\n", argv[0]);
+      return 0;
+    }
+    else if (npw < MAX_RECS) pws[npw++] = argv[i];
+  }
+
+  if ((cost < 4) || (cost > 31)) { fprintf (stderr, "cost %u is outside bcrypt's 4..31\n", cost); return 1; }
+
+  printf ("[1] open %s\n", node);
+
+  g_fd = open (node, O_RDWR | O_CLOEXEC);
+
+  if (g_fd < 0) { printf ("  !! %s: %s\n", node, strerror (errno)); return 1; }
+
+  char ident[257];
+
+  int n = 0;
+
+  for (; n < 256; n++)
+  {
+    ident[n] = (char) litepcie_readl (g_fd, CSR_IDENTIFIER_MEM_BASE + (uint32_t) (4 * n));
+
+    if (ident[n] == 0) break;
+  }
+
+  ident[n] = 0;
+
+  const uint32_t cores  = rd (HCFPGA_CSR_CORE_COUNT);
+  const uint32_t status = rd (HCFPGA_CSR_STATUS);
+
+  printf ("  identity: %s\n", ident);
+  printf ("  cores %u, status 0x%08x (framing slip %u, buffer end seen %u, slip count %u)\n",
+    cores, status, status & 1, (status >> 1) & 1, (status >> 8) & 0xff);
+
+#ifdef CSR_XADC_TEMPERATURE_ADDR
+  const uint32_t t = litepcie_readl (g_fd, CSR_XADC_TEMPERATURE_ADDR);
+
+  printf ("  die temperature %.1f C\n", ((double) t * 503.975 / 4096.0) - 273.15);
+#endif
+
+  if ((cores == 0) || (cores > MAX_CORES)) { printf ("  !! a core count of %u is not believable, stopping\n", cores); return 1; }
+
+  uint64_t took = 0;
+
+  if (wave_model)
+  {
+    // Wave time is linear in the bcrypt round count: (cycles_per_iter * rounds + cycles_per_wave) / clock,
+    // plus a fixed launch cost per batch. Two round counts and two batch sizes separate the three.
+    const uint32_t K[2] = { 32, 256 };
+    const uint32_t C[2] = { 5, 8 };
+
+    double ms[2][2];
+
+    for (int ci = 0; ci < 2; ci++) for (int ki = 0; ki < 2; ki++)
+    {
+      if (run_batch (cores, C[ci], salt, K[ki], true, NULL, 0, &took) == false) { printf ("  !! a timing batch failed, no model\n"); close (g_fd); return 2; }
+
+      ms[ci][ki] = (double) took / 1000.0;
+    }
+
+    const char *cl = strstr (ident, ";clk=");
+
+    const double mhz = (cl != NULL) ? atof (cl + 5) : 0;
+
+    if (mhz <= 0) { printf ("  !! the identity carries no clock, no model\n"); close (g_fd); return 2; }
+
+    const double kcyc = mhz * 1000.0;  // cycles per ms
+
+    double wave_cyc[2], launch_ms[2];
+
+    for (int ci = 0; ci < 2; ci++)
+    {
+      const double per_wave = (ms[ci][1] - ms[ci][0]) / (double) (K[1] - K[0]);
+
+      wave_cyc[ci]  = per_wave * kcyc;
+      launch_ms[ci] = ms[ci][0] - (per_wave * (double) K[0]);
+    }
+
+    const double r0 = (double) (1u << C[0]);
+    const double r1 = (double) (1u << C[1]);
+
+    const double cpi = (wave_cyc[1] - wave_cyc[0]) / (r1 - r0);
+    const double cpw = wave_cyc[0] - (cpi * r0);
+
+    char board[64] = "?";
+
+    const char *b = strstr (ident, "board=");
+
+    if (b != NULL) sscanf (&b[6], "%63[^;]", board);
+
+    printf ("[wave model] batches of %u and %u waves at cost %u and %u: %.1f %.1f %.1f %.1f ms\n", K[0], K[1], C[0], C[1], ms[0][0], ms[0][1], ms[1][0], ms[1][1]);
+    printf ("  cycles per round %.0f, cycles per wave %.0f, launch measured here %.2f ms\n", cpi, cpw, (launch_ms[0] + launch_ms[1]) / 2);
+    printf ("  row for WAVE_MODELS in src/bridges/bridge_fpga_bcrypt.c; the launch column there is the\n");
+    printf ("  bridge's whole per-batch overhead, which is larger than this tool's, so start from the\n");
+    printf ("  value the other boards use:\n");
+    printf ("  { \"%s\", %u, %.0f, %.0f, 2100 },\n", board, cores, cpi, cpw);
+
+    close (g_fd);
+
+    return 0;
+  }
+
+  const bool pass = run_batch (cores, cost, salt, spread, quiet, pws, npw, &took);
 
   close (g_fd);
 
