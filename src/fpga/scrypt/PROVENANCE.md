@@ -34,7 +34,7 @@ All under `gateware/scrypt/`, in upstream's directories (`scrypt/`, `util/`). Th
 | File | Change |
 |---|---|
 | `scrypt/scrypt.vh`, `scrypt/main.vh`, `util/fifo_sync.v`, `util/log2.vh` | none |
-| `scrypt/v_table_bram.v` | one memory with a read enable (below, the V table) |
+| `scrypt/v_table_bram.v` | one memory with a read enable, block RAM shapes capped at 4K deep (below, the V table) |
 | `scrypt/salsa20_8.v`, `scrypt/hmac_sha256.v` | comments only: em dashes replaced by colons and commas, the project's style |
 | `scrypt/blockmix.v` | the output index without a reversed range at `R` 1 (below, r at run time) |
 | `scrypt/romix.v` | Integerify over the r values the build has (below, r at run time); the V table's read enable (below, the V table); a lookup gap (below); comment punctuation as above |
@@ -74,6 +74,8 @@ With these the unit agrees with `hashlib.scrypt` for r = 1 to 8 (`tb_datapath.py
 ### The V table
 
 `v_table_bram.v` built the table as `WIDTH / 32` memories of 32 bits, each read every cycle. At `R` 8 that is 256 memories per unit, and Verilator spent most of a unit's simulation time reading them (a profile of the bench showed the 512 read blocks of its two units on top; it ran at about 30 kHz). Quartus merges the 32-bit slices into one `WIDTH`-bit memory anyway, as its RAM summary for `WIDTH` 1024 shows. It is now one memory `WIDTH` bits wide with a read enable, `re`: `rdata` takes `mem[raddr]` in a cycle with `re` high and holds otherwise, which a block RAM's read enable does too. `romix.v` raises `re` for the one cycle in which upstream's table read `V[j]` (the cycle after `ST_MIX_ADDR` registers the address), so `rdata` holds `V[j]` from `ST_MIX_READ2` on as before. The bench runs at 110 to 180 kHz at `R` 8 since.
+
+The memory also carries Quartus's `max_depth = 4096`. A Stratix V M20K holds 20 Kbit in its 512 x 40 to 4K x 5 shapes but 16 Kbit as 8K x 2 or 16K x 1, and Quartus picks the shape as deep as the table: fits of `v_table_bram` alone on the 5SGSMD5 put a 16384 x 1024-bit table in 1,024 blocks, and with the cap in 820 (cascaded 4K x 5). Tables 4K deep or shallower are not affected. Other tools ignore the attribute.
 
 ### Lookup gap
 

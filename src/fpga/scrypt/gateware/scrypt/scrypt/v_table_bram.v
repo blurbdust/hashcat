@@ -37,7 +37,10 @@ module v_table_bram #(
    // One memory WIDTH bits wide (vendor tools slice it into block RAMs of their own width; Quartus
    // merged upstream's 32-bit slices into one such memory anyway). The read enable keeps Verilator
    // from copying WIDTH bits every cycle, which made up most of a unit's simulation time at R = 8.
-   (* RAM_STYLE = "BLOCK" *)
+   // max_depth (Quartus): Stratix V M20K blocks hold 20 Kbit as 4K x 5 and shallower, 16 Kbit as
+   // 8K x 2 and 16K x 1, and Quartus picks the shape as deep as the table; capped at 4K a deeper
+   // table takes cascaded 4K x 5 blocks (16384 x 1024 bits: 820 blocks instead of 1024).
+   (* RAM_STYLE = "BLOCK", max_depth = 4096 *)
    reg [WIDTH-1:0] mem [0:DEPTH-1];
 
    always @(posedge CLK) begin
