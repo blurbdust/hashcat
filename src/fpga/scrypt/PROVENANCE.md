@@ -2,7 +2,7 @@
 
 The scrypt computing unit in this design is LiteX-Scrypt's `scrypt_unit`: PBKDF2-HMAC-SHA256, ROMix over BlockMix and Salsa20/8 with the V table in block RAM, and PBKDF2 again, behind a byte-wide input FIFO and a 2-bit serial output in the style of John the Ripper's units. LiteX-Scrypt is the repository owner's own work. Its files carry no license header; they are offered here under the MIT license, as hashcat's FPGA code is. The unit's input FIFO (`util/fifo_sync.v`) and `util/log2.vh` are John the Ripper's, by Denis Burykin, under their own permissive terms. hashcat has modified the unit. Every file taken keeps its original header verbatim, and each modified file adds a notice under that header pointing here. This page lists every change.
 
-The rest of the design was written for hashcat: the engine, the datapath top, the LiteX wrapper and the bench here, and the H2C intake, generation counter, JtR unit collector, end-of-batch tail, wrapper base, simulated board and bench they use (copies of the LiteX hashcat Guide's `template/shared/`, which every algorithm after bcrypt has).
+The rest of the design was written for hashcat: the engine, the datapath top, the LiteX wrapper and the bench here, and the H2C intake, generation counter, JtR unit collector, end-of-batch tail, wrapper base, simulated board and bench they use (identical in every algorithm after bcrypt).
 
 ## Origin
 
@@ -49,7 +49,7 @@ Not taken: upstream's arbiters (`arbiter_tx.v`, `arbiter_rx.v`), comparator (`co
 hashcat uses the unit's full mode (`FULL_MODE` 1): password in, derived key out. Upstream's LiteX port only ran the SMix-only mode, where the host computes both PBKDF2 calls, and a bench of the unit alone against Python's `hashlib.scrypt` found that full mode computed no correct key. Three things were wrong, all fixed here; with them the unit agrees with `hashlib.scrypt` for every case the bench runs (keys of 0 to 64 bytes, salts of 0 to 32 bytes, N from 2 to 32768).
 
 - **`sha256_core.v`: the message schedule.** Rounds 16 to 63 added `W[round mod 16]`, which still holds the word of round - 16, instead of the word expanded for this round (`W_new`, which the same cycle writes into that slot for later rounds). Every hash came out wrong (`SHA-256("abc")` gave `84c010ce...`). `Wt` now takes `W_new` from round 16 on.
-- **`scrypt_unit.v`: byte order.** `pbkdf2_sha256` takes its key, its message and its result big-endian (byte 0 in the top bits, as SHA-256 reads a block); `romix` and the unit's registers keep byte 0 in bits 7:0 (the SMix-only mode feeds `romix` that way, and a bench of `romix` alone against a Python ROMix agreed, see the LiteX hashcat Guide, `ports/scrypt/porting-notes.md`). The unit wired them together unchanged. The key is now stored byte 0 first in the top bits, and `rev_bytes128`/`rev_bytes32` turn the 128-byte blocks between `pbkdf2_sha256` and `romix` and the 32-byte derived key around, so the unit returns the key byte 0 first, as its SMix-only mode returns ROMix's result.
+- **`scrypt_unit.v`: byte order.** `pbkdf2_sha256` takes its key, its message and its result big-endian (byte 0 in the top bits, as SHA-256 reads a block); `romix` and the unit's registers keep byte 0 in bits 7:0 (the SMix-only mode feeds `romix` that way, and a bench of `romix` alone against a Python ROMix agreed). The unit wired them together unchanged. The key is now stored byte 0 first in the top bits, and `rev_bytes128`/`rev_bytes32` turn the 128-byte blocks between `pbkdf2_sha256` and `romix` and the 32-byte derived key around, so the unit returns the key byte 0 first, as its SMix-only mode returns ROMix's result.
 - **`scrypt_unit.v`: one start pulse per PBKDF2 call.** The unit held `pbkdf2_start_r` high until `done`. `pbkdf2_sha256` is idle again in the cycle its `done` shows and takes a start that is still high, so every call started a second, unwanted one, and the next call's `done` came from it. The start is now one cycle, set as the unit enters the state that waits for `done`, with the mode beside it.
 
 The SMix-only path holds `romix_start` high until `done` in the same way (`ST_RUN`). hashcat does not use that mode, so it is left as upstream wrote it and was not checked.
@@ -77,7 +77,7 @@ None of these changes behaviour hashcat relies on in simulation, so none is chan
 | `gateware/scrypt_dma_wrapper.py` | the LiteX wrapper |
 | `gateware/scrypt/tb_datapath.py`, `tb_dut.vh`, `scrypt_ref.py` | the datapath bench and its reference |
 
-Shared with every algorithm after bcrypt, as copies of the LiteX hashcat Guide's `template/shared/` (see its README): `hcfpga_*.py` and `hcfpga_iface.vh` here, the shared RTL and bench in `gateware/scrypt/`. Until the layout change they were one `src/fpga/common/`.
+Shared with every algorithm after bcrypt, identical in each: `hcfpga_*.py` and `hcfpga_iface.vh` here, the shared RTL and bench in `gateware/scrypt/`.
 
 ## Other material derived from LiteX-Scrypt
 

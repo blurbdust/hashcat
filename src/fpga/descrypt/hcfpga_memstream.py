@@ -7,8 +7,7 @@
 
 # HcfpgaMemStream: hcfpga's two streams carried over plain register accesses.
 #
-# From the LiteX hashcat Guide (gateware/hcfpga_memstream.py, MIT), which keeps a copy for its bcrypt
-# debug sim. Every algorithm's directory has this copy, for its simulated board.
+# Every algorithm's directory has this copy, for its simulated board.
 #
 # Every hcfpga wrapper takes H2C 32-bit words on a sink and gives C2H bytes on a source. On PCIe
 # boards LitePCIe's DMA feeds them. This module feeds them from two rings that the host reaches

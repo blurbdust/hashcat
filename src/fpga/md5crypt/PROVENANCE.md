@@ -2,7 +2,7 @@
 
 The md5crypt computing unit in this design is John the Ripper's ZTEX md5crypt unit, written by Denis Burykin: three MD5 cores, a 12-thread CPU that runs the md5crypt program, and the engine that builds MD5 blocks from the CPU's instructions. hashcat uses it under its own permissive license and has modified it. Every file taken from it keeps its original header verbatim, and each modified file adds a notice under that header pointing here. This page lists every change.
 
-The rest of the design was written for hashcat: the datapath top, the LiteX wrapper and the bench here, and the feeder, collector, end-of-batch tail, wrapper base, simulated board and bench they use (copies of the LiteX hashcat Guide's `template/shared/`, which this port started and every later algorithm has). `README.md` describes it.
+The rest of the design was written for hashcat: the datapath top, the LiteX wrapper and the bench here, and the feeder, collector, end-of-batch tail, wrapper base, simulated board and bench they use (identical in every algorithm after bcrypt).
 
 ## Origin
 
@@ -41,7 +41,7 @@ The files write `` `include "md5.vh" `` where upstream writes `` `include "../md
 
 Upstream's `shreg.v` and `shreg_ff.v` instantiate the Xilinx `SRL16E` primitive once per bit, with the address fixed at `DEPTH-1` (`DEPTH-2` in `shreg_ff`). That ties the cores to Xilinx and leaves Verilator without a model. Both now hold the same delay line as a behavioural register array, zero at start as `SRL16E` with `INIT` 0 is, which Vivado and Quartus infer as shift register LUTs or registers. The ports, the delay and `shreg_ff`'s output register are unchanged.
 
-Apart from the changes above, the MD5 cores, the CPU and its md5crypt program, the engine, the unit's input and output buffers and the thread scheduling are upstream's. The unit's I/O protocol is not documented upstream. What this design relies on is written up in `README.md` and in the headers of `gateware/md5crypt/hcfpga_jtr_unit_feed.v` and `hcfpga_jtr_unit_collect.v`.
+Apart from the changes above, the MD5 cores, the CPU and its md5crypt program, the engine, the unit's input and output buffers and the thread scheduling are upstream's. The unit's I/O protocol is not documented upstream. What this design relies on is written up in the headers of `gateware/md5crypt/hcfpga_jtr_unit_feed.v` and `hcfpga_jtr_unit_collect.v`.
 
 ## Other material derived from John the Ripper
 
@@ -58,7 +58,7 @@ Apart from the changes above, the MD5 cores, the CPU and its md5crypt program, t
 | `gateware/md5crypt_dma_wrapper.py` | the LiteX wrapper, an `HcfpgaDmaWrapper` with `salt_len` |
 | `gateware/md5crypt/tb_dut.vh`, `tb_datapath.py`, `md5crypt_ref.py` | the datapath bench on the shared one, and its md5crypt reference |
 
-Shared, as copies of the LiteX hashcat Guide's `template/shared/` (see its README; until the layout change one `src/fpga/common/`): the H2C intake, the JtR unit feeder and collector, the generation counter, the end-of-batch tail, the frame contract (`rtl/hcfpga_iface.vh`), the ABI reader, the wrapper base, HcfpgaMemStream, the simulated board and the bench.
+Shared with every algorithm after bcrypt, identical in each: the H2C intake, the JtR unit feeder and collector, the generation counter, the end-of-batch tail, the frame contract (`rtl/hcfpga_iface.vh`), the ABI reader, the wrapper base, HcfpgaMemStream, the simulated board and the bench.
 
 ## Toolchain
 

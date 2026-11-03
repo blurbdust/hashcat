@@ -8,7 +8,7 @@
 // result collector (hcfpga_jtr_unit_collect.v beside this file), whose read the unit's output
 // matches.
 //
-// Contract with the top (the LiteX hashcat Guide's template, the custom engine):
+// Contract with the top:
 //
 // - A record is ready while rec_valid is high: rec_len, rec_id, and the password through
 //   pw_rd_addr/pw_rd_data (word k = bytes 4k..4k+3, big-endian). rec_taken pulses when its packet

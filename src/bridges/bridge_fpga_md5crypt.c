@@ -19,7 +19,7 @@
 #include "fpga/hcfpga_md5crypt_ref.h"
 
 // md5crypt on an FPGA (hash mode 90500): bcrypt's bridge with md5crypt's specifics. The gateware is
-// src/fpga/md5crypt; the LiteX hashcat Guide's ports/md5crypt/README.md gives the reason for each value below.
+// src/fpga/md5crypt.
 
 #define ALGO_NAME "md5crypt"
 

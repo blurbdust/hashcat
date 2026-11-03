@@ -19,7 +19,7 @@
 #include "fpga/hcfpga_sha512crypt_ref.h"
 
 // sha512crypt on an FPGA (hash mode 91800): bcrypt's bridge with sha512crypt's specifics. The gateware is
-// src/fpga/sha512crypt; the LiteX hashcat Guide's ports/sha512crypt/README.md gives the reason for each value below.
+// src/fpga/sha512crypt.
 
 #define ALGO_NAME "sha512crypt"
 

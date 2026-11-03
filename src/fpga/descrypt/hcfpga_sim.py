@@ -14,14 +14,14 @@
 # drives it like any LiteX board listed in HCFPGA_LITEXBONE.
 #
 # The wrapper is gateware/<algo>_dma_wrapper.py, an HcfpgaDmaWrapper subclass whose for_sim()
-# builds it. bcrypt's simulated board is the LiteX hashcat Guide's debug/bcrypt_sim.py.
+# builds it.
 #
 #   src/fpga/md5crypt/hcfpga_sim.py --bridge uartbone --build-only
 #   src/fpga/md5crypt/hcfpga_sim.py --bridge uartbone --no-build &
 #   HCFPGA_LITEXBONE=tcp:127.0.0.1:2430 ./hashcat -m 90500 hash.txt words.txt
 #
-# Etherbone needs a tap interface, so run it in a user and network namespace with the Guide's
-# debug/simns.sh (hashcat in the same namespace): HCFPGA_LITEXBONE=udp:192.168.9.50.
+# Etherbone needs a tap interface the user may open (--tap) and hashcat able to reach the board
+# at its address: HCFPGA_LITEXBONE=udp:192.168.9.50.
 #
 # The simulator is built with run=False and exec'd here: LiteX would wrap the run in sudo whenever
 # the ethernet module is present, which a user namespace neither needs nor allows. Two UARTBone sims
@@ -199,7 +199,7 @@ def main():
     parser = argparse.ArgumentParser(description=f"{ALGO} on a simulated LiteX board, for hashcat's litexbone transport.")
     parser.add_argument("--bridge",     default="uartbone", choices=["etherbone", "uartbone"],
         help="Host bridge. uartbone: HCFPGA_LITEXBONE=tcp:127.0.0.1:<uart-port> (no privileges). "
-             f"etherbone: HCFPGA_LITEXBONE=udp:<ip> (needs a tap, run under the Guide's debug/simns.sh).")
+             f"etherbone: HCFPGA_LITEXBONE=udp:<ip> (needs a tap interface).")
     parser.add_argument("--units",      type=int, default=1,   help="Computing units (see the algorithm's SIM_UNITS_HELP).")
     parser.add_argument("--no-cmp",     action="store_true",   help="Build without the comparator: every result returns.")
     parser.add_argument("--h2c-depth",  type=int, default=512, help="H2C ring size in 32-bit words.")

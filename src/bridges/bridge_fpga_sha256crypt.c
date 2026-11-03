@@ -19,7 +19,7 @@
 #include "fpga/hcfpga_sha256crypt_ref.h"
 
 // sha256crypt on an FPGA (hash mode 97400): bcrypt's bridge with sha256crypt's specifics. The gateware is
-// src/fpga/sha256crypt; the LiteX hashcat Guide's ports/sha256crypt/README.md gives the reason for each value below.
+// src/fpga/sha256crypt.
 
 #define ALGO_NAME "sha256crypt"
 

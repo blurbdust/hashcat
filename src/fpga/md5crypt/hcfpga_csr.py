@@ -27,8 +27,7 @@
 # xadc (0x4000) and dna (0x4800) there, and a register the bridge reads on those boards must not be
 # something else on this one.
 #
-# The LiteX hashcat Guide carries the bcrypt-only version of this file (gateware/hcfpga_csr.py),
-# which names the bank at 0 "bcrypt". Here the bank at 0 is named after the algorithm.
+# The bank at 0 is named after the algorithm.
 
 EXTRA_FIRST = 27
 
