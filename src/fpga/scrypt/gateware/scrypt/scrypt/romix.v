@@ -13,6 +13,12 @@
  *
  * Phase A (Fill): V[0]=X; for i=1..N-1: V[i]=BlockMix(V[i-1])
  * Phase B (Mix):  for i=0..N-1: j=Integerify(X) mod N; X=BlockMix(X xor V[j])
+ *
+ * GAP_LOG2 (hashcat; internal BRAM only): a lookup gap G = 2^GAP_LOG2. The fill
+ * stores V[i] only when i mod G = 0, at address i / G, so the table holds
+ * 2^(N_LOG2_MAX - GAP_LOG2) blocks. A read of V[j] loads V[j - j mod G] and
+ * runs BlockMix on it j mod G times with the same BlockMix, before X is mixed
+ * in: (G - 1) / 2 BlockMix calls more per step of the mix, on average.
  */
 
 // Modified for hashcat from LiteX-Scrypt's original.
@@ -21,7 +27,8 @@
 module romix #(
    parameter R                = 1,   // Max scrypt block size (compile-time)
    parameter N_LOG2_MAX       = 15,  // Max supported log2(N)
-   parameter V_TABLE_EXTERNAL = 0    // 0=internal BRAM, 1=external port
+   parameter V_TABLE_EXTERNAL = 0,   // 0=internal BRAM, 1=external port
+   parameter GAP_LOG2         = 0    // lookup gap G = 2^GAP_LOG2 (internal BRAM only), below N_LOG2_MAX
 )(
    input CLK,
    input start,
@@ -45,6 +52,11 @@ module romix #(
 
    localparam DATA_WIDTH = 1024 * R;
    localparam NUM_BLOCKS_MAX = 2 * R;
+
+   // Lookup gap: the table's depth, and j mod G
+   localparam VT_LOG2 = N_LOG2_MAX - GAP_LOG2;
+   localparam GW      = (GAP_LOG2 < 1) ? 1 : GAP_LOG2;
+   localparam [GW-1:0] GAP_MASK = (1 << GAP_LOG2) - 1;
 
    // Latched parameters (captured at start, stable during computation)
    reg [4:0] n_log2_r;
@@ -71,15 +83,15 @@ module romix #(
 
    generate if (V_TABLE_EXTERNAL == 0) begin : gen_vtable_bram
       v_table_bram #(
-         .N_LOG2_MAX(N_LOG2_MAX),
+         .N_LOG2_MAX(VT_LOG2),
          .WIDTH(DATA_WIDTH)
       ) u_vtable (
          .CLK(CLK),
          .we(v_we_int),
-         .waddr(v_waddr_int),
+         .waddr(v_waddr_int[VT_LOG2-1:0]),
          .wdata(X),
          .re(v_re_int),
-         .raddr(v_raddr_int),
+         .raddr(v_raddr_int[VT_LOG2-1:0]),
          .rdata(v_rdata_int)
       );
    end else begin : gen_vtable_external
@@ -131,9 +143,11 @@ module romix #(
       localparam ST_MIX_XOR    = 4'd6;
       localparam ST_MIX_WAIT   = 4'd7;
       localparam ST_DONE       = 4'd8;
+      localparam ST_MIX_RECOMP = 4'd9;   // lookup gap: BlockMix steps from V[j - j mod G] to V[j]
 
       reg [3:0] state = ST_IDLE;
       reg [N_LOG2_MAX-1:0] counter;
+      reg [GW-1:0] gap_left = 0;         // BlockMix steps still to recompute for this V[j]
 
       always @(posedge CLK) begin
          done <= 0;
@@ -165,8 +179,8 @@ module romix #(
          // ============ FILL PHASE ============
 
          ST_FILL_STORE: begin
-            v_we_int <= 1;
-            v_waddr_int <= counter;
+            v_we_int <= ((counter[GW-1:0] & GAP_MASK) == 0);   // every G-th block
+            v_waddr_int <= counter >> GAP_LOG2;
             bm_in <= X;
             bm_start <= 1;
             state <= ST_FILL_WAIT;
@@ -188,8 +202,9 @@ module romix #(
          // ============ MIX PHASE ============
 
          ST_MIX_ADDR: begin
-            v_raddr_int <= integerify_j;
-            v_re_int <= 1;              // the table reads V[j] in ST_MIX_READ
+            v_raddr_int <= integerify_j >> GAP_LOG2;
+            gap_left <= integerify_j[GW-1:0] & GAP_MASK;       // j mod G
+            v_re_int <= 1;              // the table reads V[j - j mod G] in ST_MIX_READ
             state <= ST_MIX_READ;
          end
 
@@ -202,9 +217,27 @@ module romix #(
          end
 
          ST_MIX_XOR: begin
-            bm_in <= X ^ v_rdata_int;
             bm_start <= 1;
-            state <= ST_MIX_WAIT;
+            if (gap_left == 0) begin
+               bm_in <= X ^ v_rdata_int;
+               state <= ST_MIX_WAIT;
+            end else begin
+               bm_in <= v_rdata_int;    // V[j - j mod G], j mod G steps from V[j]
+               state <= ST_MIX_RECOMP;
+            end
+         end
+
+         ST_MIX_RECOMP: begin
+            if (bm_done) begin
+               gap_left <= gap_left - 1'b1;
+               bm_start <= 1;
+               if (gap_left == 1) begin
+                  bm_in <= X ^ bm_out;  // bm_out is V[j]
+                  state <= ST_MIX_WAIT;
+               end else begin
+                  bm_in <= bm_out;
+               end
+            end
          end
 
          ST_MIX_WAIT: begin

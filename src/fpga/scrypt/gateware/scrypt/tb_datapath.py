@@ -15,6 +15,7 @@
 #   ./tb_datapath.py --case cycles        cycles of one candidate at N = 1024, 16384 and r = 1, R_MAX
 #   ./tb_datapath.py --case example       mode 8900's example hash (N = 16384, r = 8)
 #   ./tb_datapath.py --r-max 1 --n-log2-max 10    another build (each has its own directory)
+#   ./tb_datapath.py --gap 8              ROMix with a lookup gap of 8
 #   SIM_WORK=<dir> ./tb_datapath.py       where to build (default ../../build/tb_datapath)
 
 import argparse
@@ -53,10 +54,11 @@ INCLUDES = [HERE, CORE, UTIL]
 # Mode 8900's example hash: N = 16384, r = 8, p = 1, password "hashcat".
 EXAMPLE = "SCRYPT:16384:8:1:OTEyNzU0ODg=:Cc8SPjRH1hFQhuIPCdF51uNGtJ2aOY/isuoMlMUsJ8c="
 
-def build_params(work, n_log2_max, r_max):
+def build_params(work, n_log2_max, r_max, gap):
   """The top's build parameters, as tb_dut.vh includes them; rewritten only when they change."""
   path = os.path.join(work, "tb_scrypt_build.vh")
-  text = "`define TB_SCRYPT_N_LOG2_MAX %d\n`define TB_SCRYPT_R_MAX %d\n" % (n_log2_max, r_max)
+  text = "`define TB_SCRYPT_N_LOG2_MAX %d\n`define TB_SCRYPT_R_MAX %d\n`define TB_SCRYPT_GAP_LOG2 %d\n" % (
+    n_log2_max, r_max, gap.bit_length() - 1)
   os.makedirs(work, exist_ok=True)
   if not os.path.isfile(path) or open(path).read() != text:
     with open(path, "w") as f:
@@ -78,16 +80,17 @@ def main():
   ap.add_argument("--rounds", type=int, default=ROUNDS)
   ap.add_argument("--n-log2-max", type=int, default=N_LOG2_MAX, help="the build's N_LOG2_MAX")
   ap.add_argument("--r-max", type=int, default=R_MAX, help="the build's R_MAX")
+  ap.add_argument("--gap", type=int, default=1, choices=[1, 2, 4, 8], help="the build's lookup gap G")
   ap.add_argument("--rebuild", action="store_true")
   args = ap.parse_args()
 
   work = os.environ.get("SIM_WORK", os.path.join(HERE, "..", "..", "build", "tb_datapath"))
-  work = os.path.abspath(os.path.join(work, "u%d_n%d_r%d" % (args.units, args.n_log2_max, args.r_max)))
+  work = os.path.abspath(os.path.join(work, "u%d_n%d_r%d_g%d" % (args.units, args.n_log2_max, args.r_max, args.gap)))
   if args.rebuild and os.path.isdir(work):
     shutil.rmtree(work)
-  build_params(work, args.n_log2_max, args.r_max)
+  build_params(work, args.n_log2_max, args.r_max, args.gap)
   exe = hb.build(work, SOURCES, INCLUDES + [work], {"NUM_UNITS": args.units, "WITH_CMP": 1}, HERE)
-  print("build: %d units, N_LOG2_MAX %d, R_MAX %d" % (args.units, args.n_log2_max, args.r_max))
+  print("build: %d units, N_LOG2_MAX %d, R_MAX %d, lookup gap %d" % (args.units, args.n_log2_max, args.r_max, args.gap))
 
   rng = random.Random(7)
   salt = SALT

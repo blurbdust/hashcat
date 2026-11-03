@@ -37,9 +37,9 @@ All under `gateware/scrypt/`, in upstream's directories (`scrypt/`, `util/`). Th
 | `scrypt/v_table_bram.v` | one memory with a read enable (below, the V table) |
 | `scrypt/salsa20_8.v`, `scrypt/hmac_sha256.v` | comments only: em dashes replaced by colons and commas, the project's style |
 | `scrypt/blockmix.v` | the output index without a reversed range at `R` 1 (below, r at run time) |
-| `scrypt/romix.v` | Integerify over the r values the build has (below, r at run time); the V table's read enable (below, the V table); comment punctuation as above |
+| `scrypt/romix.v` | Integerify over the r values the build has (below, r at run time); the V table's read enable (below, the V table); a lookup gap (below); comment punctuation as above |
 | `scrypt/pbkdf2_sha256.v` | r at run time, its blocks in `romix`'s byte order (below); comment punctuation as above |
-| `scrypt/scrypt_unit.v` | `main.vh` included; full mode: byte order to and from `pbkdf2_sha256`, one start pulse per PBKDF2 call, r handed to `pbkdf2_sha256` (below); comment punctuation as above |
+| `scrypt/scrypt_unit.v` | `main.vh` included; full mode: byte order to and from `pbkdf2_sha256`, one start pulse per PBKDF2 call, r handed to `pbkdf2_sha256` (below); `GAP_LOG2` handed to `romix` (below, lookup gap); comment punctuation as above |
 | `scrypt/sha256_core.v` | the message schedule of rounds 16 to 63 (below); comment punctuation as above |
 
 Not taken: upstream's arbiters (`arbiter_tx.v`, `arbiter_rx.v`), comparator (`comparator.v`, `scrypt_cmp_config.v`), its stream top (`scrypt_axis_8b.sv`), the packet layer (`gateware/pkt_comm/`), the LiteX wrappers and the DDR3 V table controller (`gateware/*.py`), `util/SRL16E.v`, `util/asymm_bram.v`, `util/delay.v`, `util/ff32.v`, `util/sync.v` (the unit does not use them), the sim and board targets and the host scripts. hashcat's engine and the template's collector replace the arbiters and the comparator.
@@ -74,6 +74,10 @@ With these the unit agrees with `hashlib.scrypt` for r = 1 to 8 (`tb_datapath.py
 ### The V table
 
 `v_table_bram.v` built the table as `WIDTH / 32` memories of 32 bits, each read every cycle. At `R` 8 that is 256 memories per unit, and Verilator spent most of a unit's simulation time reading them (a profile of the bench showed the 512 read blocks of its two units on top; it ran at about 30 kHz). Quartus merges the 32-bit slices into one `WIDTH`-bit memory anyway, as its RAM summary for `WIDTH` 1024 shows. It is now one memory `WIDTH` bits wide with a read enable, `re`: `rdata` takes `mem[raddr]` in a cycle with `re` high and holds otherwise, which a block RAM's read enable does too. `romix.v` raises `re` for the one cycle in which upstream's table read `V[j]` (the cycle after `ST_MIX_ADDR` registers the address), so `rdata` holds `V[j]` from `ST_MIX_READ2` on as before. The bench runs at 110 to 180 kHz at `R` 8 since.
+
+### Lookup gap
+
+A time-memory trade-off for boards whose block RAM is short: `romix.v` takes a parameter `GAP_LOG2` (G = 2^`GAP_LOG2`, hashcat builds 1, 2, 4 or 8), and `scrypt_unit.v` passes its own down. With G above 1 the fill stores V[i] only when i mod G is 0, at address i / G, so the table is 2^(`N_LOG2_MAX` - `GAP_LOG2`) blocks deep, G times smaller. In the mix a read of V[j] loads V[j - j mod G] from address j / G and runs it through BlockMix j mod G times (a new state, `ST_MIX_RECOMP`, on the unit's one BlockMix) before X is mixed in. A step of the mix costs (G - 1) / 2 BlockMix calls more on average, so a candidate takes about 1 + (G - 1) / 4 times as long: 1.25, 1.74 and 2.74 times at N = 16384, r = 8 for G = 2, 4 and 8. G = 1 is upstream's ROMix, cycle for cycle. The gap applies to the block RAM table only; the external table's state machine (`V_TABLE_EXTERNAL` 1) is unchanged and stores every block.
 
 ### Left as upstream wrote it
 

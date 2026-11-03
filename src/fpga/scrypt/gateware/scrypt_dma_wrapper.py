@@ -10,11 +10,12 @@
 # scrypt's use of the shared registers: salt0..3 carry salt bytes 0..15 (hashcat's salt_buf[0..3]),
 # iter_count is N, core_count the number of scrypt units, one candidate in flight each.
 #
-# Build parameters: n_log2_max (a unit's V table holds 2^n_log2_max blocks, so N up to that) and
-# r_max (the widest r a unit computes; r comes at run time). A unit's V table takes
-# 2^n_log2_max * 128 * r_max bytes of block RAM. The simulated board uses the defaults, which are
-# the limits module_98900.c and bridge_fpga_scrypt.c state; a board build with smaller ones needs
-# the module's limits changed to match (the known-answer canary fails a salt the build cannot
+# Build parameters: n_log2_max (N up to 2^n_log2_max), r_max (the widest r a unit computes; r
+# comes at run time) and gap (ROMix's lookup gap G, 1, 2, 4 or 8: the V table holds every G-th
+# block, and a read recomputes up to G - 1 BlockMix steps). A unit's V table takes
+# 2^n_log2_max / gap * 128 * r_max bytes of block RAM. The simulated board uses the defaults, whose
+# limits are the ones module_98900.c and bridge_fpga_scrypt.c state; a board build with smaller ones
+# needs the module's limits changed to match (the known-answer canary fails a salt the build cannot
 # compute).
 
 import os
@@ -52,16 +53,21 @@ class ScryptDmaWrapper(HcfpgaDmaWrapper):
 
     N_LOG2_MAX = 15
     R_MAX      = 8
+    GAP        = 1
 
     # The engine reads the units with the shared JtR collector.
     COMMON_RTL = HcfpgaDmaWrapper.COMMON_RTL + ("hcfpga_jtr_unit_collect.v",)
 
-    def __init__(self, platform, num_cores=1, with_cmp=1, n_log2_max=N_LOG2_MAX, r_max=R_MAX):
+    def __init__(self, platform, num_cores=1, with_cmp=1, n_log2_max=N_LOG2_MAX, r_max=R_MAX, gap=GAP):
+        if gap not in (1, 2, 4, 8) or (1 << n_log2_max) <= gap:
+            raise ValueError("gap must be 1, 2, 4 or 8 and below 2^n_log2_max")
         self.n_log2_max = n_log2_max
         self.r_max      = r_max
+        self.gap        = gap
         HcfpgaDmaWrapper.__init__(self, platform,
             num_cores = num_cores,
-            params    = dict(NUM_CORES=num_cores, WITH_CMP=with_cmp, N_LOG2_MAX=n_log2_max, R_MAX=r_max),
+            params    = dict(NUM_CORES=num_cores, WITH_CMP=with_cmp, N_LOG2_MAX=n_log2_max, R_MAX=r_max,
+                             GAP_LOG2=gap.bit_length() - 1),
         )
 
     def hdl_sources(self):

@@ -45,6 +45,7 @@ module hcfpga_scrypt_engine #(
   parameter WITH_CMP     = 1,
   parameter N_LOG2_MAX   = 15,     // the V table holds 2^N_LOG2_MAX blocks: N up to that
   parameter R_MAX        = 8,      // the widest r the units compute; r comes at run time
+  parameter GAP_LOG2     = 0,      // ROMix lookup gap G = 2^GAP_LOG2: the V table holds every G-th block
 
   parameter PW_WORDS = (PW_MAX + 3) / 4,
   parameter PW_AW    = (PW_WORDS <= 2) ? 1 : $clog2(PW_WORDS)
@@ -140,7 +141,7 @@ module hcfpga_scrypt_engine #(
     begin : units
       // The external V table ports are unused with V_TABLE_EXTERNAL 0.
       /* verilator lint_off PINCONNECTEMPTY */
-      scrypt_unit #(.R(R_MAX), .N_LOG2_MAX(N_LOG2_MAX), .FULL_MODE(1), .V_TABLE_EXTERNAL(0)) unit (
+      scrypt_unit #(.R(R_MAX), .N_LOG2_MAX(N_LOG2_MAX), .FULL_MODE(1), .V_TABLE_EXTERNAL(0), .GAP_LOG2(GAP_LOG2)) unit (
         .CLK(CLK),
         .unit_in(unit_in), .unit_in_ctrl(unit_in_ctrl), .unit_in_wr_en(unit_in_wr_en[u]),
         .unit_in_afull(unit_in_afull[u]), .unit_in_ready(unit_in_ready[u]),

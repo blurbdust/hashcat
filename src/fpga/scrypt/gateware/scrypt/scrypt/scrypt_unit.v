@@ -49,7 +49,8 @@ module scrypt_unit #(
    parameter R                = `SCRYPT_R,
    parameter N_LOG2_MAX       = `N_LOG2_MAX,
    parameter FULL_MODE        = 0,   // 0=SMix-only, 1=Full scrypt with PBKDF2
-   parameter V_TABLE_EXTERNAL = `V_TABLE_EXTERNAL
+   parameter V_TABLE_EXTERNAL = `V_TABLE_EXTERNAL,
+   parameter GAP_LOG2         = 0    // ROMix lookup gap G = 2^GAP_LOG2 (internal BRAM only)
 )(
    input CLK,
 
@@ -134,7 +135,8 @@ module scrypt_unit #(
    romix #(
       .R(R),
       .N_LOG2_MAX(N_LOG2_MAX),
-      .V_TABLE_EXTERNAL(V_TABLE_EXTERNAL)
+      .V_TABLE_EXTERNAL(V_TABLE_EXTERNAL),
+      .GAP_LOG2(GAP_LOG2)
    ) u_romix (
       .CLK(CLK),
       .start(romix_start),

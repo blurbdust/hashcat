@@ -18,8 +18,10 @@
 // scrypt's own registers, from 0x3c: salt_len, then salt4..7 (salt bytes 16..31; salt0..3 carry
 // bytes 0..15), then r. iter_count is N.
 //
-// Build parameters: N_LOG2_MAX (the V table holds 2^N_LOG2_MAX blocks, N up to that) and R_MAX
-// (the widest r; r comes at run time). A unit's V table is 2^N_LOG2_MAX * 128 * R_MAX bytes.
+// Build parameters: N_LOG2_MAX (N up to 2^N_LOG2_MAX), R_MAX (the widest r; r comes at run time)
+// and GAP_LOG2 (ROMix's lookup gap G = 2^GAP_LOG2: the V table holds every G-th block, and a read
+// recomputes up to G - 1 BlockMix steps). A unit's V table is 2^(N_LOG2_MAX - GAP_LOG2) * 128 *
+// R_MAX bytes.
 
 `timescale 1ns / 1ps
 module hcfpga_scrypt_top #(
@@ -29,7 +31,8 @@ module hcfpga_scrypt_top #(
   parameter WITH_CMP = 1,
 
   parameter N_LOG2_MAX = 15,
-  parameter R_MAX      = 8
+  parameter R_MAX      = 8,
+  parameter GAP_LOG2   = 0
 )(
   input  wire CLK,
   input  wire rst,
@@ -105,7 +108,7 @@ module hcfpga_scrypt_top #(
 
   hcfpga_scrypt_engine #(
     .NUM_CORES(NUM_CORES), .PW_MAX(PW_MAX), .DIGEST_BYTES(DIGEST_BYTES), .WITH_CMP(WITH_CMP),
-    .N_LOG2_MAX(N_LOG2_MAX), .R_MAX(R_MAX)
+    .N_LOG2_MAX(N_LOG2_MAX), .R_MAX(R_MAX), .GAP_LOG2(GAP_LOG2)
   ) engine (
     .CLK(CLK), .rst(rst),
     .rec_valid(rec_valid), .rec_len(rec_len), .rec_id(rec_id),
