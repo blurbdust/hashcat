@@ -40,6 +40,7 @@ import os
 import re
 import ast
 import sys
+import textwrap
 
 COMMON   = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(COMMON, "template")
@@ -151,10 +152,7 @@ def bridged_module(text, a):
     # A fast hash upstream (descrypt). The bridge replaces the loop of the slow-hash flow, so the bridged
     # mode takes that shape: init, the loop, comp. The upstream kernel's own build options go with it.
     sub(r"ATTACK_EXEC_INSIDE_KERNEL", "ATTACK_EXEC_OUTSIDE_KERNEL", "switch ATTACK_EXEC")
-    text, n = re.subn(r"static const u64\s+KERN_BITS\s*=[^;]*;\n", "", text)
-    if n:
-      fast_dropped.append("KERN_BITS")
-    for fn in ("module_kern_bits", "module_jit_cache_disable"):
+    for fn in ("module_jit_cache_disable",):
       text, found = drop_function(text, fn)
       if found:
         fast_dropped.append(fn)
@@ -171,6 +169,27 @@ def bridged_module(text, a):
   elif "ATTACK_EXEC_OUTSIDE_KERNEL" not in text:
     notes.append(f"// {TODO}: the upstream mode's ATTACK_EXEC is neither OUTSIDE_KERNEL nor INSIDE_KERNEL; the bridged\n"
                  f"// mode must be ATTACK_EXEC_OUTSIDE_KERNEL.")
+
+  # KERN_BITS names the upstream kernel's extra kernels (loop prepare, loop extended, init2, hooks, TM).
+  # The pass-through kernel has only init, loop and comp, so they go. AUX kernels are comp variants a
+  # mode may still need (WPA's per key version); those stay, flagged.
+  m = re.search(r"static const u64\s+KERN_BITS\s*=\s*([^;]*);\n", text)
+  if m:
+    bits = re.findall(r"KERN_BIT_\w+", m.group(1))
+    aux  = [b for b in bits if re.match(r"KERN_BIT_AUX\d+$", b)]
+    gone = [b for b in bits if b not in aux]
+    if aux:
+      indent = " " * (m.group(0).index("=") + 2)
+      text = text[:m.start()] + "static const u64   KERN_BITS      = " + ("\n" + indent[:-2] + "| ").join(aux) + ";\n" + text[m.end():]
+      notes.append(textwrap.fill(f"{TODO}: KERN_BITS keeps the upstream AUX kernels ({', '.join(aux)}); the scaffold's "
+                                 f"pass-through kernel has none. Give m{a.fpga_mode}-pure.cl the upstream comp and aux kernels, "
+                                 f"reading the digest from the bridge's tmp struct.", width=100,
+                                 initial_indent="// ", subsequent_indent="// "))
+    else:
+      text = text[:m.start()] + text[m.end():]
+      text, _ = drop_function(text, "module_kern_bits")
+    if gone:
+      notes.append("// Dropped from KERN_BITS with the upstream kernel: " + ", ".join(gone) + ".")
 
   sub(r"(\*/\n)", r"\1\n// @@@INTRO@@@\n", "find the license header")
 
@@ -291,6 +310,13 @@ u32 module_salt_max (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED c
   if m is None:
     die("upstream module: could not find module_init")
   regs = set(re.findall(r"^\s*module_ctx->(\w+)\s*=\s*\1;", m.group(1), re.M))
+  helpers = [(sl, fn) for sl, fn in re.findall(r"^\s*module_ctx->(\w+)\s*=\s*(\w+);", m.group(1), re.M)
+             if fn != sl and fn != "MODULE_DEFAULT"]
+  if helpers:
+    listed = textwrap.fill(", ".join(fn for _, fn in helpers) + ".", width=96,
+                           initial_indent="// ", subsequent_indent="// ")
+    notes.append(f"// {TODO}: these upstream registrations were dropped; they point at helpers of the upstream kernel.\n"
+                 f"// Restore any the bridged mode needs, and drop the helper's #include if nothing uses it:\n" + listed)
   regs |= {"module_bridge_name", "module_bridge_type", "module_kernel_loops_max", "module_pw_max",
            "module_salt_max", "module_salt_min", "module_tmp_size"}
   other = [l for l in m.group(1).split("\n") if l.strip() and not re.match(r"^\s*module_ctx->\w+\s*=", l)]
@@ -339,6 +365,7 @@ def main():
   ap = argparse.ArgumentParser(description="Scaffold a new hcfpga algorithm in the hashcat tree.")
   ap.add_argument("--name", required=True, help="algorithm name: lower case, digits, underscore (sha256crypt)")
   ap.add_argument("--mode", required=True, type=int, help="the upstream hashcat mode whose format it takes; the FPGA mode is 90000 + this")
+  ap.add_argument("--fpga-mode", type=int, default=None, help="the FPGA mode, when 90000 + mode does not fit 90000..99998 (WPA: --mode 22000 --fpga-mode 92500)")
   ap.add_argument("--core", choices=["jtr-unit", "custom"], default="jtr-unit",
                   help="jtr-unit: John the Ripper crypt-family units on the shared feeder/collector; custom: any other core")
   ap.add_argument("--pw-max", type=int, default=64, help="longest password the core takes (bytes)")
@@ -361,9 +388,15 @@ def main():
     die("--name: lower case letters, digits and underscore, starting with a letter")
   if a.name == "bcrypt" or a.name == "common":
     die(f"--name {a.name} is taken")
-  if not (0 <= a.mode <= 9998):
-    die("--mode: the FPGA mode is 90000 + mode, and unofficial modes end at 99998")
-  a.fpga_mode = 90000 + a.mode
+  if a.mode < 0:
+    die("--mode: an upstream hashcat mode")
+  if a.fpga_mode is None:
+    if a.mode > 9998:
+      die(f"--mode {a.mode}: 90000 + mode is past 99998, where unofficial modes end. Give --fpga-mode\n"
+          "(the number is the project owner's choice; WPA's 22000 became 92500)")
+    a.fpga_mode = 90000 + a.mode
+  if not (90000 <= a.fpga_mode <= 99998):
+    die("--fpga-mode: unofficial modes are 90000 to 99998")
   a.up5       = "%05d" % a.mode
   if not (1 <= a.digest_words <= 6):
     die("--digest-words: 1 to 6 (the C2H record carries 24 digest bytes)")
