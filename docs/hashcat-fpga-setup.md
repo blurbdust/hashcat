@@ -50,13 +50,15 @@ The host side of the `Speed.#*` line and the 90c watchdog refer to this candidat
 |-------|-----------|-----------------|
 | 75000 | bcrypt    | `fpga_bcrypt`   |
 | 90500 | md5crypt  | `fpga_md5crypt` |
-| 97400 | sha256crypt | `fpga_sha256crypt` |
 | 91500 | descrypt  | `fpga_descrypt` |
 | 91800 | sha512crypt | `fpga_sha512crypt` |
+| 97400 | sha256crypt | `fpga_sha256crypt` |
 
 Mode 75000 is excluded from automatic detection because it shares the `$2*$` hash format with mode 3200. Use mode 3200 for the standard backend, or select mode 75000 explicitly when using an FPGA.
 
 Mode 90500 takes mode 500's `$1$` hashes and is likewise excluded from automatic detection. No md5crypt bitstream is published: the design has so far run on a simulated LiteX board only, see `src/fpga/md5crypt/README.md`. It takes passwords up to 64 bytes and salts of 1 to 8 bytes.
+
+Mode 91800 takes mode 1800's `$6$` hashes and is likewise excluded from automatic detection. No sha512crypt bitstream is published: the design has so far run on a simulated LiteX board only, see `src/fpga/sha512crypt/README.md`. It takes passwords up to 64 bytes, salts of 1 to 16 bytes and 1 to 999999999 rounds; mode 1800 also takes an empty salt and round counts outside that range, which mode 91800 refuses.
 
 Mode 97400 takes mode 7400's `$5$` hashes and is likewise excluded from automatic detection. No sha256crypt bitstream is published: the design has so far run on a simulated LiteX board only, see `src/fpga/sha256crypt/README.md`. It takes passwords up to 32 bytes, salts of 1 to 16 bytes and 1 to 999999999 rounds; mode 7400 also takes an empty salt and salts of up to 20 bytes, which mode 97400 refuses.
 

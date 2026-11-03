@@ -103,6 +103,6 @@ src/fpga/common/hcfpga_sim.py --algo sha512crypt --bridge uartbone --uart-port <
 HCFPGA_LITEXBONE=tcp:127.0.0.1:<port> ./hashcat -m 91800 hash.txt words.txt
 ```
 
-Pick a `<port>` nothing listens on (`ss -ltn`); without `--uart-port` the sim takes 2430. Etherbone (`--bridge etherbone`, `HCFPGA_LITEXBONE=udp:192.168.9.50`) needs a tap, so run the sim and hashcat under the LiteX hashcat Guide's `debug/simns.sh`. The simulated board runs at about 1 MHz, so mode 1800's example hash (5000 rounds) takes several seconds per batch.
+Pick a `<port>` nothing listens on (`ss -ltn`); without `--uart-port` the sim takes 2430. Etherbone (`--bridge etherbone`, `HCFPGA_LITEXBONE=udp:192.168.9.50`) needs a tap, so run the sim and hashcat under the LiteX hashcat Guide's `debug/simns.sh`. The simulated board runs at about 1 MHz, so mode 1800's example hash (5000 rounds) takes about 8 s for each wave of 16 candidates (one unit).
 
-The bench, which needs Verilator only: `make -C src/fpga sim ALGO=sha512crypt`.
+The bench, which needs Verilator only: `make -C src/fpga sim ALGO=sha512crypt` (about three minutes, most of it the 65537-round case).
