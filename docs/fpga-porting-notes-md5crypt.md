@@ -206,3 +206,86 @@ All commands from the worktree root unless noted, with `S=<scratch>`, `OCL_ICD_V
 10. Module 9xxxx, kernel `m9xxxx-pure.cl`, test module with narrowed constraints, `HARDWARE_MODES`.
 11. Prove, in this order: the upstream example hash with the self-test on; `HCFPGA_TEST=1 tools/test.py -m 9xxxx -P -f` (and `-a all`); a batch with one right candidate among many (`HCFPGA_TIMING=1` shows `recv`); `HCFPGA_CMP_OFF=1`; a wrong salt; `HCFPGA_INJECT_FAULT=send`; both bridges (UARTBone, Etherbone); bcrypt's sim still cracks.
 12. Docs: README, PROVENANCE, the setup doc's mode table, porting notes with every snag.
+
+## 10. Template outcome
+
+Sections 6 and 9 were carried out on branch `fpga-template`. md5crypt now runs on shared pieces that the next algorithm reuses, bcrypt's files are unchanged, and the draft checklist became `AGENTS.md` in the LiteX hashcat Guide (with `docs/porting-algorithm.md` there for humans).
+
+### What moved where
+
+| Was (md5crypt) | Now |
+|---|---|
+| `gateware/md5crypt/hcfpga_c2h_eob.v` | `src/fpga/common/rtl/hcfpga_c2h_eob.v`, unchanged logic |
+| the intake half of `hcfpga_md5crypt_feed.v` | `rtl/hcfpga_h2c_intake.v`: `PW_MAX` parameter, a password read port, `hold` for a send in progress |
+| the transmitter half of `hcfpga_md5crypt_feed.v` | `rtl/hcfpga_jtr_unit_feed.v`: `PW_MAX`, `KEY_ALIGN` (4, or 8 for sha512crypt's 64-bit thread memory) |
+| `hcfpga_md5crypt_collect.v` | `rtl/hcfpga_jtr_unit_collect.v`: `RESULT_LEN` (16, 32, 64), forwards `DIGEST_BYTES` from `DIGEST_OFF`, `CMP_BYTE` |
+| the generation counter in `hcfpga_md5crypt_top.sv` | `rtl/hcfpga_gen.v` |
+| `tb_datapath.v`, the plumbing of `tb_datapath.py` | `rtl/tb_hcfpga.v` (the top comes from the algorithm's `tb_dut.vh`), `hcfpga_bench.py` |
+| `Md5cryptDmaWrapper`'s registers and wiring | `hcfpga_dma_wrapper.py`: `HcfpgaDmaWrapper`, `EXTRA_CSRS` from 0x3c, `check_offsets()` |
+| `md5crypt_sim.py` | `hcfpga_sim.py --algo md5crypt` (also `--algo bcrypt`), `--uart-port`, `--tap`, `--host-ip` |
+| `hcfpga_abi.py`, `hcfpga_iface.vh` | `common/hcfpga_abi.py`, `common/rtl/hcfpga_iface.vh` |
+| HcfpgaMemStream and the CSR pinning, loaded from the Guide | `common/hcfpga_memstream.py`, `common/hcfpga_csr.py` (`pin_csrs(soc, algo)`) |
+| `bridge_fpga_md5crypt.c` | `src/bridges/fpga/hcfpga_bridge.c` and `hcfpga_bridge.h` (`hcfpga_algo_t`), plus a 91-line hook file |
+
+New: `new_fpga_algo.py` and `template/` (the scaffold), `rtl/hcfpga_jtr_unit_stub.v` (a JtR unit with a toy hash), and a hook check in the bridge (`algo_valid`).
+
+The hooks are the table in section 6: name, tmp struct (`HCFPGA_TMP_LAYOUT`), `pw_max`, `grain_per_core`, `core_name`, salt and iteration limits, `wait_cycles_per_iter`, `wave_models`, `canary_pw`, `canary_digest`, `config_regs`, `config_extra`, `digest_from_c2h`, `salt_check`, `diag_hint`. The configuration and canary caches now key on the whole salt (`salt_buf`, length, iterations, `salt_sign`) rather than four words, so an algorithm with more salt state needs no change there.
+
+### Line counts, hashcat-written md5crypt files
+
+| | Before | After |
+|---|---|---|
+| Bridge | `bridge_fpga_md5crypt.c` 2583 | `bridge_fpga_md5crypt.c` 91 (shared: `hcfpga_bridge.c` 2676, `hcfpga_bridge.h` 186) |
+| Gateware and sim | feed 264, collect 207, EOB 140, top 141, wrapper 132, sim 275, `hcfpga_abi.py` 35, `hcfpga_iface.vh` 30: 1224 | top 138, wrapper 69: 207 |
+| Bench | `tb_datapath.v` 154, `tb_datapath.py` 229, `md5crypt_ref.py` 78: 461 | `tb_dut.vh` 8, `tb_datapath.py` 130, `md5crypt_ref.py` 78: 216 |
+| All | 4268 | 514 |
+
+### Same behaviour
+
+- The bench cycle counts are identical before and after (lengths 827871, cmp 581090, salt 290015, pad 3381).
+- The simulated board's `csr.csv` is identical to `md5crypt_sim.py`'s apart from the build stamp.
+- `git diff 6b44b5399 -- src/fpga/bcrypt src/bridges/bridge_fpga_bcrypt.c src/bridges/bridge_fpga_bcrypt.mk src/modules/module_75000.c OpenCL/m75000-pure.cl` is empty; `src/bridges/fpga/` only gained `hcfpga_bridge.c` and `hcfpga_bridge.h`.
+
+### Proofs, rerun on the template
+
+Same environment as section 7 (`OCL_ICD_VENDORS` to the PoCL 3.0 ICD, `--force`), sims built by `src/fpga/common/hcfpga_sim.py --algo md5crypt --bridge <uartbone|etherbone> --build-only --output-dir <dir>`, the UARTBone one run with `--uart-port 2531`, the Etherbone one under `simns.sh` with its own `SIMNS_DIR`. Hashcat, bridges and modules rebuilt from the branch (`make` after deleting both FPGA bridges and modules 75000 and 90500).
+
+| What | Command | Result |
+|---|---|---|
+| Datapath bench | `make -C src/fpga sim ALGO=md5crypt` | lengths, cmp, salt, pad: `ALL PASS` |
+| Mode 500's example hash, UARTBone, self-test on | `HCFPGA_DEBUG=1 HCFPGA_LITEXBONE=tcp:127.0.0.1:2531 ./hashcat -m 90500 -a 0 --force --potfile-disable example.hash words8.txt` | self-test batch `recs=4 ... canaries=3`, `$1$38652870$DUjsu4TTlTsOe/xxZ05uf/:hashcat`, `Cracked` |
+| Same, Etherbone | `HCFPGA_LITEXBONE=udp:192.168.9.50` under `simns.sh` | same batches, `Cracked` |
+| test.py | `HCFPGA_TEST=1 HCFPGA_LITEXBONE=tcp:127.0.0.1:2531 python3 tools/test.py -m 90500 -P -f` | attack 0, single and multi, vector width 1 and 4: 4 OK, 3 min 9 s |
+| test.py, every attack | same with `-a all` | attacks 0, 4, 8, 9, single and multi, vector width 1 and 4: 14 OK, 0 errors, 10 min 48 s |
+| Comparator | Etherbone, `HCFPGA_TIMING=1 ... -n 3 -u 1000 ehash.hash words30.txt` | `recs=30 recv=2`, `Cracked` |
+| No compare | same with `HCFPGA_CMP_OFF=1` | `recs=30 recv=30`, `Cracked` |
+| Wrong salt | `$1$ehAsHC4u$...`, same 30 words | `recs=30 recv=1` (a bitmap collision, not a match), `Exhausted` |
+| Failed batches | `HCFPGA_INJECT_FAULT=send HCFPGA_INJECT_PERIOD=2` | `5 failures, none a wrong answer`, `No candidates were skipped`, `Cracked` |
+| bcrypt | the Guide's `debug/bcrypt_sim.py --hashcat <this tree>` (Etherbone, `simns.sh`), `./hashcat -m 75000 -a 0 --force --potfile-disable -n 1 -u 32` and `HCFPGA_TEST=1 tools/test.py -S -m 75000 -f -D 1` | `Cracked`; `1/1 hash-modes cracked their own self-test vector` |
+| bcrypt through the generic sim | `hcfpga_sim.py --algo bcrypt --units 4 --bridge uartbone --uart-port 2532`, then `./hashcat -m 75000 -a 0 --force --potfile-disable -n 1 -u 32` | `Cracked` (the CSR map equals `bcrypt_sim.py`'s) |
+
+### The scaffold, proved on throwaway algorithms
+
+In a copy of this tree (never the one under test):
+
+- `new_fpga_algo.py --name sha512crypt_try --mode 1800 --core jtr-unit --pw-max 64 --result-len 64 --key-align 8 --salt-min 1 --salt-max 16 --iter-min 1000 --iter-max 999999999`: bridge and module build without warnings; the untouched bench (stub unit, sha512crypt's geometry) prints `ALL PASS`; the top lints clean with Verilator; the simulated board builds with `salt_len` at 0x3c; and `hashcat -m 91800 --self-test-disable` against that board runs batches whose canaries match the generated C reference, ending `Exhausted` (the stub hashes a toy, so nothing cracks).
+- `new_fpga_algo.py --name descrypt_try --mode 1500 --core custom --pw-max 8 --digest-words 4 --digest-bytes 8 --iter-min 0`: bridge and module build, the bench passes with the engine stub, the top lints clean, the board builds, and the canary password is cut to 8 bytes.
+
+Two fixes came out of this: the generated canary reference wrote past its buffer when the device returns fewer digest bytes than the tmp struct holds, and a canary password longer than `pw_max` would have been a slip on the device. The second is now refused by the bridge at init.
+
+### Snags of the template work
+
+| # | Snag | Fix |
+|---|---|---|
+| T1 | `pkill -f` with a pattern that was also in the agent's own command line killed its shell | stop sims by PID (by their working directory) |
+| T2 | `self.wrapper = wrapper` in the sim SoC made a second CSR bank at location 3 | the wrapper is only the attribute named after the algorithm |
+| T3 | Register names inside a LiteX bank have no bank prefix; `csr.csv` adds it | `check_offsets()` strips the prefix if present |
+| T4 | Canary password longer than `pw_max` | `canary_pw` hook, scaffold truncates, bridge refuses at init |
+| T5 | Module, kernel and bridge each declare the tmp struct | `HCFPGA_TMP_LAYOUT`, the bridge checks `hashconfig->tmp_size` at launch |
+| T6 | `tmps.digest[DGST_R0..3]` past a short digest | the tmp digest has at least `DGST_POS3 + 1` words; unused device words are zero |
+
+### Not done by the template
+
+- bcrypt is not on it, on purpose: its files stay upstream's. `hcfpga_sim.py --algo bcrypt` builds bcrypt's own wrapper the way the Guide's `bcrypt_sim.py` does.
+- The Guide keeps its bcrypt-only `gateware/hcfpga_memstream.py` and `hcfpga_csr.py` for `debug/bcrypt_sim.py`, which has to work against an upstream hashcat without `src/fpga/common`.
+- No board target for any template algorithm yet, and no wave model; the next step for md5crypt is unchanged (section 8).

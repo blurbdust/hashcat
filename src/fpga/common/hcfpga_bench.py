@@ -70,9 +70,12 @@ def toy_result(pw, salt, iter_count, result_len):
   return bytes(out)
 
 def build(work, sources, includes, params, tb_dir):
-  """Verilate tb_hcfpga.v with the algorithm's tb_dut.vh (in tb_dir) once per work directory."""
+  """Verilate tb_hcfpga.v with the algorithm's tb_dut.vh (in tb_dir); again whenever an HDL file changed."""
   exe = os.path.join(work, "obj_dir", "Vtb_hcfpga")
-  if os.path.isfile(exe):
+  hdl = list(sources) + [os.path.join(RTL, "tb_hcfpga.v")]
+  for d in [tb_dir, RTL] + list(includes):
+    hdl += [os.path.join(d, f) for f in os.listdir(d) if f.endswith((".v", ".vh", ".sv", ".svh"))]
+  if os.path.isfile(exe) and os.path.getmtime(exe) >= max(os.path.getmtime(f) for f in hdl):
     return exe
   os.makedirs(work, exist_ok=True)
   cmd = ["verilator", "--binary", "-j", "0", "-O3", "--x-initial", "unique"] + VERILATOR_WARNINGS
