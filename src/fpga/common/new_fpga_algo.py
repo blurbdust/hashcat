@@ -176,6 +176,7 @@ def bridged_module(text, a):
   # KERN_BITS names the upstream kernel's extra kernels (loop prepare, loop extended, init2, hooks, TM).
   # The pass-through kernel has only init, loop and comp, so they go. AUX kernels are comp variants a
   # mode may still need (WPA's per key version); those stay, flagged.
+  aux = []
   m = re.search(r"static const u64\s+KERN_BITS\s*=\s*([^;]*);\n", text)
   if m:
     bits = re.findall(r"KERN_BIT_\w+", m.group(1))
@@ -194,6 +195,17 @@ def bridged_module(text, a):
     if gone:
       notes.append("// Dropped from KERN_BITS with the upstream kernel: " + ", ".join(gone) + ".")
 
+  # OPTI_TYPE flags that describe the upstream init and loop kernels, which the bridge replaces.
+  simd_gone = []
+  for flag in ("OPTI_TYPE_SLOW_HASH_SIMD_INIT", "OPTI_TYPE_SLOW_HASH_SIMD_LOOP", "OPTI_TYPE_SLOW_HASH_SIMD_LOOP2"):
+    for pat in (r"\n\s*\|\s*" + flag + r"\b", r"\b" + flag + r"\s*\n\s*\|\s*", r"(?<=OPTI_TYPE      = )" + flag + r"(?=;)"):
+      text, n = re.subn(pat, "0" if pat.startswith("(?<=") else "", text, count=1)
+      if n:
+        simd_gone.append(flag)
+        break
+  if simd_gone:
+    notes.append("// Dropped from OPTI_TYPE with the upstream init and loop kernels: " + ", ".join(simd_gone) + ".")
+
   sub(r"(\*/\n)", r"\1\n// @@@INTRO@@@\n", "find the license header")
 
   sub(r'(static const char \*HASH_NAME\s*=\s*")([^"]*)(";)', r'\1\2 [Bridged: FPGA]\3', "find HASH_NAME")
@@ -203,8 +215,10 @@ def bridged_module(text, a):
   if m is None:
     die("upstream module: could not find OPTS_TYPE")
   flags   = re.findall(r"OPTS_TYPE_\w+", m.group(2))
-  dropped = [f for f in flags if OPTS_DROP.match(f)]
-  kept    = [f for f in flags if not OPTS_DROP.match(f)] + ["OPTS_TYPE_NATIVE_THREADS", "OPTS_TYPE_AUTODETECT_DISABLE"]
+  # A mode that keeps upstream's AUX comp kernels runs them from the deep comp kernel: keep that flag.
+  drop    = lambda f: OPTS_DROP.match(f) and not (aux and f == "OPTS_TYPE_DEEP_COMP_KERNEL")
+  dropped = [f for f in flags if drop(f)]
+  kept    = [f for f in flags if not drop(f)] + ["OPTS_TYPE_NATIVE_THREADS", "OPTS_TYPE_AUTODETECT_DISABLE"]
   indent  = " " * (len(m.group(1)) - 2)
   opts    = m.group(1) + ("\n" + indent + "| ").join(kept) + ";"
   text    = text[:m.start()] + opts + text[m.end():]
@@ -219,6 +233,8 @@ def bridged_module(text, a):
 
   dropped_fns = []
   for fn in MODULE_DROP:
+    if aux and fn == "module_deep_comp_kernel":
+      continue
     text, found = drop_function(text, fn)
     if found:
       dropped_fns.append(fn)
@@ -312,18 +328,32 @@ u32 module_salt_max (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED c
   m = re.search(r"void module_init \(module_ctx_t \*module_ctx\)\n\{\n((?:.*\n)*?)\}\n", text)
   if m is None:
     die("upstream module: could not find module_init")
-  regs = set(re.findall(r"^\s*module_ctx->(\w+)\s*=\s*\1;", m.group(1), re.M))
+  regs = {sl: sl for sl in re.findall(r"^\s*module_ctx->(\w+)\s*=\s*\1;", m.group(1), re.M)}
+  # Registrations of shared helpers (scrypt_common.c, wpa_common.c): those about the upstream kernel's
+  # memory and tuning go, the module's own (options, benchmark cost) stay.
+  kernel_slots = set(MODULE_DROP) | {"module_extra_buffer_size", "module_extra_tuningdb_block",
+                                     "module_jit_cache_disable", "module_kern_bits"}
   helpers = [(sl, fn) for sl, fn in re.findall(r"^\s*module_ctx->(\w+)\s*=\s*(\w+);", m.group(1), re.M)
              if fn != sl and fn != "MODULE_DEFAULT"]
+  gone = [fn for sl, fn in helpers if sl in kernel_slots]
+  for sl, fn in helpers:
+    if sl not in kernel_slots:
+      regs[sl] = fn
+  if gone:
+    listed = textwrap.fill(", ".join(gone) + ".", width=96, initial_indent="// ", subsequent_indent="// ")
+    notes.append(f"// Dropped with the upstream kernel (its memory and tuning): the registrations of\n" + listed)
+  kept_helpers = [fn for sl, fn in helpers if sl not in kernel_slots]
+  if kept_helpers:
+    notes.append(textwrap.fill(f"{TODO}: the module keeps these upstream helper registrations: "
+                               + ", ".join(kept_helpers) + ". Check them.", width=100,
+                               initial_indent="// ", subsequent_indent="// "))
   if helpers:
-    listed = textwrap.fill(", ".join(fn for _, fn in helpers) + ".", width=96,
-                           initial_indent="// ", subsequent_indent="// ")
-    notes.append(f"// {TODO}: these upstream registrations were dropped; they point at helpers of the upstream kernel.\n"
-                 f"// Restore any the bridged mode needs, and drop the helper's #include if nothing uses it:\n" + listed)
-  regs |= {"module_bridge_name", "module_bridge_type", "module_kernel_loops_max", "module_pw_max",
-           "module_salt_max", "module_salt_min", "module_tmp_size"}
+    notes.append("// Drop a helper's #include if nothing uses it any more.")
+  for sl in ("module_bridge_name", "module_bridge_type", "module_kernel_loops_max", "module_pw_max",
+             "module_salt_max", "module_salt_min", "module_tmp_size"):
+    regs[sl] = sl
   other = [l for l in m.group(1).split("\n") if l.strip() and not re.match(r"^\s*module_ctx->\w+\s*=", l)]
-  body  = "\n".join(other) + "\n\n" + "".join("  module_ctx->%-31s = %s;\n" % (r, r) for r in sorted(regs))
+  body  = "\n".join(other) + "\n\n" + "".join("  module_ctx->%-31s = %s;\n" % (sl, regs[sl]) for sl in sorted(regs))
   text  = text[:m.start(1)] + body + text[m.end(1):]
 
   intro = (f"{a.name} computed on an FPGA through the fpga_{a.name} bridge (src/fpga/{a.name}). Generated by\n"
