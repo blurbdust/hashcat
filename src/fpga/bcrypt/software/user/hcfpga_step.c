@@ -540,6 +540,9 @@ static bool dma_exchange (const batch_t *b, tally_t *t)
   return ok;
 }
 
+static bool run_locked (const uint32_t cores, const uint32_t cost, const uint8_t *salt, const uint32_t spread, const bool quiet,
+                        const uint32_t nrec, uint64_t *took_out);
+
 static bool run_batch (const uint32_t cores, const uint32_t cost, const uint8_t *salt, const uint32_t spread, const bool quiet,
                        const char **pws, uint32_t npw, uint64_t *took_out)
 {
@@ -594,6 +597,20 @@ static bool run_batch (const uint32_t cores, const uint32_t cost, const uint8_t 
     nrec = npw;
   }
 
+  // Every register this tool writes is the running batch's configuration. Take the DMA engines
+  // first, so a running hashcat is refused here rather than reconfigured underneath.
+  if (dma_lock () == false) return false;
+
+  const bool pass = run_locked (cores, cost, salt, spread, quiet, nrec, took_out);
+
+  dma_release (true, true);
+
+  return pass;
+}
+
+static bool run_locked (const uint32_t cores, const uint32_t cost, const uint8_t *salt, const uint32_t spread, const bool quiet,
+                        const uint32_t nrec, uint64_t *took_out)
+{
   const uint32_t rounds = 1u << cost;
 
   for (uint32_t c = 0; c < nrec; c++)
@@ -717,30 +734,25 @@ static bool run_batch (const uint32_t cores, const uint32_t cost, const uint8_t 
     printf ("[3] DMA: %zu bytes out (%u records, zero padded to %u bytes), %llu bytes armed in\n",
       used, nrec, H2C_ALIGN, (unsigned long long) c2h_bytes);
 
-    if (dma_lock () == true)
+    const batch_t b =
     {
-      const batch_t b =
-      {
-        .nrec         = nrec,
-        .cores        = cores,
-        .rounds       = rounds,
-        .spread       = spread,
-        .quiet        = quiet,
-        .h2c          = h2c,
-        .used         = used,
-        .c2h_bytes    = c2h_bytes,
-        .tx           = tx,
-        .rx           = rx,
-        .rx_buf_count = info.dma_rx_buf_count,
-      };
+      .nrec         = nrec,
+      .cores        = cores,
+      .rounds       = rounds,
+      .spread       = spread,
+      .quiet        = quiet,
+      .h2c          = h2c,
+      .used         = used,
+      .c2h_bytes    = c2h_bytes,
+      .tx           = tx,
+      .rx           = rx,
+      .rx_buf_count = info.dma_rx_buf_count,
+    };
 
-      ran = dma_exchange (&b, &t);
+    ran = dma_exchange (&b, &t);
 
-      retired = rd (HCFPGA_CSR_RETIRED);
-      status  = rd (HCFPGA_CSR_STATUS);
-
-      dma_release (true, true);
-    }
+    retired = rd (HCFPGA_CSR_RETIRED);
+    status  = rd (HCFPGA_CSR_STATUS);
   }
 
   munmap (tx, ring);
