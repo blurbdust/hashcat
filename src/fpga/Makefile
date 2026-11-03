@@ -373,6 +373,10 @@ SIM_SCRIPT_sha512crypt := sha512crypt/gateware/sha512crypt/tb_datapath.py
 
 SIM_TOOL_sha512crypt := verilator
 
+SIM_SCRIPT_scrypt := scrypt/gateware/scrypt/tb_datapath.py
+
+SIM_TOOL_scrypt := verilator
+
 SIM_SCRIPT      := $(SIM_SCRIPT_$(ALGO))
 
 SIM_TOOL        := $(or $(SIM_TOOL_$(ALGO)),$(IVERILOG))
