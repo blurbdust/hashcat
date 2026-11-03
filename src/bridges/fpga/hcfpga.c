@@ -807,7 +807,7 @@ void fpga_status_report (hashcat_ctx_t *hashcat_ctx, const fpga_status_t status,
         break;
       }
 
-      event_log_error (hashcat_ctx, "FPGA bridge: FPGA PCIe device present, but no /dev/litepcie* node.");
+      event_log_error (hashcat_ctx, "FPGA bridge: PCIe device present, but no /dev/litepcie* node.");
       event_log_info (hashcat_ctx, "The FPGA endpoint is present, but the LitePCIe kernel driver is not loaded:");
       event_log_info (hashcat_ctx, NULL);
 
