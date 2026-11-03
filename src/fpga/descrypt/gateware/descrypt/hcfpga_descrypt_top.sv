@@ -6,7 +6,7 @@
 // descrypt datapath top: H2C records in, C2H records out, NUM_CORES of John the Ripper's DES
 // pipelines in between (hcfpga_descrypt_engine.v).
 //
-// The shared parts (src/fpga/common/rtl/) are the H2C intake, which delivers one whole record at a
+// The shared parts (the hcfpga_* files beside this one) are the H2C intake, which delivers one whole record at a
 // time, and the end-of-batch tail, which counts retired candidates and closes the batch. The engine
 // takes records from the intake, computes, and hands the tail whole 32-byte result records plus a
 // retire pulse per candidate. It also sees the arm (batch_target, batch_arm): a batch's last

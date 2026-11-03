@@ -4,7 +4,7 @@
 # License.....: MIT
 #
 
-# LiteX wrapper of the scrypt datapath, on the shared HcfpgaDmaWrapper (src/fpga/common): the
+# LiteX wrapper of the scrypt datapath, on HcfpgaDmaWrapper (../hcfpga_dma_wrapper.py): the
 # shared register block at bcrypt's offsets, plus EXTRA_CSRS from 0x3c.
 #
 # scrypt's use of the shared registers: salt0..3 carry salt bytes 0..15 (hashcat's salt_buf[0..3]),
@@ -14,11 +14,11 @@ import os
 import sys
 
 HERE   = os.path.dirname(os.path.abspath(__file__))
-COMMON = os.path.normpath(os.path.join(HERE, "..", "..", "common"))
+BASE   = os.path.normpath(os.path.join(HERE, ".."))
 ALGO   = os.path.join(HERE, "scrypt")
 
-if COMMON not in sys.path:
-    sys.path.insert(0, COMMON)
+if BASE not in sys.path:
+    sys.path.insert(0, BASE)
 
 from hcfpga_dma_wrapper import HcfpgaDmaWrapper
 
@@ -31,7 +31,7 @@ class ScryptDmaWrapper(HcfpgaDmaWrapper):
     ALGO = "scrypt"
     TOP  = "hcfpga_scrypt_top"
 
-    # The salt length and salt bytes 16..31, in the order the bridge's config_extra writes them.
+    # The salt length and salt bytes 16..31, in the order the bridge's send_config writes them.
     EXTRA_CSRS = (
         ("salt_len", 32, "Salt length in bytes, 0 to 32."),
         ("salt4",    32, "Salt bytes 16..19 (hashcat's salt_buf[4])."),

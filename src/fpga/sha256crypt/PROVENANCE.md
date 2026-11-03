@@ -2,7 +2,7 @@
 
 The sha256crypt computing unit in this design is John the Ripper's ZTEX sha256crypt unit, written by Denis Burykin: three SHA-256 cores, a 12-thread CPU that runs the sha256crypt program, and the engine that builds SHA-256 blocks from the CPU's instructions. hashcat uses it under its own permissive license and has modified it. Every file taken from it keeps its original header verbatim, and each modified file adds a notice under that header pointing here. This page lists every change.
 
-The rest of the design was written for hashcat: the datapath top, the LiteX wrapper and the bench here, and the feeder, collector, generation counter, end-of-batch tail, wrapper base, simulated board and bench they use from `src/fpga/common`, which every algorithm on the template shares.
+The rest of the design was written for hashcat: the datapath top, the LiteX wrapper and the bench here, and the feeder, collector, generation counter, end-of-batch tail, wrapper base, simulated board and bench they use (copies of the LiteX hashcat Guide's `template/shared/`, which every algorithm after bcrypt has).
 
 ## Origin
 
@@ -45,14 +45,14 @@ Upstream's `shreg.v` instantiates the Xilinx `SRL16E` primitive once per bit, wi
 
 A Verilator lint of `sha256unit` alone shows width, implicit-net and unsigned-comparison warnings only, all in upstream code. One looks like a bug and is harmless: `unit/core_ctrl.v` writes `cnt == A | B` where `cnt == A | cnt == B` was meant, so `seq_num` is cleared every cycle; the next statement sets it on the cycles that matter, and the cores only sample it with `start`. md5crypt's `core_ctrl.v` has the same line. It is not changed here.
 
-Apart from the changes above, the SHA-256 cores, the CPU and its sha256crypt program, the engine, the unit's input and output buffers and the thread scheduling are upstream's. The unit's I/O protocol is not documented upstream. What this design relies on is written up in `README.md` and in the headers of `src/fpga/common/rtl/hcfpga_jtr_unit_feed.v` and `hcfpga_jtr_unit_collect.v`.
+Apart from the changes above, the SHA-256 cores, the CPU and its sha256crypt program, the engine, the unit's input and output buffers and the thread scheduling are upstream's. The unit's I/O protocol is not documented upstream. What this design relies on is written up in `README.md` and in the headers of `gateware/sha256crypt/hcfpga_jtr_unit_feed.v` and `hcfpga_jtr_unit_collect.v`.
 
 ## Other material derived from John the Ripper
 
 | Where | Derived from |
 |---|---|
-| `src/fpga/common/rtl/hcfpga_jtr_unit_feed.v` (shared), the unit packet | upstream `arbiter_tx.v`: the type byte, the 40-byte header (count, salt length, 16 salt bytes, 8 ID bytes, key length, 7 zero bytes) and the key rounded up to whole words |
-| `src/fpga/common/rtl/hcfpga_jtr_unit_collect.v` (shared), the unit read | upstream `arbiter_rx.v`: one `rd_en` cycle, the `2'b11` start marker, `RESULT_LEN/2 + 4` = 20 16-bit words two bits at a time, and the closing `2'b00` |
+| `gateware/sha256crypt/hcfpga_jtr_unit_feed.v` (shared), the unit packet | upstream `arbiter_tx.v`: the type byte, the 40-byte header (count, salt length, 16 salt bytes, 8 ID bytes, key length, 7 zero bytes) and the key rounded up to whole words |
+| `gateware/sha256crypt/hcfpga_jtr_unit_collect.v` (shared), the unit read | upstream `arbiter_rx.v`: one `rd_en` cycle, the `2'b11` start marker, `RESULT_LEN/2 + 4` = 20 16-bit words two bits at a time, and the closing `2'b00` |
 
 ## Written for hashcat
 
@@ -62,7 +62,7 @@ Apart from the changes above, the SHA-256 cores, the CPU and its sha256crypt pro
 | `gateware/sha256crypt_dma_wrapper.py` | the LiteX wrapper, an `HcfpgaDmaWrapper` with `salt_len` |
 | `gateware/sha256crypt/tb_datapath.py`, `tb_dut.vh`, `sha256crypt_ref.py` | the datapath bench on the shared one, and its sha256crypt reference |
 
-Shared with every algorithm on the template: `src/fpga/common/` (see its README).
+Shared with every algorithm after bcrypt, as copies of the LiteX hashcat Guide's `template/shared/` (see its README): `hcfpga_*.py` and `hcfpga_iface.vh` here, the shared RTL and bench in `gateware/sha256crypt/`. Until the layout change they were one `src/fpga/common/`.
 
 ## Toolchain
 

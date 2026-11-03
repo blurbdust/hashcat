@@ -4,7 +4,7 @@
 # License.....: MIT
 #
 
-# LiteX wrapper of the sha256crypt datapath, on the shared HcfpgaDmaWrapper (src/fpga/common): the
+# LiteX wrapper of the sha256crypt datapath, on HcfpgaDmaWrapper (../hcfpga_dma_wrapper.py): the
 # shared register block at bcrypt's offsets, plus
 #
 #   0x3c salt_len      salt length in bytes, 1..16
@@ -18,16 +18,16 @@ import os
 import sys
 
 HERE   = os.path.dirname(os.path.abspath(__file__))
-COMMON = os.path.normpath(os.path.join(HERE, "..", "..", "common"))
+BASE   = os.path.normpath(os.path.join(HERE, ".."))
 ALGO   = os.path.join(HERE, "sha256crypt")
 
-if COMMON not in sys.path:
-    sys.path.insert(0, COMMON)
+if BASE not in sys.path:
+    sys.path.insert(0, BASE)
 
 from hcfpga_dma_wrapper import HcfpgaDmaWrapper
 
 # SHA-256 cores per computing unit, as the identity's cores= counts them. Each interleaves 4
-# computations, so the bridge's grain_per_core is 4. Upstream's core_ctrl.v needs exactly 3.
+# computations, so the bridge's GRAIN_PER_CORE is 4. Upstream's core_ctrl.v needs exactly 3.
 CORES_PER_UNIT = 3
 
 class Sha256cryptDmaWrapper(HcfpgaDmaWrapper):

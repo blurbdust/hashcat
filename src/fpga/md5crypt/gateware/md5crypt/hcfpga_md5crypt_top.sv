@@ -6,9 +6,9 @@
 // md5crypt datapath top: H2C records in, C2H records out, John the Ripper's computing units in
 // between. The ports are bcrypt's hcfpga_top.sv ports, with salt_len added and mode_dump dropped.
 //
-// Everything around the units is shared (src/fpga/common/rtl/): the JtR unit feeder and collector,
-// the generation counter and the end-of-batch tail. What is md5crypt's is the unit, its geometry
-// (64-byte keys in 4-byte steps, a 16-byte result) and CORES_PER_UNIT.
+// Everything around the units is shared (the hcfpga_* files beside this one): the JtR unit feeder
+// and collector, the generation counter and the end-of-batch tail. What is md5crypt's is the unit,
+// its geometry (64-byte keys in 4-byte steps, a 16-byte result) and CORES_PER_UNIT.
 //
 //   s_*      H2C, 32-bit words, first byte of the host buffer in bits 7:0
 //   m_*      C2H, bytes, m_last on byte 31 of every 32-byte record

@@ -39,7 +39,7 @@ def salt_buf(chars):
 SALT   = salt_buf("24")
 ROUNDS = 25
 
-# The bridge's canary password (hcfpga_algo_t.canary_pw): the default cut to 8 bytes.
+# The bridge's canary password (CANARY_PW in its bridge): bcrypt's cut to 8 bytes.
 CANARY_PW = b"hcfpga-ztex-canary"[:PW_MAX]
 
 # DES tables, FIPS 46 numbering (bit 1 is the most significant).

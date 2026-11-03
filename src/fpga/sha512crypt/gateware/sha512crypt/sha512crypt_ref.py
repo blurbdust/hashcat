@@ -36,7 +36,7 @@ DIGEST_BYTES = 16
 SALT   = b"saltstring"
 ROUNDS = 20
 
-# The bridge's canary password (hcfpga_algo_t.canary_pw, default "hcfpga-ztex-canary").
+# The bridge's canary password (CANARY_PW in its bridge, bcrypt's "hcfpga-ztex-canary").
 CANARY_PW = b"hcfpga-ztex-canary"[:PW_MAX]
 
 ITOA64 = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -71,7 +71,7 @@ def sha512crypt_digest(pw, salt, rounds):
   return sha512crypt_raw(pw, salt, rounds)[DIGEST_OFF:DIGEST_OFF + DIGEST_BYTES]
 
 def extra_regs(salt, rounds):
-  """The extra registers from 0x3c, in EXTRA_CSRS order, as the bridge's config_extra writes them."""
+  """The extra registers from 0x3c, in EXTRA_CSRS order, as the bridge's send_config writes them."""
   return [len(salt)]
 
 if __name__ == "__main__":

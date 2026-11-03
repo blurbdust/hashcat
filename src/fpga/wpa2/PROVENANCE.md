@@ -2,7 +2,7 @@
 
 The PBKDF2 and SHA-1 cores in this design are OpenCiphers' (David Hulton, for Pico Computing): the WPA-PSK PBKDF2 core of OpenCiphers' `wpapsk` module and the SHA-1 core of its `sha1` module, from which the `wpapsk` one was derived. OpenCiphers states that its cores are under the BSD license (below). hashcat has modified the files listed below. Every file taken keeps its original text, and each modified file adds a notice pointing here (the files have no header to put it under). This page lists every change.
 
-The rest of the design was written for hashcat: the engine, the datapath top, the LiteX wrapper and the bench here, and the H2C intake, generation counter, end-of-batch tail, wrapper base, simulated board and bench they use from `src/fpga/common`, which every algorithm on the template shares.
+The rest of the design was written for hashcat: the engine, the datapath top, the LiteX wrapper and the bench here, and the H2C intake, generation counter, end-of-batch tail, wrapper base, simulated board and bench they use (copies of the LiteX hashcat Guide's `template/shared/`, which every algorithm after bcrypt has).
 
 ## Origin
 
@@ -85,10 +85,10 @@ Not taken: `wpapsk/PBKDF2Bridge.v` (the Pico bus bridge and the core array), `wp
 | `gateware/wpa2/hcfpga_wpa2_top.sv` | the datapath top |
 | `gateware/wpa2_dma_wrapper.py` | the LiteX wrapper |
 | `gateware/wpa2/tb_datapath.py`, `tb_dut.vh`, `wpa2_ref.py` | the datapath bench and its reference |
-| `src/bridges/bridge_fpga_wpa2.c`, `src/bridges/fpga/hcfpga_wpa2_ref.h` | the bridge hooks and the canary's reference |
+| `src/bridges/bridge_fpga_wpa2.c`, `src/bridges/fpga/hcfpga_wpa2_ref.h` | the bridge (bcrypt's with wpa2's specifics) and the canary's reference |
 | `src/modules/module_92500.c`, `OpenCL/m92500-pure.cl`, `tools/test_modules/m92500.py` | mode 22000's module, kernel and test module, bridged |
 
-Shared with every algorithm on the template: `src/fpga/common/` (see its README).
+Shared with every algorithm after bcrypt, as copies of the LiteX hashcat Guide's `template/shared/` (see its README): `hcfpga_*.py` and `hcfpga_iface.vh` here, the shared RTL and bench in `gateware/wpa2/`. Until the layout change they were one `src/fpga/common/`.
 
 ## Toolchain
 

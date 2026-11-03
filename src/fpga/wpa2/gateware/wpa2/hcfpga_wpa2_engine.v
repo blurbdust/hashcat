@@ -17,7 +17,7 @@
 //                iterations each. The PMK is block 1's 20 bytes and the first 12 of block 2's.
 //   collector    reads a finished pair and sends its PMK as two C2H records.
 //
-// Contract with the top (src/fpga/common/template, the custom engine), PARTS = 2:
+// Contract with the top (the LiteX hashcat Guide's template, the custom engine), PARTS = 2:
 //
 // - A record is ready while rec_valid is high: rec_len, rec_id, and the password through
 //   pw_rd_addr/pw_rd_data (word k = bytes 4k..4k+3, big-endian, as SHA-1 reads them). The setup unit

@@ -1,4 +1,4 @@
-// wpa2's top in the shared bench (src/fpga/common/rtl/tb_hcfpga.v): NUM_UNITS PBKDF2 pairs, and the
+// wpa2's top in the shared bench (tb_hcfpga.v): NUM_UNITS PBKDF2 pairs, and the
 // extra registers cfg[16..20] in EXTRA_CSRS order: salt_len, salt4..7.
 
   hcfpga_wpa2_top #(.NUM_CORES(NUM_UNITS), .WITH_CMP(WITH_CMP)) dut (

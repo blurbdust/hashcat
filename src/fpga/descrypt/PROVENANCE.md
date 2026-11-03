@@ -2,7 +2,7 @@
 
 The DES pipeline in this design is John the Ripper's ZTEX descrypt core, written by Denis Burykin: a ring of 16 registered DES rounds with the salt in the E-box, and the key preparation (crypt(3)'s 7-bit packing and permuted choice 1) its arbiter applies before a key enters the ring. hashcat uses them under their own permissive license and has changed one line of one header. Every file taken from upstream keeps its original header verbatim, and the modified file adds a notice under that header pointing here.
 
-The rest of the design was written for hashcat: the engine (the ring's batch control, result banks, comparator and C2H records), the datapath top, the LiteX wrapper and the bench here, and the H2C intake, end-of-batch tail, wrapper base, simulated board and bench they use from `src/fpga/common`, which every algorithm on the template shares.
+The rest of the design was written for hashcat: the engine (the ring's batch control, result banks, comparator and C2H records), the datapath top, the LiteX wrapper and the bench here, and the H2C intake, end-of-batch tail, wrapper base, simulated board and bench they use (copies of the LiteX hashcat Guide's `template/shared/`, which every algorithm after bcrypt has).
 
 ## Origin
 
@@ -46,7 +46,7 @@ A Verilator lint of `descrypt16` alone is clean; `-Wall` adds style warnings onl
 | `gateware/descrypt_dma_wrapper.py` | the LiteX wrapper, an `HcfpgaDmaWrapper` with no extra register |
 | `gateware/descrypt/tb_datapath.py`, `tb_dut.vh`, `descrypt_ref.py` | the datapath bench on the shared one, and its descrypt reference (crypt(3)'s DES from the tables) |
 
-Shared with every algorithm on the template: `src/fpga/common/` (see its README).
+Shared with every algorithm after bcrypt, as copies of the LiteX hashcat Guide's `template/shared/` (see its README): `hcfpga_*.py` and `hcfpga_iface.vh` here, the shared RTL and bench in `gateware/descrypt/`. Until the layout change they were one `src/fpga/common/`.
 
 ## Toolchain
 

@@ -1,10 +1,10 @@
 # sha512crypt on FPGA
 
-Hash mode 91800 (bridge `fpga_sha512crypt`) computes sha512crypt (`$6$`, mode 1800's format) on an FPGA, on the shared hcfpga template (`src/fpga/common`). The computing unit is John the Ripper's ZTEX sha512crypt unit (Denis Burykin): four SHA-512 cores, a 16-thread CPU that runs the sha512crypt program, and the engine that turns the CPU's instructions into SHA-512 blocks. hashcat keeps the unit and replaces JtR's arbiters, comparator and packet layer with the template's feeder, collector and records, the same cut md5crypt (mode 90500) and sha256crypt (mode 97400) made. `docs/fpga-porting-notes-sha512crypt.md` explains how it was ported.
+Hash mode 91800 (bridge `fpga_sha512crypt`) computes sha512crypt (`$6$`, mode 1800's format) on an FPGA. The computing unit is John the Ripper's ZTEX sha512crypt unit (Denis Burykin): four SHA-512 cores, a 16-thread CPU that runs the sha512crypt program, and the engine that turns the CPU's instructions into SHA-512 blocks. hashcat keeps the unit and replaces JtR's arbiters, comparator and packet layer with the template's feeder, collector and records, the same cut md5crypt (mode 90500) and sha256crypt (mode 97400) made. `docs/fpga-porting-notes-sha512crypt.md` explains how it was ported.
 
-Scaffolded by `src/fpga/common/new_fpga_algo.py --name sha512crypt --mode 1800 --core jtr-unit --pw-max 64 --result-len 64 --key-align 8 --cores-per-unit 4 --grain 4 --salt-min 1 --salt-max 16 --iter-min 1 --iter-max 999999999`.
+Scaffolded by `new_fpga_algo.py --name sha512crypt --mode 1800 --core jtr-unit --pw-max 64 --result-len 64 --key-align 8 --cores-per-unit 4 --grain 4 --salt-min 1 --salt-max 16 --iter-min 1 --iter-max 999999999` (then in `src/fpga/common/`, now the LiteX hashcat Guide's `template/`).
 
-No bitstream is published. The design runs on a simulated LiteX board (`src/fpga/common/hcfpga_sim.py --algo sha512crypt`), which hashcat reaches through the litexbone transport.
+No bitstream is published. The design runs on a simulated LiteX board (`src/fpga/sha512crypt/hcfpga_sim.py`), which hashcat reaches through the litexbone transport.
 
 ## Layout
 
@@ -14,8 +14,13 @@ No bitstream is published. The design runs on a simulated LiteX board (`src/fpga
 | `gateware/sha512crypt/hcfpga_sha512crypt_top.sv` | datapath top: the shared JtR unit feeder (64-byte keys in 8-byte steps), `NUM_UNITS` units, the shared collector (64-byte result, 16 forwarded), the generation, the end-of-batch tail |
 | `gateware/sha512crypt_dma_wrapper.py` | the LiteX wrapper: the shared `HcfpgaDmaWrapper` plus `salt_len` |
 | `gateware/sha512crypt/tb_datapath.py`, `tb_dut.vh`, `sha512crypt_ref.py` | the datapath bench (`make -C src/fpga sim ALGO=sha512crypt`) and its reference |
+| `gateware/sha512crypt/hcfpga_jtr_unit_feed.v`, `hcfpga_jtr_unit_collect.v`, `hcfpga_h2c_intake.v`, `hcfpga_gen.v`, `hcfpga_c2h_eob.v` | the shared RTL: the JtR unit feeder and collector, the H2C intake, the generation counter, the end-of-batch tail |
+| `gateware/sha512crypt/tb_hcfpga.v`, `hcfpga_bench.py` | the shared bench the algorithm's `tb_datapath.py` runs |
+| `hcfpga_dma_wrapper.py`, `hcfpga_sim.py`, `hcfpga_csr.py`, `hcfpga_memstream.py`, `hcfpga_abi.py`, `hcfpga_iface.vh` | the wrapper base, the simulated board (Verilator, Etherbone or UARTBone, memstream), CSR pinning, the ABI reader, the frame contract |
 
-Host side: `src/bridges/bridge_fpga_sha512crypt.c` (the hooks of `src/bridges/fpga/hcfpga_bridge.c`), `src/bridges/fpga/hcfpga_sha512crypt_ref.h` (the canary's reference), `src/modules/module_91800.c`, `OpenCL/m91800-pure.cl`, `tools/test_modules/m91800.py`.
+Host side: `src/bridges/bridge_fpga_sha512crypt.c` and `.mk` (bcrypt's bridge with sha512crypt's specifics: `diff` it against `bridge_fpga_bcrypt.c`), `src/bridges/fpga/hcfpga_sha512crypt_ref.h` (the canary's reference), `src/modules/module_91800.c`, `OpenCL/m91800-pure.cl`, `tools/test_modules/m91800.py`.
+
+The shared pieces are copies of the LiteX hashcat Guide's `template/shared/`, as every algorithm after bcrypt has them; this directory needs nothing outside itself but `src/bridges/fpga/hcfpga.h` (the ABI). Until the layout change they were one shared `src/fpga/common/` and one shared bridge, `src/bridges/fpga/hcfpga_bridge.c`, which the porting notes name.
 
 ## The computing unit
 
@@ -30,12 +35,12 @@ The program has a second entry point, Drupal7 (`instr_mem[150]`), chosen by an i
 - **Longest password: 64 bytes.** The program keeps the key in thread memory words 5 to 12 (8 words of 64 bits) and writes the P byte sequence over it (`NEW_CTX(ADDR_p_bytes, 8)`), the result sits in words 24 to 31, and `sha512.vh` sizes `process_bytes` for "max.key_len=64". JtR's `PLAINTEXT_LEN` and its host format's `PLAINTEXT_LENGTH` are 64 too. Mode 1800 takes 256.
 - **Salt: 1 to 16 bytes.** The packet carries 16 salt bytes (thread memory words 1 and 2), and the program says "salt_len=0 ... NOT supported"; JtR's format skips empty salts. Mode 1800's parser takes 0 to 16. Mode 91800 refuses an empty salt at parse time.
 - **Rounds: 1 to 999999999.** The CPU reads a 32-bit count into two 16-bit registers and borrows from the upper one (the bench runs 65537 rounds to cover it); "cnt=0 NOT supported". 999999999 is sha512crypt's own limit, which JtR's format keeps. The device and mode 1800 take the count as given; libc raises counts below 1000 to 1000, so a `$6$rounds=10$` hash made by libc is a 1000-round hash with a misleading label, and neither mode cracks it as written.
-- **Digest.** The unit returns the 64 result bytes in SHA-512 output order (thread memory is little-endian per byte, and the program feeds the result back into the next round as bytes). hashcat compares digest words 0 to 3 (mode 1800's `DGST_POS0..3`, 32-bit words of the 64-byte digest), so the collector forwards result bytes 0 to 15 to C2H bytes 4 to 19 and drops the other 48. They are hashcat's `digest_buf` as bytes: `digest[k]` is the little-endian word at C2H 4+4k, so `digest_from_c2h` is NULL (no swap). The comparator indexes its bitmap with the low 7 bits of result byte 0, which is `digest[0] & 0x7f`. The tmp struct holds 4 digest words; the module keeps mode 1800's 64-byte digest for its encoder.
-- **`core_id` names the computing unit.** The unit picks the thread (S10), so no core can be named; `core_name` is "unit".
+- **Digest.** The unit returns the 64 result bytes in SHA-512 output order (thread memory is little-endian per byte, and the program feeds the result back into the next round as bytes). hashcat compares digest words 0 to 3 (mode 1800's `DGST_POS0..3`, 32-bit words of the 64-byte digest), so the collector forwards result bytes 0 to 15 to C2H bytes 4 to 19 and drops the other 48. They are hashcat's `digest_buf` as bytes: `digest[k]` is the little-endian word at C2H 4+4k, so the bridge takes the C2H words as received (no swap). The comparator indexes its bitmap with the low 7 bits of result byte 0, which is `digest[0] & 0x7f`. The tmp struct holds 4 digest words; the module keeps mode 1800's 64-byte digest for its encoder.
+- **`core_id` names the computing unit.** The unit picks the thread (S10), so no core can be named; the bridge's messages say "unit".
 - **No reset in the middle of a job.** JtR's unit cannot be reset, so the shared adapter's generation (`hcfpga_gen.v`) rides in the candidate's ID bytes and the collector drops results of another generation without retiring them. A packet already started is always finished.
 - **Extra registers: `salt_len` at 0x3c**, nothing else. The JtR unit packet carries the salt length; rounds go in the shared `iter_count`, the salt in the shared `salt0..3`.
 - **Grain: 4 per identity core.** A SHA-512 core interleaves 4 computations, and the identity's `cores=` counts SHA-512 cores, 4 per unit (`CORES_PER_UNIT` stays 4: `core_ctrl.v` spaces the cores' start slots for exactly 16 threads, `COMP_INTERVAL = 352 / N_THREADS // must be 22`, and `sha512unit.v` does not pass `N_CORES` on to `unit_ctrl.v`). A unit's input buffer takes a packet only once a thread is free, so nothing waits beyond the 16.
-- **Batch timeout:** `wait_cycles_per_iter` 1000, for at most two blocks per round (704 cycles) and the CPU's overhead; the bridge multiplies it by 4.
+- **Batch timeout:** `WAVE_CYCLES_PER_ITER` 1000, for at most two blocks per round (704 cycles) and the CPU's overhead; the bridge multiplies it by 4.
 
 ## H2C record (bcrypt's)
 
@@ -73,7 +78,7 @@ The unit writes back 36 16-bit words after a `2'b11` marker, least significant d
 
 ## Registers
 
-The shared block (`src/fpga/common/hcfpga_dma_wrapper.py`), plus one:
+The shared block (`hcfpga_dma_wrapper.py`), plus one:
 
 | Offset | Name | sha512crypt use |
 |---|---|---|
@@ -98,8 +103,8 @@ The shared block (`src/fpga/common/hcfpga_dma_wrapper.py`), plus one:
 ## Running it in simulation
 
 ```
-src/fpga/common/hcfpga_sim.py --algo sha512crypt --bridge uartbone --uart-port <port> --build-only
-src/fpga/common/hcfpga_sim.py --algo sha512crypt --bridge uartbone --uart-port <port> --no-build &
+src/fpga/sha512crypt/hcfpga_sim.py --bridge uartbone --uart-port <port> --build-only
+src/fpga/sha512crypt/hcfpga_sim.py --bridge uartbone --uart-port <port> --no-build &
 HCFPGA_LITEXBONE=tcp:127.0.0.1:<port> ./hashcat -m 91800 hash.txt words.txt
 ```
 

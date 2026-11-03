@@ -5,7 +5,7 @@
 
 // sha256crypt datapath top: H2C records in, C2H records out, John the Ripper's sha256crypt computing
 // units (unit/sha256unit.v) in between, on the shared JtR unit feeder and collector
-// (src/fpga/common/rtl/). The ports are md5crypt's top's, without its core clock.
+// (the hcfpga_* files beside this one). The ports are md5crypt's top's, without its core clock.
 //
 // Everything around the units is shared: the feeder, the collector, the generation counter and the
 // end-of-batch tail. What is sha256crypt's is the unit and its geometry, from JtR's arbiter_tx.v,

@@ -23,7 +23,7 @@ import os
 import struct
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "common"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import hcfpga_bench as hb
 
@@ -42,7 +42,7 @@ SALT_MAX = 32
 SALT   = b"hcfpga-wpa2-essid-20"
 ROUNDS = 4095
 
-# The bridge's canary password (hcfpga_algo_t.canary_pw, default "hcfpga-ztex-canary").
+# The bridge's canary password (CANARY_PW in its bridge, bcrypt's "hcfpga-ztex-canary").
 CANARY_PW = b"hcfpga-ztex-canary"[:PW_MAX]
 
 def wpa2_pmk(pw, essid):
@@ -59,7 +59,7 @@ def salt_regs(salt):
   return hb.salt_words(salt[:16])
 
 def extra_regs(salt, rounds):
-  """The extra registers from 0x3c, in EXTRA_CSRS order, as the bridge's config_extra writes them:
+  """The extra registers from 0x3c, in EXTRA_CSRS order, as the bridge's send_config writes them:
   salt_len, then salt4..7 (salt_buf[4..7], ESSID bytes 16..31)."""
   s = salt.ljust(SALT_MAX, b"\x00")[:SALT_MAX]
   return [len(salt)] + list(struct.unpack("<4I", s[16:32]))

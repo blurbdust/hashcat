@@ -2,7 +2,7 @@
 
 The sha512crypt computing unit in this design is John the Ripper's ZTEX sha512crypt unit, written by Denis Burykin: four SHA-512 cores, a 16-thread CPU that runs the sha512crypt program (and a Drupal7 program this design does not use), and the engine that builds SHA-512 blocks from the CPU's instructions. hashcat uses it under its own permissive license and has modified it. Every file taken from it keeps its original header verbatim, and each modified file adds a notice under that header pointing here. This page lists every change.
 
-The rest of the design was written for hashcat: the datapath top, the LiteX wrapper and the bench here, and the feeder, collector, generation counter, end-of-batch tail, wrapper base, simulated board and bench they use from `src/fpga/common`, which every algorithm on the template shares.
+The rest of the design was written for hashcat: the datapath top, the LiteX wrapper and the bench here, and the feeder, collector, generation counter, end-of-batch tail, wrapper base, simulated board and bench they use (copies of the LiteX hashcat Guide's `template/shared/`, which every algorithm after bcrypt has).
 
 ## Origin
 
@@ -54,14 +54,14 @@ None changes behaviour hashcat relies on, so none is changed.
 
 `unit/sha512unit.v` passes `N_CORES` to its cores but not to `unit_ctrl`, which takes the 4 of `sha512.vh`; the design keeps 4 cores per unit (see `README.md`), so the two agree.
 
-Apart from the changes above, the SHA-512 cores, the CPU and its sha512crypt program, the engine, the unit's input and output buffers and the thread scheduling are upstream's. The unit's I/O protocol is not documented upstream. What this design relies on is written up in `README.md` and in the headers of `src/fpga/common/rtl/hcfpga_jtr_unit_feed.v` and `hcfpga_jtr_unit_collect.v`.
+Apart from the changes above, the SHA-512 cores, the CPU and its sha512crypt program, the engine, the unit's input and output buffers and the thread scheduling are upstream's. The unit's I/O protocol is not documented upstream. What this design relies on is written up in `README.md` and in the headers of `gateware/sha512crypt/hcfpga_jtr_unit_feed.v` and `hcfpga_jtr_unit_collect.v`.
 
 ## Other material derived from John the Ripper
 
 | Where | Derived from |
 |---|---|
-| `src/fpga/common/rtl/hcfpga_jtr_unit_feed.v` (shared), the unit packet | upstream `arbiter_tx.v`: the type byte, the 40-byte header (count, salt length, 16 salt bytes, 8 ID bytes, key length, 7 zero bytes) and the key rounded up to 64 bits |
-| `src/fpga/common/rtl/hcfpga_jtr_unit_collect.v` (shared), the unit read | upstream `arbiter_rx.v`: one `rd_en` cycle, the `2'b11` start marker, `RESULT_LEN/2 + 4` = 36 16-bit words two bits at a time, and the closing `2'b00` |
+| `gateware/sha512crypt/hcfpga_jtr_unit_feed.v` (shared), the unit packet | upstream `arbiter_tx.v`: the type byte, the 40-byte header (count, salt length, 16 salt bytes, 8 ID bytes, key length, 7 zero bytes) and the key rounded up to 64 bits |
+| `gateware/sha512crypt/hcfpga_jtr_unit_collect.v` (shared), the unit read | upstream `arbiter_rx.v`: one `rd_en` cycle, the `2'b11` start marker, `RESULT_LEN/2 + 4` = 36 16-bit words two bits at a time, and the closing `2'b00` |
 
 ## Written for hashcat
 
@@ -71,7 +71,7 @@ Apart from the changes above, the SHA-512 cores, the CPU and its sha512crypt pro
 | `gateware/sha512crypt_dma_wrapper.py` | the LiteX wrapper |
 | `gateware/sha512crypt/tb_datapath.py`, `tb_dut.vh`, `sha512crypt_ref.py` | the datapath bench and its reference |
 
-Shared with every algorithm on the template: `src/fpga/common/` (see its README).
+Shared with every algorithm after bcrypt, as copies of the LiteX hashcat Guide's `template/shared/` (see its README): `hcfpga_*.py` and `hcfpga_iface.vh` here, the shared RTL and bench in `gateware/sha512crypt/`. Until the layout change they were one `src/fpga/common/`.
 
 ## Toolchain
 

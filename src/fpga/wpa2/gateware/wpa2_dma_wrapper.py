@@ -4,7 +4,7 @@
 # License.....: MIT
 #
 
-# LiteX wrapper of the wpa2 datapath, on the shared HcfpgaDmaWrapper (src/fpga/common): the
+# LiteX wrapper of the wpa2 datapath, on HcfpgaDmaWrapper (../hcfpga_dma_wrapper.py): the
 # shared register block at bcrypt's offsets, plus EXTRA_CSRS from 0x3c.
 #
 # wpa2's use of the shared registers: salt0..3 carry ESSID bytes 0..15 (hashcat's salt_buf[0..3]),
@@ -16,11 +16,11 @@ import os
 import sys
 
 HERE   = os.path.dirname(os.path.abspath(__file__))
-COMMON = os.path.normpath(os.path.join(HERE, "..", "..", "common"))
+BASE   = os.path.normpath(os.path.join(HERE, ".."))
 ALGO   = os.path.join(HERE, "wpa2")
 
-if COMMON not in sys.path:
-    sys.path.insert(0, COMMON)
+if BASE not in sys.path:
+    sys.path.insert(0, BASE)
 
 from hcfpga_dma_wrapper import HcfpgaDmaWrapper
 
@@ -32,7 +32,7 @@ class Wpa2DmaWrapper(HcfpgaDmaWrapper):
     ALGO = "wpa2"
     TOP  = "hcfpga_wpa2_top"
 
-    # The ESSID length and ESSID bytes 16..31, in the order the bridge's config_extra writes them.
+    # The ESSID length and ESSID bytes 16..31, in the order the bridge's send_config writes them.
     EXTRA_CSRS = (
         ("salt_len", 32, "ESSID length in bytes, 0 to 32."),
         ("salt4",    32, "ESSID bytes 16..19 (hashcat's salt_buf[4])."),
@@ -41,7 +41,7 @@ class Wpa2DmaWrapper(HcfpgaDmaWrapper):
         ("salt7",    32, "ESSID bytes 28..31 (hashcat's salt_buf[7])."),
     )
 
-    # C2H records per candidate (the top's PARTS, the bridge's c2h_parts, the identity's parts=):
+    # C2H records per candidate (the top's PARTS, the bridge's C2H_PARTS, the identity's parts=):
     # the 32-byte PMK in two.
     PARTS = 2
 

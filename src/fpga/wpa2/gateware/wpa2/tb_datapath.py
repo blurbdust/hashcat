@@ -5,7 +5,7 @@
 ## License.....: MIT
 ##
 
-# wpa2's datapath bench: the shared bench (src/fpga/common/hcfpga_bench.py, rtl/tb_hcfpga.v)
+# wpa2's datapath bench: the shared bench (hcfpga_bench.py, tb_hcfpga.v)
 # around hcfpga_wpa2_top (tb_dut.vh), each batch checked against wpa2_ref.py: every returned PMK in
 # its two C2H records, the records the comparator should and should not let through, the retired
 # count, the end-of-batch record and the frame status.
@@ -26,10 +26,8 @@ import sys
 sys.dont_write_bytecode = True
 
 HERE   = os.path.dirname(os.path.abspath(__file__))
-COMMON = os.path.join(HERE, "..", "..", "..", "common")
 
 sys.path.insert(0, HERE)
-sys.path.insert(0, COMMON)
 
 import hcfpga_bench as hb
 

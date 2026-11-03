@@ -1,10 +1,10 @@
 # descrypt on FPGA
 
-Hash mode 91500 (bridge `fpga_descrypt`) computes descrypt (traditional DES crypt(3), mode 1500's format) on an FPGA, on the shared hcfpga template (`src/fpga/common`). The DES pipeline is John the Ripper's ZTEX descrypt core (Denis Burykin): a ring of 16 registered DES rounds through which 16 candidates circle 25 times. Upstream wraps the ring in a batch control and a 35-bit comparator that reports only matches; hashcat keeps the ring and the key preparation, and replaces the rest with an engine written for it (`hcfpga_descrypt_engine.v`) behind the template's H2C intake and end-of-batch tail. `docs/fpga-porting-notes-descrypt.md` explains how it was ported.
+Hash mode 91500 (bridge `fpga_descrypt`) computes descrypt (traditional DES crypt(3), mode 1500's format) on an FPGA. The DES pipeline is John the Ripper's ZTEX descrypt core (Denis Burykin): a ring of 16 registered DES rounds through which 16 candidates circle 25 times. Upstream wraps the ring in a batch control and a 35-bit comparator that reports only matches; hashcat keeps the ring and the key preparation, and replaces the rest with an engine written for it (`hcfpga_descrypt_engine.v`) behind the template's H2C intake and end-of-batch tail. `docs/fpga-porting-notes-descrypt.md` explains how it was ported.
 
-Scaffolded by `src/fpga/common/new_fpga_algo.py --name descrypt --mode 1500 --core custom --pw-max 8 --digest-words 4 --digest-bytes 8 --grain 16 --salt-min 4 --salt-max 4 --iter-min 25 --iter-max 25`.
+Scaffolded by `new_fpga_algo.py --name descrypt --mode 1500 --core custom --pw-max 8 --digest-words 4 --digest-bytes 8 --grain 16 --salt-min 4 --salt-max 4 --iter-min 25 --iter-max 25` (then in `src/fpga/common/`, now the LiteX hashcat Guide's `template/`).
 
-No bitstream is published. The design runs on a simulated LiteX board (`src/fpga/common/hcfpga_sim.py --algo descrypt`), which hashcat reaches through the litexbone transport.
+No bitstream is published. The design runs on a simulated LiteX board (`src/fpga/descrypt/hcfpga_sim.py`), which hashcat reaches through the litexbone transport.
 
 ## Layout
 
@@ -15,8 +15,13 @@ No bitstream is published. The design runs on a simulated LiteX board (`src/fpga
 | `gateware/descrypt/hcfpga_descrypt_top.sv` | datapath top: the shared H2C intake, the engine, the shared end-of-batch tail |
 | `gateware/descrypt_dma_wrapper.py` | the LiteX wrapper: the shared `HcfpgaDmaWrapper`, no extra register |
 | `gateware/descrypt/tb_datapath.py`, `tb_dut.vh`, `descrypt_ref.py` | the datapath bench (`make -C src/fpga sim ALGO=descrypt`) and its reference |
+| `gateware/descrypt/hcfpga_h2c_intake.v`, `hcfpga_gen.v`, `hcfpga_c2h_eob.v` | the shared RTL: the H2C intake, the generation counter, the end-of-batch tail |
+| `gateware/descrypt/tb_hcfpga.v`, `hcfpga_bench.py` | the shared bench the algorithm's `tb_datapath.py` runs |
+| `hcfpga_dma_wrapper.py`, `hcfpga_sim.py`, `hcfpga_csr.py`, `hcfpga_memstream.py`, `hcfpga_abi.py`, `hcfpga_iface.vh` | the wrapper base, the simulated board (Verilator, Etherbone or UARTBone, memstream), CSR pinning, the ABI reader, the frame contract |
 
-Host side: `src/bridges/bridge_fpga_descrypt.c` (the hooks of `src/bridges/fpga/hcfpga_bridge.c`), `src/bridges/fpga/hcfpga_descrypt_ref.h` (the canary's reference), `src/modules/module_91500.c`, `OpenCL/m91500-pure.cl`, `tools/test_modules/m91500.py`.
+Host side: `src/bridges/bridge_fpga_descrypt.c` and `.mk` (bcrypt's bridge with descrypt's specifics: `diff` it against `bridge_fpga_bcrypt.c`), `src/bridges/fpga/hcfpga_descrypt_ref.h` (the canary's reference), `src/modules/module_91500.c`, `OpenCL/m91500-pure.cl`, `tools/test_modules/m91500.py`.
+
+The shared pieces are copies of the LiteX hashcat Guide's `template/shared/`, as every algorithm after bcrypt has them; this directory needs nothing outside itself but `src/bridges/fpga/hcfpga.h` (the ABI). Until the layout change they were one shared `src/fpga/common/` and one shared bridge, `src/bridges/fpga/hcfpga_bridge.c`, which the porting notes name.
 
 ## The engine
 
@@ -32,12 +37,12 @@ A core is `descrypt16`: 16 DES rounds, each a register stage, closed into a ring
 - **Salt: the 12-bit value of the 2 salt characters, every one of them.** Mode 1500's parser stores it in `salt_buf[0]` bits 11:0 and the 2 characters in bits 31:16 (`salt_len` 4), so every hash it parses is one the device computes. `salt0` carries `salt_buf[0]` and the core takes bits 11:0; salt1..3 are unused.
 - **Cost: crypt(3)'s 25 encryptions, fixed in the ring.** Mode 1500 leaves `salt_iter` at 0 (its kernel loops 25 times itself); mode 91500's parser sets it to 25, because the bridge spreads a launch's candidates over hashcat's loop calls by it (a zero would divide by zero). `iter_count` is written and unused, and `kernel_loops_max` is 25.
 - **A slow-hash mode for a fast hash.** Mode 1500 is `ATTACK_EXEC_INSIDE_KERNEL` with a bitsliced kernel (`KERN_BIT_TM`); mode 91500 is `ATTACK_EXEC_OUTSIDE_KERNEL` with the template's pass-through kernel, so hashcat runs init, the loop the bridge replaces, and comp. Mode 1500's `OPTS_TYPE_SELF_TEST_DISABLE` is dropped: the device computes the example hash, so the self-test runs.
-- **Digest: hashcat's `digest_buf[0..1]`, built in the gateware.** Mode 1500 stores a hash as the base64-decoded output block, loaded as two little-endian words, through `DES_IP`; words 2 and 3 are zero. The engine wires `hash_out` to exactly those words (bit 8a + b of the digest is block bit 8 (7 - b) + {0,2,4,6,1,3,5,7}[a]) and returns them little-endian at C2H bytes 4..11, so `digest_from_c2h` is NULL and the comparator's bitmap index, the low 7 bits of C2H byte 4, is `digest[0] & 0x7f` as the bridge computes it. Upstream's ring gives out 64 bits only with `COMPARE_35_BIT` off (`PROVENANCE.md`).
-- **`core_id` names the ring** that computed the candidate (`core_name` "core").
+- **Digest: hashcat's `digest_buf[0..1]`, built in the gateware.** Mode 1500 stores a hash as the base64-decoded output block, loaded as two little-endian words, through `DES_IP`; words 2 and 3 are zero. The engine wires `hash_out` to exactly those words (bit 8a + b of the digest is block bit 8 (7 - b) + {0,2,4,6,1,3,5,7}[a]) and returns them little-endian at C2H bytes 4..11, so the bridge takes the C2H words as received and the comparator's bitmap index, the low 7 bits of C2H byte 4, is `digest[0] & 0x7f` as the bridge computes it. Upstream's ring gives out 64 bits only with `COMPARE_35_BIT` off (`PROVENANCE.md`).
+- **`core_id` names the ring** that computed the candidate (the bridge's messages say "core").
 - **The core can be reset in the middle of a job.** The ring holds no state that survives a new batch (`START_CRYPT` reloads all 16 slots and zeroes the block), and everything else is the engine's, which a framing reset clears: input buffers, banks, the loader and the collector. No generation is needed.
 - **No extra registers.**
 - **Grain: 16 per identity core.** A ring holds 16 candidates, and the identity's `cores=` counts rings. The bridge's batch grain is `cores * 16`.
-- **Batch timeout:** `wait_cycles_per_iter` 100: a pass of 16 candidates takes 16 cycles, and returning 16 unfiltered results takes 512 more; the bridge multiplies by 4.
+- **Batch timeout:** `WAVE_CYCLES_PER_ITER` 100: a pass of 16 candidates takes 16 cycles, and returning 16 unfiltered results takes 512 more; the bridge multiplies by 4.
 
 ## H2C record (bcrypt's)
 
@@ -59,7 +64,7 @@ A core is `descrypt16`: 16 DES rounds, each a register stage, closed into a ring
 
 ## Registers
 
-The shared block (`src/fpga/common/hcfpga_dma_wrapper.py`), nothing else:
+The shared block (`hcfpga_dma_wrapper.py`), nothing else:
 
 | Offset | Name | descrypt use |
 |---|---|---|
@@ -82,8 +87,8 @@ The shared block (`src/fpga/common/hcfpga_dma_wrapper.py`), nothing else:
 ## Running it in simulation
 
 ```
-src/fpga/common/hcfpga_sim.py --algo descrypt --bridge uartbone --build-only
-src/fpga/common/hcfpga_sim.py --algo descrypt --bridge uartbone --no-build &
+src/fpga/descrypt/hcfpga_sim.py --bridge uartbone --build-only
+src/fpga/descrypt/hcfpga_sim.py --bridge uartbone --no-build &
 HCFPGA_LITEXBONE=tcp:127.0.0.1:2430 ./hashcat -m 91500 hash.txt words.txt
 ```
 

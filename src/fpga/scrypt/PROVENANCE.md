@@ -2,7 +2,7 @@
 
 The scrypt computing unit in this design is LiteX-Scrypt's `scrypt_unit`: PBKDF2-HMAC-SHA256, ROMix over BlockMix and Salsa20/8 with the V table in block RAM, and PBKDF2 again, behind a byte-wide input FIFO and a 2-bit serial output in the style of John the Ripper's units. LiteX-Scrypt is the repository owner's own work. Its files carry no license header; they are offered here under the MIT license, as hashcat's FPGA code is. The unit's input FIFO (`util/fifo_sync.v`) and `util/log2.vh` are John the Ripper's, by Denis Burykin, under their own permissive terms. hashcat has modified the unit. Every file taken keeps its original header verbatim, and each modified file adds a notice under that header pointing here. This page lists every change.
 
-The rest of the design was written for hashcat: the engine, the datapath top, the LiteX wrapper and the bench here, and the H2C intake, generation counter, JtR unit collector, end-of-batch tail, wrapper base, simulated board and bench they use from `src/fpga/common`, which every algorithm on the template shares.
+The rest of the design was written for hashcat: the engine, the datapath top, the LiteX wrapper and the bench here, and the H2C intake, generation counter, JtR unit collector, end-of-batch tail, wrapper base, simulated board and bench they use (copies of the LiteX hashcat Guide's `template/shared/`, which every algorithm after bcrypt has).
 
 ## Origin
 
@@ -77,14 +77,14 @@ None of these changes behaviour hashcat relies on in simulation, so none is chan
 | `gateware/scrypt_dma_wrapper.py` | the LiteX wrapper |
 | `gateware/scrypt/tb_datapath.py`, `tb_dut.vh`, `scrypt_ref.py` | the datapath bench and its reference |
 
-Shared with every algorithm on the template: `src/fpga/common/` (see its README).
+Shared with every algorithm after bcrypt, as copies of the LiteX hashcat Guide's `template/shared/` (see its README): `hcfpga_*.py` and `hcfpga_iface.vh` here, the shared RTL and bench in `gateware/scrypt/`. Until the layout change they were one `src/fpga/common/`.
 
 ## Other material derived from LiteX-Scrypt
 
 | Where | Derived from |
 |---|---|
 | `gateware/scrypt/hcfpga_scrypt_engine.v`, the unit packet | `scrypt_unit.v`'s header comment and its receive state: a type byte with `ctrl`, the 44 configuration bytes upstream's `arbiter_tx.v` reads from `scrypt_cmp_config.v` (log2 (N), salt length, 32 salt bytes, r), the payload, 8 ID bytes, an end byte with `ctrl` |
-| `src/fpga/common/rtl/hcfpga_jtr_unit_collect.v` (shared), the unit read | the unit's output states, which follow John the Ripper's `arbiter_rx.v`: one `rd_en` cycle, `2'b11`, `4 + 32/2` 16-bit words two bits at a time, `2'b00` |
+| `gateware/scrypt/hcfpga_jtr_unit_collect.v` (shared), the unit read | the unit's output states, which follow John the Ripper's `arbiter_rx.v`: one `rd_en` cycle, `2'b11`, `4 + 32/2` 16-bit words two bits at a time, `2'b00` |
 
 ## Toolchain
 

@@ -2,9 +2,9 @@
 
 Hash mode 90500 (bridge `fpga_md5crypt`) computes md5crypt (`$1$`, mode 500's format) on an FPGA. It is the second algorithm on the hcfpga framework bcrypt (mode 75000) introduced, and it keeps every generic part of bcrypt's design: the H2C record, the C2H record and its end-of-batch flag, the register block, the identity string and the transports. `docs/fpga-porting-notes-md5crypt.md` explains how it was ported and what a later algorithm can reuse.
 
-No bitstream is published. The design runs on a simulated LiteX board (`src/fpga/common/hcfpga_sim.py --algo md5crypt`), which hashcat reaches through the litexbone transport.
+No bitstream is published. The design runs on a simulated LiteX board (`src/fpga/md5crypt/hcfpga_sim.py`), which hashcat reaches through the litexbone transport.
 
-md5crypt was the first port onto the shared template in `src/fpga/common` (gateware) and `src/bridges/fpga/hcfpga_bridge.c` (host). What is md5crypt's own is the unit, the top that sizes the shared parts for it, one extra register and the bridge hooks; the rest is shared.
+md5crypt was the first port onto the hcfpga template (now the LiteX hashcat Guide's `template/`). What is md5crypt's own is the unit, the top that sizes the shared parts for it, one extra register and what its bridge changes in bcrypt's; the rest is the template's.
 
 ## Layout
 
@@ -14,12 +14,13 @@ md5crypt was the first port onto the shared template in `src/fpga/common` (gatew
 | `gateware/md5crypt/hcfpga_md5crypt_top.sv` | datapath top: the shared JtR unit feeder (64-byte keys, 4-byte steps), `NUM_UNITS` units, the shared collector (16-byte result), the generation, the end-of-batch tail |
 | `gateware/md5crypt_dma_wrapper.py` | the LiteX wrapper: the shared `HcfpgaDmaWrapper` plus `salt_len` |
 | `gateware/md5crypt/tb_datapath.py`, `tb_dut.vh` | the datapath bench on the shared one, the merge gate (`make -C src/fpga sim ALGO=md5crypt`) |
-| `src/fpga/common/rtl/hcfpga_jtr_unit_feed.v` | (shared) H2C intake and the unit input packet |
-| `src/fpga/common/rtl/hcfpga_jtr_unit_collect.v` | (shared) unit output, generation check, comparator, C2H record |
-| `src/fpga/common/rtl/hcfpga_gen.v`, `hcfpga_c2h_eob.v` | (shared) the generation counter; retired count, EOB record, granule padding |
-| `src/fpga/common/hcfpga_sim.py` | (shared) the simulated board (Verilator, Etherbone or UARTBone, memstream) |
+| `gateware/md5crypt/hcfpga_jtr_unit_feed.v`, `hcfpga_jtr_unit_collect.v`, `hcfpga_h2c_intake.v`, `hcfpga_gen.v`, `hcfpga_c2h_eob.v` | the shared RTL: the JtR unit feeder and collector, the H2C intake, the generation counter, the end-of-batch tail |
+| `gateware/md5crypt/tb_hcfpga.v`, `hcfpga_bench.py` | the shared bench the algorithm's `tb_datapath.py` runs |
+| `hcfpga_dma_wrapper.py`, `hcfpga_sim.py`, `hcfpga_csr.py`, `hcfpga_memstream.py`, `hcfpga_abi.py`, `hcfpga_iface.vh` | the wrapper base, the simulated board (Verilator, Etherbone or UARTBone, memstream), CSR pinning, the ABI reader, the frame contract |
 
-Host side: `src/bridges/bridge_fpga_md5crypt.c` (the hooks of the shared `src/bridges/fpga/hcfpga_bridge.c`), `src/bridges/fpga/hcfpga_md5crypt_ref.h` (the canary's reference), `src/modules/module_90500.c`, `OpenCL/m90500-pure.cl`, `tools/test_modules/m90500.py`.
+Host side: `src/bridges/bridge_fpga_md5crypt.c` and `.mk` (bcrypt's bridge with md5crypt's specifics: `diff` it against `bridge_fpga_bcrypt.c`), `src/bridges/fpga/hcfpga_md5crypt_ref.h` (the canary's reference), `src/modules/module_90500.c`, `OpenCL/m90500-pure.cl`, `tools/test_modules/m90500.py`.
+
+The shared pieces are copies of the LiteX hashcat Guide's `template/shared/`, as every algorithm after bcrypt has them; this directory needs nothing outside itself but `src/bridges/fpga/hcfpga.h` (the ABI). Until the layout change they were one shared `src/fpga/common/` and one shared bridge, `src/bridges/fpga/hcfpga_bridge.c`, which the porting notes name.
 
 ## The computing unit
 
@@ -92,8 +93,8 @@ A framing reset or an arm bumps a 16-bit generation. Each packet carries the gen
 ## Running it in simulation
 
 ```
-src/fpga/common/hcfpga_sim.py --algo md5crypt --bridge uartbone --build-only
-src/fpga/common/hcfpga_sim.py --algo md5crypt --bridge uartbone --no-build &
+src/fpga/md5crypt/hcfpga_sim.py --bridge uartbone --build-only
+src/fpga/md5crypt/hcfpga_sim.py --bridge uartbone --no-build &
 HCFPGA_LITEXBONE=tcp:127.0.0.1:2430 ./hashcat -m 90500 hash.txt words.txt
 ```
 

@@ -4,7 +4,7 @@
 # License.....: MIT
 #
 
-# LiteX wrapper of the md5crypt datapath, on the shared HcfpgaDmaWrapper (src/fpga/common): the
+# LiteX wrapper of the md5crypt datapath, on HcfpgaDmaWrapper (../hcfpga_dma_wrapper.py): the
 # shared register block at bcrypt's offsets, plus
 #
 #   0x3c salt_len      salt length in bytes, 1..8 (bcrypt's salt is always 16)
@@ -17,11 +17,11 @@ import os
 import sys
 
 HERE   = os.path.dirname(os.path.abspath(__file__))
-COMMON = os.path.normpath(os.path.join(HERE, "..", "..", "common"))
+BASE   = os.path.normpath(os.path.join(HERE, ".."))
 MD5    = os.path.join(HERE, "md5crypt")
 
-if COMMON not in sys.path:
-    sys.path.insert(0, COMMON)
+if BASE not in sys.path:
+    sys.path.insert(0, BASE)
 
 from hcfpga_dma_wrapper import HcfpgaDmaWrapper
 
