@@ -22,7 +22,7 @@ Host side: `src/bridges/bridge_fpga_md5crypt.c`, `src/bridges/fpga/hcfpga_md5cry
 
 ## The computing unit
 
-A unit is three MD5 cores, a 16-bit CPU with 12 hardware threads that runs the md5crypt program in `cpu/program.vh`, and the engine that turns the CPU's `PROCESS_BYTES` instructions into MD5 blocks. Each core interleaves four computations, so a unit has 12 candidates in flight and one more waiting in its input buffer. One md5crypt round takes one MD5 block for passwords up to about 20 bytes, and a thread finishes a block every 288 cycles, so 1000 rounds take about 290,000 cycles. The unit has no reset.
+A unit is three MD5 cores, a 16-bit CPU with 12 hardware threads that runs the md5crypt program in `cpu/program.vh`, and the engine that turns the CPU's `PROCESS_BYTES` instructions into MD5 blocks. Each core interleaves four computations, so a unit has 12 candidates in flight and one more waiting in its input buffer. One md5crypt round hashes the previous digest and the password, in most rounds also the salt and the password again, which is one MD5 block for passwords up to 15 bytes with an 8-byte salt and two blocks beyond. A thread finishes a block every 288 cycles, so 1000 rounds of a short password take about 290,000 cycles. The unit has no reset.
 
 The identity's `cores=` counts MD5 cores (3 per unit). The bridge multiplies by 4 for the batch grain.
 

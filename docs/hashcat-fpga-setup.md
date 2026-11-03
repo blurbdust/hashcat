@@ -49,8 +49,11 @@ The host side of the `Speed.#*` line and the 90c watchdog refer to this candidat
 | Mode  | Algorithm | Bridge          |
 |-------|-----------|-----------------|
 | 75000 | bcrypt    | `fpga_bcrypt`   |
+| 90500 | md5crypt  | `fpga_md5crypt` |
 
 Mode 75000 is excluded from automatic detection because it shares the `$2*$` hash format with mode 3200. Use mode 3200 for the standard backend, or select mode 75000 explicitly when using an FPGA.
+
+Mode 90500 takes mode 500's `$1$` hashes and is likewise excluded from automatic detection. No md5crypt bitstream is published: the design has so far run on a simulated LiteX board only, see `src/fpga/md5crypt/README.md`. It takes passwords up to 64 bytes and salts of 1 to 8 bytes.
 
 ## Why board-specific setup is required
 
@@ -531,7 +534,7 @@ HCFPGA_LITEXBONE=uart:/dev/ttyUSB0:1000000,udp:192.168.1.51 hashcat -m 75000 has
 
 The baud rate of a `uart:` entry has to be the one the board was built with. A `tcp:` entry cannot see the rate of the port behind it, so give that rate as its third field: without it hashcat sends short bursts that fit 9600 baud, which works at any rate but slowly. Opening a serial port needs read and write access to it, usually through the `dialout` group. hashcat locks the port while it runs, and a port another hashcat process holds is reported as in use. Each board is shown after `Path:` in the `Assimilation Bridge` block at startup, and an entry that does not answer is named and left out.
 
-The design has to keep its registers where hashcat looks for them: `bcrypt` at 0x0000, `ctrl` at 0x0800, `identifier_mem` at 0x1000, and the two rings and their pointers at 0xc000, 0xc800 and 0xd000. These boards report no temperature, so the temperature abort does not watch them.
+The design has to keep its registers where hashcat looks for them: the algorithm's bank (`bcrypt` or `md5crypt`) at 0x0000, `ctrl` at 0x0800, `identifier_mem` at 0x1000, and the two rings and their pointers at 0xc000, 0xc800 and 0xd000. These boards report no temperature, so the temperature abort does not watch them.
 
 Every register access waits for its answer, so the link sets the pace for short bcrypt costs. Etherbone needs the SoC's etherbone `buffer_depth` at 16 or more, which is LiteX's default. hashcat checks it at startup and names a board that falls short. A board built with LiteEth up to 2026.08 stops answering on that check until it is reset. Network boards are not locked, so two hashcat processes pointed at the same address disturb each other. A USB serial adapter from FTDI holds a short reply for up to its latency timer, 16 ms by default, and every access waits for one. Setting it to 1 ms removes that wait:
 
