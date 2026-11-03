@@ -2,7 +2,7 @@
 /*
  * This file is part of LiteX-Scrypt.
  *
- * pbkdf2_sha256.v — PBKDF2-SHA256 with c=1, specialized for scrypt
+ * pbkdf2_sha256.v: PBKDF2-SHA256 with c=1, specialized for scrypt
  *
  * scrypt calls PBKDF2-SHA256 twice, always with iteration count c=1:
  *
@@ -130,10 +130,10 @@ module pbkdf2_sha256 (
    // Actually, HMAC internally does SHA256(ipad || msg), so the total is:
    //   ipad(64B) + B_mixed(128B) + INT32BE(1)(4B) + padding
    //   = 196 bytes before padding -> needs ceil(196/64) = 4 SHA-256 blocks
-   //   Block 0: ipad (64B) — handled by HMAC
-   //   Block 1: B_mixed[0:63] — msg_block0
-   //   Block 2: B_mixed[64:127] — msg_block1
-   //   Block 3: INT32BE(1) + 0x80 + zeros + length — msg_block2
+   //   Block 0: ipad (64B), handled by HMAC
+   //   Block 1: B_mixed[0:63], msg_block0
+   //   Block 2: B_mixed[64:127], msg_block1
+   //   Block 3: INT32BE(1) + 0x80 + zeros + length, msg_block2
    //
    // We need to extend HMAC to support 3 message blocks for DERIVE mode,
    // OR we can pre-compute SHA256(ipad || B_mixed[0:63] || B_mixed[64:127])

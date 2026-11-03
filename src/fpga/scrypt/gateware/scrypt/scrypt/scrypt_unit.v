@@ -25,7 +25,7 @@
  *   Byte 1-4:     N_log2 (LE32)
  *   Byte 5-8:     salt_len (LE32, byte 5 has len, 6-8 = 0)
  *   Byte 9-40:    salt (32 bytes)
- *   Byte 41-44:   r_actual (LE32) — runtime scrypt r parameter
+ *   Byte 41-44:   r_actual (LE32), runtime scrypt r parameter
  *   Byte 45+:     Payload (SMix: 128*r bytes of B data; Full: password)
  *   Last 8 bytes: IDs (word_id[16], pkt_id[16], gen_id[32])
  *   Final:        ctrl=1 end marker

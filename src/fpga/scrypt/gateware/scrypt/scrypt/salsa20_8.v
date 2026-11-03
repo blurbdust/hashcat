@@ -2,7 +2,7 @@
 /*
  * This file is part of LiteX-Scrypt.
  *
- * salsa20_8.v — Salsa20/8 core (2-stage pipeline, 8 cycles per call)
+ * salsa20_8.v: Salsa20/8 core (2-stage pipeline, 8 cycles per call)
  *
  * Takes 512 bits (16 x 32-bit LE words), applies 8 rounds
  * (4 double-rounds, two cycles each), adds original input.
@@ -81,7 +81,7 @@ module salsa20_8 (
    assign cx[11] = x[11] ^ rotl(cx[7]  + cx[3],  5'd13);
    assign cx[15] = x[15] ^ rotl(cx[11] + cx[7],  5'd18);
 
-   // Row round (combinational, reads cx_reg[] — the REGISTERED column output)
+   // Row round (combinational, reads cx_reg[], the REGISTERED column output)
    assign rx[ 1] = cx_reg[ 1] ^ rotl(cx_reg[ 0] + cx_reg[ 3],  5'd7);
    assign rx[ 2] = cx_reg[ 2] ^ rotl(rx[ 1]     + cx_reg[ 0],  5'd9);
    assign rx[ 3] = cx_reg[ 3] ^ rotl(rx[ 2]     + rx[ 1],      5'd13);

@@ -33,9 +33,10 @@ All under `gateware/scrypt/`, in upstream's directories (`scrypt/`, `util/`). Th
 
 | File | Change |
 |---|---|
-| `scrypt/romix.v`, `scrypt/v_table_bram.v`, `scrypt/blockmix.v`, `scrypt/salsa20_8.v`, `scrypt/pbkdf2_sha256.v`, `scrypt/hmac_sha256.v`, `scrypt/scrypt.vh`, `scrypt/main.vh`, `util/fifo_sync.v`, `util/log2.vh` | none |
-| `scrypt/scrypt_unit.v` | `main.vh` included; full mode: byte order to and from `pbkdf2_sha256`, one start pulse per PBKDF2 call (below) |
-| `scrypt/sha256_core.v` | the message schedule of rounds 16 to 63 (below) |
+| `scrypt/v_table_bram.v`, `scrypt/blockmix.v`, `scrypt/scrypt.vh`, `scrypt/main.vh`, `util/fifo_sync.v`, `util/log2.vh` | none |
+| `scrypt/romix.v`, `scrypt/salsa20_8.v`, `scrypt/pbkdf2_sha256.v`, `scrypt/hmac_sha256.v` | comments only: em dashes replaced by colons and commas, the project's style |
+| `scrypt/scrypt_unit.v` | `main.vh` included; full mode: byte order to and from `pbkdf2_sha256`, one start pulse per PBKDF2 call (below); comment punctuation as above |
+| `scrypt/sha256_core.v` | the message schedule of rounds 16 to 63 (below); comment punctuation as above |
 
 Not taken: upstream's arbiters (`arbiter_tx.v`, `arbiter_rx.v`), comparator (`comparator.v`, `scrypt_cmp_config.v`), its stream top (`scrypt_axis_8b.sv`), the packet layer (`gateware/pkt_comm/`), the LiteX wrappers and the DDR3 V table controller (`gateware/*.py`), `util/SRL16E.v`, `util/asymm_bram.v`, `util/delay.v`, `util/ff32.v`, `util/sync.v` (the unit does not use them), the sim and board targets and the host scripts. hashcat's engine and the template's collector replace the arbiters and the comparator.
 

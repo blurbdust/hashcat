@@ -119,7 +119,7 @@ module romix #(
    wire [N_LOG2_MAX-1:0] integerify_j = integerify_word[N_LOG2_MAX-1:0] & n_mask;
 
    // =========================================================================
-   // State machine — BRAM path (V_TABLE_EXTERNAL=0)
+   // State machine, BRAM path (V_TABLE_EXTERNAL=0)
    // =========================================================================
 
    generate if (V_TABLE_EXTERNAL == 0) begin : gen_fsm_bram
@@ -230,7 +230,7 @@ module romix #(
    end endgenerate
 
    // =========================================================================
-   // State machine — External path (V_TABLE_EXTERNAL=1)
+   // State machine, external path (V_TABLE_EXTERNAL=1)
    // =========================================================================
 
    generate if (V_TABLE_EXTERNAL == 1) begin : gen_fsm_ext
