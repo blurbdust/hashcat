@@ -2,7 +2,7 @@
 
 Hash mode @@MODE@@ (bridge `fpga_@@ALGO@@`) computes @@ALGO@@ (mode @@UPMODE@@'s format) on an FPGA, on the shared hcfpga template (`src/fpga/common`). HCFPGA-TODO: one paragraph: where the core comes from and what it is.
 
-Scaffolded by `src/fpga/common/new_fpga_algo.py --name @@ALGO@@ --mode @@UPMODE@@ --core @@FLAVOUR@@`. Every `HCFPGA-TODO` in this tree marks something the port has to decide or fill in; `grep -rn HCFPGA-TODO` lists what is left.
+Scaffolded by `src/fpga/common/new_fpga_algo.py --name @@ALGO@@ --mode @@UPMODE@@ --core @@FLAVOUR@@`.
 
 No bitstream is published. The design runs on a simulated LiteX board (`src/fpga/common/hcfpga_sim.py --algo @@ALGO@@`), which hashcat reaches through the litexbone transport.
 

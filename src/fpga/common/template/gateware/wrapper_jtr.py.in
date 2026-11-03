@@ -41,7 +41,7 @@ class @@CLASS@@DmaWrapper(HcfpgaDmaWrapper):
 
         HcfpgaDmaWrapper.__init__(self, platform,
             num_cores = num_units * CORES_PER_UNIT,
-            params    = dict(NUM_UNITS=num_units, WITH_CMP=with_cmp),
+            params    = dict(NUM_UNITS=num_units, CORES_PER_UNIT=CORES_PER_UNIT, WITH_CMP=with_cmp),
         )
 
     def hdl_sources(self):

@@ -21,7 +21,8 @@
 
 `timescale 1ns / 1ps
 module hcfpga_@@ALGO@@_top #(
-  parameter NUM_UNITS = 1,
+  parameter NUM_UNITS      = 1,
+  parameter CORES_PER_UNIT = @@CORES_PER_UNIT@@,    // the unit's N_CORES; the identity's cores= is NUM_UNITS * this
 
   parameter WITH_CMP = 1
 )(
@@ -98,7 +99,7 @@ module hcfpga_@@ALGO@@_top #(
   generate
   for (u = 0; u < NUM_UNITS; u = u + 1)
   begin : units
-    // HCFPGA-TODO: the real unit instead of the stub.
+    // HCFPGA-TODO: the real unit instead of the stub, with .N_CORES(CORES_PER_UNIT).
     hcfpga_jtr_unit_stub #(.RESULT_LEN(RESULT_LEN)) unit (
       .CLK(CLK),
       .unit_in(unit_in), .unit_in_ctrl(unit_in_ctrl), .unit_in_wr_en(unit_in_wr_en[u]),
