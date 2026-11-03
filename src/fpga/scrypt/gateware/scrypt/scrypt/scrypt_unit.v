@@ -37,6 +37,10 @@
  *     Full mode: 32 bytes = 256 bits = 128 shifts, total 160 shifts
  */
 
+// Modified for hashcat from LiteX-Scrypt's original.
+// src/fpga/scrypt/PROVENANCE.md lists every change.
+
+`include "main.vh"
 `include "scrypt.vh"
 
 module scrypt_unit #(
