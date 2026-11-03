@@ -1,0 +1,293 @@
+/**
+ * Author......: See docs/credits.txt
+ * License.....: MIT
+ */
+
+#include "common.h"
+#include "types.h"
+#include "modules.h"
+#include "bitops.h"
+#include "convert.h"
+#include "shared.h"
+#include "parser.h"
+
+// md5crypt computed on an FPGA through the fpga_md5crypt bridge. Hash format, example hash and
+// self-test are those of mode 500. The device limits what it takes: passwords up to 64 bytes,
+// salts of 1 to 8 bytes (mode 500 also takes an empty one) and 1 to 65535 rounds.
+
+static const u32   ATTACK_EXEC    = ATTACK_EXEC_OUTSIDE_KERNEL;
+static const u32   DGST_POS0      = 0;
+static const u32   DGST_POS1      = 1;
+static const u32   DGST_POS2      = 2;
+static const u32   DGST_POS3      = 3;
+static const u32   DGST_SIZE      = DGST_SIZE_4_4;
+static const u32   HASH_CATEGORY  = HASH_CATEGORY_OS;
+static const char *HASH_NAME      = "md5crypt, MD5 (Unix), Cisco-IOS $1$ (MD5) [Bridged: FPGA]";
+static const u64   KERN_TYPE      = 90500;
+static const u32   OPTI_TYPE      = OPTI_TYPE_ZERO_BYTE;
+static const u64   OPTS_TYPE      = OPTS_TYPE_STOCK_MODULE
+                                  | OPTS_TYPE_PT_GENERATE_LE
+                                  | OPTS_TYPE_NATIVE_THREADS
+                                  | OPTS_TYPE_AUTODETECT_DISABLE;
+static const u32   SALT_TYPE      = SALT_TYPE_EMBEDDED;
+static const u64   BRIDGE_TYPE    = BRIDGE_TYPE_REPLACE_LOOP
+                                  | BRIDGE_TYPE_LOOP_CHUNKED;
+static const char *BRIDGE_NAME    = "fpga_md5crypt";
+static const char *ST_PASS        = "hashcat";
+static const char *ST_HASH        = "$1$38652870$DUjsu4TTlTsOe/xxZ05uf/";
+
+static const u32   ROUNDS_MD5CRYPT     = 1000;
+static const u32   ROUNDS_MD5CRYPT_MAX = 0xffff;
+static const u32   PW_MAX_MD5CRYPT     = 64;
+static const char *SIGNATURE_MD5CRYPT  = "$1$";
+
+#include "hooks_common.c"
+
+const char *module_bridge_name    (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra) { return BRIDGE_NAME;     }
+u64         module_bridge_type    (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra) { return BRIDGE_TYPE;     }
+
+u32 module_kernel_loops_max (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra)
+{
+  const u32 kernel_loops_max = ROUNDS_MD5CRYPT_MAX;
+
+  return kernel_loops_max;
+}
+
+typedef struct md5crypt_bridge_tmp
+{
+  u32 pw_len;
+
+  u32 pw_buf[16];
+
+  u32 digest[4];
+
+} md5crypt_bridge_tmp_t;
+
+u32 module_pw_max (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra)
+{
+  const u32 pw_max = PW_MAX_MD5CRYPT;
+
+  return pw_max;
+}
+
+u32 module_salt_min (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra)
+{
+  const u32 salt_min = 1;
+
+  return salt_min;
+}
+
+u32 module_salt_max (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra)
+{
+  const u32 salt_max = 8;
+
+  return salt_max;
+}
+
+u64 module_tmp_size (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra)
+{
+  const u64 tmp_size = (const u64) sizeof (md5crypt_bridge_tmp_t);
+
+  return tmp_size;
+}
+
+static void md5crypt_decode (u8 digest[16], const u8 buf[22])
+{
+  int l;
+
+  l  = itoa64_to_int (buf[ 0]) <<  0;
+  l |= itoa64_to_int (buf[ 1]) <<  6;
+  l |= itoa64_to_int (buf[ 2]) << 12;
+  l |= itoa64_to_int (buf[ 3]) << 18;
+
+  digest[ 0] = (l >> 16) & 0xff;
+  digest[ 6] = (l >>  8) & 0xff;
+  digest[12] = (l >>  0) & 0xff;
+
+  l  = itoa64_to_int (buf[ 4]) <<  0;
+  l |= itoa64_to_int (buf[ 5]) <<  6;
+  l |= itoa64_to_int (buf[ 6]) << 12;
+  l |= itoa64_to_int (buf[ 7]) << 18;
+
+  digest[ 1] = (l >> 16) & 0xff;
+  digest[ 7] = (l >>  8) & 0xff;
+  digest[13] = (l >>  0) & 0xff;
+
+  l  = itoa64_to_int (buf[ 8]) <<  0;
+  l |= itoa64_to_int (buf[ 9]) <<  6;
+  l |= itoa64_to_int (buf[10]) << 12;
+  l |= itoa64_to_int (buf[11]) << 18;
+
+  digest[ 2] = (l >> 16) & 0xff;
+  digest[ 8] = (l >>  8) & 0xff;
+  digest[14] = (l >>  0) & 0xff;
+
+  l  = itoa64_to_int (buf[12]) <<  0;
+  l |= itoa64_to_int (buf[13]) <<  6;
+  l |= itoa64_to_int (buf[14]) << 12;
+  l |= itoa64_to_int (buf[15]) << 18;
+
+  digest[ 3] = (l >> 16) & 0xff;
+  digest[ 9] = (l >>  8) & 0xff;
+  digest[15] = (l >>  0) & 0xff;
+
+  l  = itoa64_to_int (buf[16]) <<  0;
+  l |= itoa64_to_int (buf[17]) <<  6;
+  l |= itoa64_to_int (buf[18]) << 12;
+  l |= itoa64_to_int (buf[19]) << 18;
+
+  digest[ 4] = (l >> 16) & 0xff;
+  digest[10] = (l >>  8) & 0xff;
+  digest[ 5] = (l >>  0) & 0xff;
+
+  l  = itoa64_to_int (buf[20]) <<  0;
+  l |= itoa64_to_int (buf[21]) <<  6;
+
+  digest[11] = (l >>  0) & 0xff;
+}
+
+static void md5crypt_encode (const u8 digest[16], u8 buf[22])
+{
+  int l;
+
+  l = (digest[ 0] << 16) | (digest[ 6] << 8) | (digest[12] << 0);
+
+  buf[ 0] = int_to_itoa64 (l & 0x3f); l >>= 6;
+  buf[ 1] = int_to_itoa64 (l & 0x3f); l >>= 6;
+  buf[ 2] = int_to_itoa64 (l & 0x3f); l >>= 6;
+  buf[ 3] = int_to_itoa64 (l & 0x3f); //l >>= 6;
+
+  l = (digest[ 1] << 16) | (digest[ 7] << 8) | (digest[13] << 0);
+
+  buf[ 4] = int_to_itoa64 (l & 0x3f); l >>= 6;
+  buf[ 5] = int_to_itoa64 (l & 0x3f); l >>= 6;
+  buf[ 6] = int_to_itoa64 (l & 0x3f); l >>= 6;
+  buf[ 7] = int_to_itoa64 (l & 0x3f); //l >>= 6;
+
+  l = (digest[ 2] << 16) | (digest[ 8] << 8) | (digest[14] << 0);
+
+  buf[ 8] = int_to_itoa64 (l & 0x3f); l >>= 6;
+  buf[ 9] = int_to_itoa64 (l & 0x3f); l >>= 6;
+  buf[10] = int_to_itoa64 (l & 0x3f); l >>= 6;
+  buf[11] = int_to_itoa64 (l & 0x3f); //l >>= 6;
+
+  l = (digest[ 3] << 16) | (digest[ 9] << 8) | (digest[15] << 0);
+
+  buf[12] = int_to_itoa64 (l & 0x3f); l >>= 6;
+  buf[13] = int_to_itoa64 (l & 0x3f); l >>= 6;
+  buf[14] = int_to_itoa64 (l & 0x3f); l >>= 6;
+  buf[15] = int_to_itoa64 (l & 0x3f); //l >>= 6;
+
+  l = (digest[ 4] << 16) | (digest[10] << 8) | (digest[ 5] << 0);
+
+  buf[16] = int_to_itoa64 (l & 0x3f); l >>= 6;
+  buf[17] = int_to_itoa64 (l & 0x3f); l >>= 6;
+  buf[18] = int_to_itoa64 (l & 0x3f); l >>= 6;
+  buf[19] = int_to_itoa64 (l & 0x3f); //l >>= 6;
+
+  l = (digest[11] << 0);
+
+  buf[20] = int_to_itoa64 (l & 0x3f); l >>= 6;
+  buf[21] = int_to_itoa64 (l & 0x3f); //l >>= 6;
+}
+
+int module_hash_decode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED void *digest_buf, MAYBE_UNUSED salt_t *salt, MAYBE_UNUSED void *esalt_buf, MAYBE_UNUSED void *hook_salt_buf, MAYBE_UNUSED hashinfo_t *hash_info, const char *line_buf, MAYBE_UNUSED const int line_len)
+{
+  u32 *digest = (u32 *) digest_buf;
+
+  hc_token_t token;
+
+  memset (&token, 0, sizeof (hc_token_t));
+
+  token.token_cnt  = 3;
+
+  token.signatures_cnt    = 1;
+  token.signatures_buf[0] = SIGNATURE_MD5CRYPT;
+
+  token.len[0]     = 3;
+  token.attr[0]    = TOKEN_ATTR_FIXED_LENGTH
+                   | TOKEN_ATTR_VERIFY_SIGNATURE;
+
+  token.sep[1]     = '$';
+  token.len_min[1] = 0;
+  token.len_max[1] = 8;
+  token.attr[1]    = TOKEN_ATTR_VERIFY_LENGTH
+                   | TOKEN_ATTR_OPTIONAL_ROUNDS;
+
+  token.len[2]     = 22;
+  token.attr[2]    = TOKEN_ATTR_FIXED_LENGTH
+                   | TOKEN_ATTR_VERIFY_BASE64B;
+
+  const int rc_tokenizer = input_tokenizer ((const u8 *) line_buf, line_len, &token);
+
+  if (rc_tokenizer != PARSER_OK) return (rc_tokenizer);
+
+  salt->salt_iter = ROUNDS_MD5CRYPT;
+
+  if (token.opt_len != -1)
+  {
+    salt->salt_iter = hc_strtoul ((const char *) token.opt_buf + 7, NULL, 10); // 7 = "rounds="
+  }
+
+  // The device counts rounds in 16 bits and cannot run zero of them.
+
+  if ((salt->salt_iter == 0) || (salt->salt_iter > ROUNDS_MD5CRYPT_MAX)) return (PARSER_SALT_ITERATION);
+
+  const u8 *salt_pos = token.buf[1];
+  const int salt_len = token.len[1];
+
+  const bool parse_rc = generic_salt_decode (hashconfig, salt_pos, salt_len, (u8 *) salt->salt_buf, (int *) &salt->salt_len);
+
+  if (parse_rc == false) return (PARSER_SALT_LENGTH);
+
+  // The device cannot hash an empty salt (John the Ripper skips those hashes too).
+
+  if (salt->salt_len == 0) return (PARSER_SALT_LENGTH);
+
+  const u8 *hash_pos = token.buf[2];
+
+  md5crypt_decode ((u8 *) digest, hash_pos);
+
+  return (PARSER_OK);
+}
+
+int module_hash_encode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const void *digest_buf, MAYBE_UNUSED const salt_t *salt, MAYBE_UNUSED const void *esalt_buf, MAYBE_UNUSED const void *hook_salt_buf, MAYBE_UNUSED const hashinfo_t *hash_info, char *line_buf, MAYBE_UNUSED const int line_size)
+{
+  u8 tmp[100] = { 0 };
+
+  md5crypt_encode (digest_buf, tmp);
+
+  char tmp_salt[(SALT_MAX * 2) + 1];
+
+  const int salt_len = generic_salt_encode (hashconfig, (const u8 *) salt->salt_buf, (const int) salt->salt_len, (u8 *) tmp_salt);
+
+  tmp_salt[salt_len] = 0;
+
+  int line_len = 0;
+
+  if (salt->salt_iter == ROUNDS_MD5CRYPT)
+  {
+    line_len = snprintf (line_buf, line_size, "$1$%s$%s", tmp_salt, tmp);
+  }
+  else
+  {
+    line_len = snprintf (line_buf, line_size, "$1$rounds=%u$%s$%s", salt->salt_iter, tmp_salt, tmp);
+  }
+
+  return line_len;
+}
+
+void module_init (module_ctx_t *module_ctx)
+{
+  module_init_common (module_ctx);
+
+  module_ctx->module_bridge_name              = module_bridge_name;
+  module_ctx->module_bridge_type              = module_bridge_type;
+  module_ctx->module_hash_decode              = module_hash_decode;
+  module_ctx->module_hash_encode              = module_hash_encode;
+  module_ctx->module_kernel_loops_max         = module_kernel_loops_max;
+  module_ctx->module_pw_max                   = module_pw_max;
+  module_ctx->module_salt_max                 = module_salt_max;
+  module_ctx->module_salt_min                 = module_salt_min;
+  module_ctx->module_tmp_size                 = module_tmp_size;
+}
