@@ -13,14 +13,18 @@
 //   sent into a core that cannot take half of one: the intake then keeps it across a framing reset
 //   so the send finishes (scrypt's engine does, as hcfpga_jtr_unit_feed.v does). An engine that
 //   can drop a half-read record, like this stub, ties hold low.
-// - For each candidate, either send one 32-byte C2H record on r_* (byte 0 first, r_last on byte
-//   31) and pulse retire after its last byte, or, when the comparator filters it, pulse retire
-//   without a record. Exactly one retire per candidate, canaries (id 0xfffffffe) included.
-// - C2H record: bytes 0..3 rec_id little-endian, bytes 4.. the DIGEST_BYTES digest bytes as the
-//   bridge's digest_from_c2h expects them, zero up to byte 27, bytes 28..29 core_id, bytes 30..31
-//   flags (0x0001 when the core reports an error).
-// - Comparator: the low 7 bits of the byte that becomes the low byte of hashcat's digest[0] index
-//   cmp_bitmap, loaded on cmp_load; a clear bit filters the result. WITH_CMP = 0 returns all.
+// - For each candidate, either send its PARTS 32-byte C2H records on r_*, one after the other with
+//   nothing in between (byte 0 first, r_last on byte 31 of each), and pulse retire after the last
+//   byte of the last one, or, when the comparator filters it, pulse retire without a record.
+//   Exactly one retire per candidate, canaries (id 0xfffffffe) included.
+// - C2H record k of a candidate (k = 0 .. PARTS-1): bytes 0..3 rec_id little-endian, bytes 4..27
+//   digest bytes 24k..24k+23 as the bridge's digest_from_c2h expects them (zero past
+//   DIGEST_BYTES), bytes 28..29 core_id, bytes 30..31 flags: k in bits 11..8, 0x0001 when the core
+//   reports an error. PARTS = ceil (DIGEST_BYTES / 24); with PARTS = 1 that is the one record of
+//   bcrypt's contract, flags 0x0000.
+// - Comparator: the low 7 bits of the byte that becomes the low byte of hashcat's digest[0] (in
+//   the first part) index cmp_bitmap, loaded on cmp_load; a clear bit filters the whole candidate.
+//   WITH_CMP = 0 returns all.
 // - rst is a framing reset: drop what is in flight, or (cores that cannot be reset) keep going
 //   and drop the stale results by generation, see hcfpga_gen.v.
 // - batch_arm pulses when the host arms a batch, with batch_target its record count (0: the
@@ -29,7 +33,8 @@
 //   count it needs another rule, such as a flush after some idle cycles. A one-at-a-time engine
 //   like this stub ignores both.
 //
-// The stub computes one candidate at a time, DIGEST_BYTES bytes of a toy hash:
+// The stub computes one candidate at a time, DIGEST_BYTES bytes of a toy hash, and sends it in
+// PARTS records:
 //
 //   digest[j] = pw[j % len] ^ salt[j % 16] ^ ((iter_count + j) & 0xff)     (pw[...] = 0 if len = 0)
 
@@ -37,6 +42,7 @@
 module hcfpga_@@ALGO@@_engine #(
   parameter PW_MAX       = 64,
   parameter DIGEST_BYTES = 16,
+  parameter PARTS        = 1,
   parameter WITH_CMP     = 1,
 
   parameter PW_WORDS = (PW_MAX + 3) / 4,
@@ -82,12 +88,17 @@ module hcfpga_@@ALGO@@_engine #(
   always @(posedge CLK)
     if (cmp_load == 1'b1) bitmap <= cmp_bitmap;
 
-  reg [7:0]   j   = 0;
-  reg [7:0]   kj  = 0;
-  reg [191:0] dig = 0;
+  localparam DIG_BITS = 192 * PARTS;
 
-  reg [255:0] frame   = 0;
-  reg [4:0]   bytecnt = 0;
+  reg [7:0]          j   = 0;
+  reg [7:0]          kj  = 0;
+  reg [DIG_BITS-1:0] dig = 0;
+
+  reg [255:0]        frame   = 0;
+  reg [4:0]          bytecnt = 0;
+  reg [3:0]          part    = 0;
+  reg [DIG_BITS-1:0] rest    = 0;
+  reg [31:0]         id_r    = 0;
 
   wire [127:0] salt = {salt3, salt2, salt1, salt0};
 
@@ -139,18 +150,29 @@ module hcfpga_@@ALGO@@_engine #(
       end
       else
       begin
-        frame   <= { 16'h0000, 16'h0000, dig, rec_id };
+        frame   <= { 16'h0000, 16'h0000, dig[191:0], rec_id };
+        rest    <= dig >> 192;
+        id_r    <= rec_id;
+        part    <= 0;
         bytecnt <= 0;
         state   <= E_EMIT;
       end
 
+    // The parts back to back; the candidate retires after the last byte of the last one.
     E_EMIT:
       if (r_ready == 1'b1)
       begin
-        if (bytecnt == 5'd31)
+        if ((bytecnt == 5'd31) && (part == PARTS - 1))
         begin
           retire <= 1'b1;
           state  <= E_IDLE;
+        end
+        else if (bytecnt == 5'd31)
+        begin
+          frame   <= { 4'h0, part + 4'h1, 8'h00, 16'h0000, rest[191:0], id_r };
+          rest    <= rest >> 192;
+          part    <= part + 1'b1;
+          bytecnt <= 0;
         end
         else
         begin

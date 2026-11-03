@@ -44,6 +44,9 @@ static const hcfpga_algo_t @@ALGO_UC@@ =
 
   HCFPGA_TMP_LAYOUT (@@ALGO@@_bridge_tmp_t),
 
+  // C2H records per candidate, 24 digest bytes each: the gateware's PARTS, the identity's parts=.
+  .c2h_parts = @@PARTS@@,
+
   // HCFPGA-TODO: the longest password the core takes.
   .pw_max = @@PW_MAX@@,
 

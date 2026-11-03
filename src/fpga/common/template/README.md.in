@@ -23,7 +23,7 @@ HCFPGA-TODO: answer each, with the reason:
 
 - Longest password: @@PW_MAX@@ bytes (why: ...).
 - Salt length range and cost range the core computes.
-- Digest: which bytes the device returns at C2H bytes 4.., in which order, and how the bridge turns them into hashcat's `digest_buf` words (`digest_from_c2h`); which byte indexes the comparator bitmap.
+- Digest: which bytes the device returns at C2H bytes 4.., in which order, and how the bridge turns them into hashcat's `digest_buf` words (`digest_from_c2h`); which byte indexes the comparator bitmap. Scaffolded with @@PARTS@@ C2H record(s) per candidate (`PARTS`, `c2h_parts`): more than 24 digest bytes take one record per 24.
 - What `core_id` names (a core, or a unit when the unit picks the thread).
 - Can the core be reset in the middle of a job? If not, the generation (`hcfpga_gen.v`) rides in the candidate and stale results are dropped.
 - Extra registers from 0x3c, in order.

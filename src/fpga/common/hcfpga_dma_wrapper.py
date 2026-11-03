@@ -62,6 +62,11 @@ class HcfpgaDmaWrapper(LiteXModule):
     # The top has a CLK_CORE port (cores on their own clock, as JtR's md5crypt unit allows).
     HAS_CORE_CLK = False
 
+    # C2H records per candidate: 1, or up to 4 for a device that returns more than 24 digest bytes
+    # (record k carries digest bytes 24k..24k+23, its part index in flag bits 8..11). The identity
+    # says parts= when above 1, and the bridge's hcfpga_algo_t.c2h_parts has to agree.
+    PARTS = 1
+
     def __init__(self, platform, num_cores, params=None, core_clk=False):
         assert self.ALGO and self.TOP, "a wrapper names its ALGO and its TOP"
 

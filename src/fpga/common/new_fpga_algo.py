@@ -32,6 +32,9 @@
 # starts with a one-candidate engine stub. Either way the generated tree builds, lints and passes
 # its bench before the real core is in, with a toy hash its references compute too.
 #
+# A C2H record carries 24 digest bytes. A custom core that returns more (WPA's 32-byte PMK) sends a
+# candidate's result in --parts records of 24 bytes each, up to 4; --digest-bytes above 24 sets it.
+#
 # Every place the port has to decide or fill in is marked HCFPGA-TODO; grep for it. The procedure
 # around this is AGENTS.md in the LiteX hashcat Guide.
 
@@ -369,8 +372,9 @@ def main():
   ap.add_argument("--core", choices=["jtr-unit", "custom"], default="jtr-unit",
                   help="jtr-unit: John the Ripper crypt-family units on the shared feeder/collector; custom: any other core")
   ap.add_argument("--pw-max", type=int, default=64, help="longest password the core takes (bytes)")
-  ap.add_argument("--digest-words", type=int, default=4, help="32-bit digest words in the tmp struct, at least DGST_POS3 + 1 (max 6)")
-  ap.add_argument("--digest-bytes", type=int, default=None, help="digest bytes the device returns (default 4 * digest-words, max 24)")
+  ap.add_argument("--digest-words", type=int, default=4, help="32-bit digest words in the tmp struct, at least DGST_POS3 + 1 (max 6 per C2H part)")
+  ap.add_argument("--digest-bytes", type=int, default=None, help="digest bytes the device returns (default 4 * digest-words; 24 per C2H part, max 96)")
+  ap.add_argument("--parts", type=int, default=None, help="custom: C2H records per candidate, 1 to 4, 24 digest bytes each (default: what --digest-bytes needs)")
   ap.add_argument("--result-len", type=int, default=None, help="jtr-unit: JtR's RESULT_LEN, result bytes after the IDs (default digest-bytes)")
   ap.add_argument("--key-align", type=int, choices=[4, 8], default=4, help="jtr-unit: key alignment in the unit packet (sha512crypt: 8)")
   ap.add_argument("--cores-per-unit", type=int, default=1, help="jtr-unit: cores per unit as the identity counts them (stub: 1)")
@@ -398,11 +402,20 @@ def main():
   if not (90000 <= a.fpga_mode <= 99998):
     die("--fpga-mode: unofficial modes are 90000 to 99998")
   a.up5       = "%05d" % a.mode
-  if not (1 <= a.digest_words <= 6):
-    die("--digest-words: 1 to 6 (the C2H record carries 24 digest bytes)")
+  if not (1 <= a.digest_words <= 24):
+    die("--digest-words: 1 to 24 (a C2H record carries 24 digest bytes, a candidate up to 4 records)")
   a.digest_bytes = a.digest_bytes or 4 * a.digest_words
-  if not (1 <= a.digest_bytes <= min(24, 4 * a.digest_words)):
-    die("--digest-bytes: 1 to 4 * digest-words, at most 24")
+  if not (1 <= a.digest_bytes <= min(96, 4 * a.digest_words)):
+    die("--digest-bytes: 1 to 4 * digest-words, at most 96 (4 C2H records of 24)")
+  need = (a.digest_bytes + 23) // 24
+  a.parts = a.parts or need
+  if not (1 <= a.parts <= 4) or a.parts < need:
+    die(f"--parts: 1 to 4 C2H records per candidate, at least {need} for {a.digest_bytes} digest bytes")
+  if a.digest_words > 6 * a.parts:
+    die(f"--digest-words: at most 6 per C2H part ({6 * a.parts} with --parts {a.parts})")
+  if a.parts > 1 and a.core != "custom":
+    die("--parts above 1 (more than 24 digest bytes) needs --core custom: hcfpga_jtr_unit_collect.v sends one\n"
+        "C2H record per candidate")
   a.result_len = a.result_len or a.digest_bytes
   if a.iter_min < 1:
     die("--iter-min: at least 1. The bridge spreads candidates over hashcat's loop calls by the iteration\n"
@@ -428,7 +441,7 @@ def main():
   subs = dict(
     ALGO=a.name, ALGO_UC=a.name.upper(), CLASS=a.name.capitalize(), MODE=a.fpga_mode, UPMODE=a.mode, UPMODE5=a.up5,
     PW_MAX=a.pw_max, PW_WORDS=a.pw_words, DIGEST_WORDS=a.digest_words, DIGEST_BYTES=a.digest_bytes,
-    RESULT_LEN=a.result_len, KEY_ALIGN=a.key_align, GRAIN=a.grain, CORES_PER_UNIT=a.cores_per_unit,
+    RESULT_LEN=a.result_len, KEY_ALIGN=a.key_align, GRAIN=a.grain, CORES_PER_UNIT=a.cores_per_unit, PARTS=a.parts,
     SALT_MIN=a.salt_min, SALT_MAX=a.salt_max, ITER_MIN=a.iter_min, ITER_MAX=a.iter_max,
     CORE_NAME=("unit" if jtr else "core"), FLAVOUR=a.core,
     SCAFFOLD_ARGS=" ".join(sys.argv[1:]),

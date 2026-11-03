@@ -31,7 +31,7 @@ sys.path.insert(0, COMMON)
 
 import hcfpga_bench as hb
 
-from @@ALGO@@_ref import @@ALGO@@_digest, PW_MAX, DIGEST_BYTES, SALT, ROUNDS, CANARY_PW, extra_regs
+from @@ALGO@@_ref import @@ALGO@@_digest, PW_MAX, DIGEST_BYTES, PARTS, SALT, ROUNDS, CANARY_PW, extra_regs
 
 # HCFPGA-TODO: the core's files instead of the stub's (@@STUB_SOURCES@@).
 SOURCES = [os.path.join(HERE, f) for f in [
@@ -48,7 +48,7 @@ def run_batch(exe, work, salt, rounds, cands, bitmap, gaps=1, pad_recs=1):
 def check(name, salt, rounds, cands, bitmap_idx, recs, done, errs, pad, pad_recs=1):
   want = {cid: @@ALGO@@_digest(pw, salt, rounds) for cid, pw in cands}
   return hb.check(name, cands, want, bitmap_idx, recs, done, errs, pad, pad_recs=pad_recs,
-                  digest_bytes=DIGEST_BYTES, core_name="@@CORE_NAME@@s")
+                  digest_bytes=DIGEST_BYTES, parts=PARTS, core_name="@@CORE_NAME@@s")
 
 def main():
   ap = argparse.ArgumentParser(description="@@ALGO@@ datapath bench")
@@ -89,8 +89,8 @@ def main():
     idx = {hb.cmp_index(target)}
     recs, done, errs, pad = run_batch(exe, work, salt, R, cands, hb.bitmap_words(idx))
     results.append(check("cmp", salt, R, cands, idx, recs, done, errs, pad))
-    hit = [r for r in recs if struct.unpack("<I", r[0:4])[0] == 29]
-    print("           target %s, returned %s" % (target.hex(), hit[0][4:4 + DIGEST_BYTES].hex() if hit else "nothing"))
+    hit = b"".join(r[4:28] for r in recs if struct.unpack("<I", r[0:4])[0] == 29 and r[30:32] != b"\x00\x80")
+    print("           target %s, returned %s" % (target.hex(), hit[:DIGEST_BYTES].hex() if hit else "nothing"))
 
   # Wrong salt: the same candidates under another salt return nothing that matches the target.
   if args.case in ("all", "salt"):
@@ -100,7 +100,7 @@ def main():
     wrong = salt[:-1] + bytes([salt[-1] ^ 1])
     recs, done, errs, pad = run_batch(exe, work, wrong, R, cands, hb.bitmap_words(idx))
     results.append(check("salt", wrong, R, cands, idx, recs, done, errs, pad))
-    match = [r for r in recs if r[4:4 + DIGEST_BYTES] == target]
+    match = [r for r in recs if r[4:4 + min(DIGEST_BYTES, 24)] == target[:24]]
     print("           records matching the right-salt target: %d (want 0)" % len(match))
     results.append(len(match) == 0)
 

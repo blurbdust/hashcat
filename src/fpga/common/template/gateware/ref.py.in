@@ -20,6 +20,9 @@ RESULT_LEN   = @@RESULT_LEN@@
 DIGEST_OFF   = 0
 DIGEST_BYTES = @@DIGEST_BYTES@@
 
+# C2H records per candidate: digest bytes 24k..24k+23 in record k.
+PARTS        = @@PARTS@@
+
 # HCFPGA-TODO: a salt and a cost the core takes, and a cost that keeps a bench run short.
 SALT   = b"saltsalt"
 ROUNDS = 1000

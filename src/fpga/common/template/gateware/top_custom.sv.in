@@ -7,8 +7,8 @@
 //
 // The shared parts (src/fpga/common/rtl/) are the H2C intake, which delivers one whole record at a
 // time, and the end-of-batch tail, which counts retired candidates and closes the batch. The engine
-// takes records from the intake, computes, and hands the tail whole 32-byte result records plus a
-// retire pulse per candidate.
+// takes records from the intake, computes, and hands the tail whole 32-byte result records (PARTS
+// per returned candidate) plus a retire pulse per candidate.
 //
 // HCFPGA-TODO: hcfpga_@@ALGO@@_engine.v is a one-candidate stub with a toy hash, so this top builds,
 // lints and benches from the start. Replace it with the real cores, their distribution and
@@ -59,6 +59,9 @@ module hcfpga_@@ALGO@@_top #(
   localparam PW_MAX       = @@PW_MAX@@;
   localparam DIGEST_BYTES = @@DIGEST_BYTES@@;
 
+  // C2H records per candidate, 24 digest bytes each (the identity's parts= when above 1).
+  localparam PARTS        = @@PARTS@@;
+
   localparam PW_WORDS = (PW_MAX + 3) / 4;
   localparam PW_AW    = (PW_WORDS <= 2) ? 1 : $clog2(PW_WORDS);
 
@@ -88,7 +91,7 @@ module hcfpga_@@ALGO@@_top #(
   wire       r_ready;
   wire       r_last;
 
-  hcfpga_@@ALGO@@_engine #(.PW_MAX(PW_MAX), .DIGEST_BYTES(DIGEST_BYTES), .WITH_CMP(WITH_CMP)) engine (
+  hcfpga_@@ALGO@@_engine #(.PW_MAX(PW_MAX), .DIGEST_BYTES(DIGEST_BYTES), .PARTS(PARTS), .WITH_CMP(WITH_CMP)) engine (
     .CLK(CLK), .rst(rst),
     .rec_valid(rec_valid), .rec_len(rec_len), .rec_id(rec_id),
     .pw_rd_addr(pw_rd_addr), .pw_rd_data(pw_rd_data), .rec_taken(rec_taken), .hold(rec_hold),

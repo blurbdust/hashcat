@@ -16,7 +16,9 @@
 //   bytes 0..3 the retired count little-endian, bytes 4..29 zero, flags 0x8000 at bytes 30..31.
 //   EOB records repeat until the number of records sent since the arm, results included, is a
 //   multiple of pad_recs (0 or 1: no padding). That fills a DMA granule of pad_recs records.
-// - Result records pass through unchanged, one whole record at a time, last on byte 31.
+// - Result records pass through unchanged, one whole record at a time, last on byte 31. The parts
+//   of a multi-part result (hcfpga_iface.vh) are records like any other; the collector retires the
+//   candidate after its last part, so an EOB never comes between two parts of one candidate.
 
 `timescale 1ns / 1ps
 

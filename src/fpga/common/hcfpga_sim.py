@@ -147,10 +147,13 @@ class SimSoC(SoCMini):
         wrapper = Wrapper.for_sim(platform, units, with_cmp)
 
         # The identity every hcfpga board reports. clk is the declared 1 MHz, about what Verilator
-        # manages for a small array; hashcat only uses it for its timeouts.
+        # manages for a small array; hashcat only uses it for its timeouts. parts= only when a
+        # candidate's result takes more than one C2H record.
         stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        parts = getattr(wrapper, "PARTS", 1)
+        parts = f";parts={parts}" if parts > 1 else ""
         SoCMini.__init__(self, platform, sys_clk_freq,
-            ident         = f"hcfpga/1;board={BOARD};algo={algo};cores={wrapper.num_cores};clk=1;abi={fpga_abi_current()};build={stamp}",
+            ident         = f"hcfpga/1;board={BOARD};algo={algo};cores={wrapper.num_cores}{parts};clk=1;abi={fpga_abi_current()};build={stamp}",
             ident_version = False,
         )
 

@@ -117,58 +117,131 @@ def run_batch(exe, work, salt_cfg, iter_count, cands, bitmap, gaps=1, pad_recs=1
       errs.append(line)
   return recs, done, errs, pad
 
+def parts_for(digest_bytes):
+  """C2H records per candidate for a device returning digest_bytes: one per 24 (hcfpga_iface.vh)."""
+  return max(1, (digest_bytes + 23) // 24)
+
 def check(name, cands, want, bitmap_idx, recs, done, errs, pad, pad_recs=1, digest_bytes=16, cmp_byte=0,
-          core_name="units"):
+          core_name="units", parts=None, quiet=False):
   """Check one batch.
 
-  want: candidate id -> the digest bytes the record must carry (C2H bytes 4..4+digest_bytes-1).
+  want: candidate id -> the digest bytes the candidate must return (digest_bytes of them; with
+  several parts, part k carries bytes 24k..24k+23 at C2H bytes 4..27).
   bitmap_idx: the set of bitmap indexes loaded, or None for all ones (every result returns).
+  parts: C2H records per candidate, default parts_for(digest_bytes). A returned candidate's parts
+  come in a row, same id, part index k in flag bits 8..11; a filtered candidate sends none.
   """
+  parts = parts or parts_for(digest_bytes)
   ok = True
+  def bad(msg):
+    nonlocal ok
+    ok = False
+    if not quiet:
+      print("  %s: %s" % (name, msg))
   bitmap_all = bitmap_idx is None
   expect_ret = {cid for cid, d in want.items() if bitmap_all or cmp_index(d, cmp_byte) in bitmap_idx}
   got = {}
   eob = []
+  n_res = 0
+  cur = None   # [id, core, [24-byte fields]] of the candidate being read
   for r in recs:
     flags = struct.unpack("<H", r[30:32])[0]
     if flags == 0x8000:
+      if cur is not None:
+        bad("id %08x ends after %d of %d parts" % (cur[0], len(cur[2]), parts)); cur = None
       eob.append(struct.unpack("<I", r[0:4])[0])
       continue
+    n_res += 1
     cid  = struct.unpack("<I", r[0:4])[0]
     core = struct.unpack("<H", r[28:30])[0]
-    dig  = r[4:4 + digest_bytes]
-    if r[4 + digest_bytes:28] != b"\x00" * (24 - digest_bytes):
-      print("  %s: id %08x bytes %d..27 not zero" % (name, cid, 4 + digest_bytes)); ok = False
-    if flags != 0:
-      print("  %s: id %08x flags %04x" % (name, cid, flags)); ok = False
+    part = (flags >> 8) & 0xf
+    if flags & ~0x0f00:
+      bad("id %08x flags %04x" % (cid, flags))
+    expect = 0 if cur is None else len(cur[2])
+    if part != expect or (cur is not None and cid != cur[0]):
+      bad("id %08x part %d where id %s part %d was due" % (cid, part, "%08x" % cur[0] if cur else "(any)", expect))
+      cur = None
+      if part != 0:
+        continue
+    if cur is None:
+      cur = [cid, core, []]
+    cur[2].append(r[4:28])
+    if len(cur[2]) < parts:
+      continue
+    field = b"".join(cur[2])
+    cid, core = cur[0], cur[1]
+    cur = None
+    if field[digest_bytes:] != b"\x00" * (24 * parts - digest_bytes):
+      bad("id %08x digest bytes %d.. not zero" % (cid, digest_bytes))
     if cid in got:
-      print("  %s: id %08x returned twice" % (name, cid)); ok = False
-    got[cid] = (dig, core)
+      bad("id %08x returned twice" % cid)
+    got[cid] = (field[:digest_bytes], core)
+  if cur is not None:
+    bad("id %08x ends after %d of %d parts" % (cur[0], len(cur[2]), parts))
   for cid, (dig, core) in sorted(got.items()):
     if cid not in want:
-      print("  %s: unknown id %08x" % (name, cid)); ok = False; continue
+      bad("unknown id %08x" % cid); continue
     if dig != want[cid]:
-      print("  %s: id %08x digest %s want %s" % (name, cid, dig.hex(), want[cid].hex())); ok = False
+      bad("id %08x digest %s want %s" % (cid, dig.hex(), want[cid].hex()))
   if set(got) != expect_ret:
-    print("  %s: returned %s, expected %s" % (name, sorted("%x" % c for c in got), sorted("%x" % c for c in expect_ret))); ok = False
-  total = len(got) + len(eob)
+    bad("returned %s, expected %s" % (sorted("%x" % c for c in got), sorted("%x" % c for c in expect_ret)))
+  if n_res != parts * len(got):
+    bad("%d result records for %d candidates of %d parts" % (n_res, len(got), parts))
+  total = n_res + len(eob)
   if len(eob) < 1 or (total % max(pad_recs, 1)) != 0:
-    print("  %s: %d EOB records, %d records in all, pad_recs %d" % (name, len(eob), total, pad_recs)); ok = False
+    bad("%d EOB records, %d records in all, pad_recs %d" % (len(eob), total, pad_recs))
   if any(e != len(cands) for e in eob):
-    print("  %s: EOB counts %s, want %d" % (name, eob, len(cands))); ok = False
+    bad("EOB counts %s, want %d" % (eob, len(cands)))
   if done is None:
-    print("  %s: no DONE line" % name); ok = False
+    bad("no DONE line")
   else:
     retired, status = int(done[0]), int(done[1], 16)
     if retired != len(cands):
-      print("  %s: retired %d of %d" % (name, retired, len(cands))); ok = False
+      bad("retired %d of %d" % (retired, len(cands)))
     slips = (status >> 8) & 0xff
     if (status & 2) == 0 or slips != pad or (status >> 16) != 0:
-      print("  %s: frame status %08x, want last_seen, %d slips, no unit errors" % (name, status, pad)); ok = False
+      bad("frame status %08x, want last_seen, %d slips, no unit errors" % (status, pad))
   for e in errs:
-    print("  %s: %s" % (name, e)); ok = False
+    bad(e)
   cores = sorted({c for _, c in got.values()})
-  print("%-10s %s  %d candidates, %d returned, %d filtered, %s %s, %s cycles" %
-        (name, "PASS" if ok else "FAIL", len(cands), len(got), len(cands) - len(got), core_name, cores,
-         done[2] if done else "?"))
+  if not quiet:
+    print("%-10s %s  %d candidates, %d returned%s, %d filtered, %s %s, %s cycles" %
+          (name, "PASS" if ok else "FAIL", len(cands), len(got), " in %d records" % n_res if parts > 1 else "",
+           len(cands) - len(got), core_name, cores, done[2] if done else "?"))
   return ok
+
+def selftest_parts(parts=2, digest_bytes=40):
+  """The checker against hand-made C2H streams: a good batch with a filtered candidate passes; a
+  missing part, a repeated part, parts out of order and parts of two candidates mixed fail."""
+  def rec(cid, part, field, flags=None):
+    f = (part << 8) if flags is None else flags
+    return struct.pack("<I", cid) + field + struct.pack("<HH", 0, f)
+  def eob(n):
+    return struct.pack("<I", n) + bytes(24) + struct.pack("<HH", 0, 0x8000)
+  def fields(d):
+    d = d.ljust(24 * parts, b"\x00")
+    return [d[24 * k:24 * k + 24] for k in range(parts)]
+  want = {1: bytes(range(1, 1 + digest_bytes)), 2: bytes(range(101, 101 + digest_bytes)),
+          3: bytes([0x7f] * digest_bytes)}
+  cands = [(c, b"x") for c in sorted(want)]
+  idx = {cmp_index(want[1]), cmp_index(want[2])}           # 3 is filtered: index 0x7f is not loaded
+  assert cmp_index(want[3]) not in idx
+  good = [rec(1, k, f) for k, f in enumerate(fields(want[1]))] + [rec(2, k, f) for k, f in enumerate(fields(want[2]))]
+  done = ["3", "00000002", "0"]
+  def run(name, recs, expect):
+    r = check(name, cands, want, idx, recs + [eob(3)], done, [], 0, digest_bytes=digest_bytes, parts=parts, quiet=True)
+    print("parts %-12s %s (checker says %s, wants %s)" % (name, "PASS" if r == expect else "FAIL", "ok" if r else "broken", "ok" if expect else "broken"))
+    return r == expect
+  p1 = parts                                              # first record of candidate 2
+  res = [run("good", good, True)]
+  res.append(run("missing", good[:1] + good[2:], False))
+  res.append(run("repeated", good[:1] + good[:1] + good[1:], False))
+  res.append(run("swapped", [good[1], good[0]] + good[2:], False))
+  res.append(run("mixed", [good[0], good[p1], good[1]] + good[p1 + 1:], False))
+  res.append(run("unfiltered", good + [rec(3, k, f) for k, f in enumerate(fields(want[3]))], False))
+  return all(res)
+
+if __name__ == "__main__":
+  ok = all(selftest_parts(p, 24 * p - 5) for p in (2, 3, 4))
+  print("ALL PASS" if ok else "*** FAIL ***")
+  sys.exit(0 if ok else 1)

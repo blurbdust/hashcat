@@ -27,6 +27,9 @@ class @@CLASS@@DmaWrapper(HcfpgaDmaWrapper):
     # same order as the bridge's config_extra writes them. Each is wired to the top's port of that name.
     EXTRA_CSRS = ()
 
+    # C2H records per candidate (the top's PARTS, the bridge's c2h_parts, the identity's parts=).
+    PARTS = @@PARTS@@
+
     def __init__(self, platform, num_cores=1, with_cmp=1):
         HcfpgaDmaWrapper.__init__(self, platform,
             num_cores = num_cores,
