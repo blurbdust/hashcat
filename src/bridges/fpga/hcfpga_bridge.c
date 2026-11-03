@@ -642,6 +642,7 @@ static bool algo_valid (hashcat_ctx_t *hashcat_ctx)
   else if ((ALGO->digest_words == 0) || (ALGO->digest_words > HCFPGA_DIGEST_WORDS_MAX)) why = "the tmp struct's digest must be 1 to 6 words";
   else if ((ALGO->pw_max == 0) || (ALGO->pw_max > (ALGO->tmp_pw_words * 4)) || (ALGO->pw_max > 255)) why = "pw_max must fit the tmp struct's pw_buf and the H2C length byte";
   else if (ALGO->grain_per_core == 0)                                       why = "grain_per_core must be at least 1";
+  else if (ALGO->iter_min == 0)                                             why = "iter_min must be at least 1: candidates are spread over hashcat's loop calls by the iteration count";
   else if (ALGO->canary_digest == NULL)                                     why = "canary_digest is required";
   else if (strlen (canary_password ()) > ALGO->pw_max)                      why = "the canary password is longer than pw_max";
 

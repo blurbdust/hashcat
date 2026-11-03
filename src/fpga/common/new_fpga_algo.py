@@ -38,6 +38,7 @@
 import argparse
 import os
 import re
+import ast
 import sys
 
 COMMON   = os.path.dirname(os.path.abspath(__file__))
@@ -55,7 +56,9 @@ MODULE_DROP = [
 ]
 
 # OPTS_TYPE flags that describe the upstream kernel's flow, which the pass-through kernel does not have.
-OPTS_DROP = re.compile(r"OPTS_TYPE_(DEEP_COMP_KERNEL|HOOK\d+|INIT2|LOOP2|LOOP_PREPARE|LOOP_EXTENDED|AUX\d+|MP_MULTI_DISABLE|NATIVE_THREADS|AUTODETECT_DISABLE)$")
+# SELF_TEST_DISABLE goes too: the device computes the upstream example hash, and the self-test is how
+# the bridge proves it does.
+OPTS_DROP = re.compile(r"OPTS_TYPE_(DEEP_COMP_KERNEL|HOOK\d+|INIT2|LOOP2|LOOP_PREPARE|LOOP_EXTENDED|AUX\d+|MP_MULTI_DISABLE|NATIVE_THREADS|AUTODETECT_DISABLE|SELF_TEST_DISABLE)$")
 
 def die(msg):
   raise SystemExit("new_fpga_algo: " + msg)
@@ -143,9 +146,31 @@ def bridged_module(text, a):
       die(f"upstream module: could not {what}")
     text = new
 
-  if "ATTACK_EXEC_OUTSIDE_KERNEL" not in text:
-    notes.append(f"// {TODO}: the upstream mode is not ATTACK_EXEC_OUTSIDE_KERNEL. The bridge replaces the loop of a\n"
-                 f"// slow hash; a fast hash needs a different bridge type.")
+  fast_dropped = []
+  if "ATTACK_EXEC_INSIDE_KERNEL" in text:
+    # A fast hash upstream (descrypt). The bridge replaces the loop of the slow-hash flow, so the bridged
+    # mode takes that shape: init, the loop, comp. The upstream kernel's own build options go with it.
+    sub(r"ATTACK_EXEC_INSIDE_KERNEL", "ATTACK_EXEC_OUTSIDE_KERNEL", "switch ATTACK_EXEC")
+    text, n = re.subn(r"static const u64\s+KERN_BITS\s*=[^;]*;\n", "", text)
+    if n:
+      fast_dropped.append("KERN_BITS")
+    for fn in ("module_kern_bits", "module_jit_cache_disable"):
+      text, found = drop_function(text, fn)
+      if found:
+        fast_dropped.append(fn)
+    for pat in (r"\n\s*\|\s*OPTI_TYPE_REGISTER_LIMIT\b", r"\bOPTI_TYPE_REGISTER_LIMIT\s*\n\s*\|\s*"):
+      text, n = re.subn(pat, "", text, count=1)
+      if n:
+        fast_dropped.append("OPTI_TYPE_REGISTER_LIMIT")
+        break
+    text = re.sub(r"(OPTI_TYPE\s*=\s*)OPTI_TYPE_REGISTER_LIMIT;", r"\g<1>0;", text)
+    notes.append(f"// Mode {a.mode} is a fast hash (ATTACK_EXEC_INSIDE_KERNEL); this mode has the slow-hash shape the bridge\n"
+                 f"// needs (ATTACK_EXEC_OUTSIDE_KERNEL)." + ("\n// Dropped with the upstream fast kernel: " + ", ".join(fast_dropped) + "." if fast_dropped else "") + "\n"
+                 f"// {TODO}: a fast mode's parser may leave salt->salt_iter at 0. The bridge spreads candidates over\n"
+                 f"// hashcat's loop calls by it, so module_hash_decode sets it to the device's count.")
+  elif "ATTACK_EXEC_OUTSIDE_KERNEL" not in text:
+    notes.append(f"// {TODO}: the upstream mode's ATTACK_EXEC is neither OUTSIDE_KERNEL nor INSIDE_KERNEL; the bridged\n"
+                 f"// mode must be ATTACK_EXEC_OUTSIDE_KERNEL.")
 
   sub(r"(\*/\n)", r"\1\n// @@@INTRO@@@\n", "find the license header")
 
@@ -283,10 +308,19 @@ u32 module_salt_max (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED c
   return text
 
 def bridged_test_module(text, a):
-  text, n = re.subn(r"(def module_constraints\(\):\n)((?:[ \t]+.*\n)+)",
-                    lambda m: m.group(1) + f"  # {TODO}: the device's limits: [pure pw, pure salt, optimized pw, optimized salt, combined].\n"
-                                           f"  return [[0, {a.pw_max}], [{a.salt_min}, {a.salt_max if a.salt_max else 256}], [-1, -1], [-1, -1], [-1, -1]]\n",
-                    text, count=1)
+  # The salt entry is the length of the salt string module_generate_hash gets, which is not hashcat's
+  # salt_len (descrypt: 2 characters, salt_len 4), so the upstream entry is kept for the port to narrow.
+  def constraints(m):
+    up = re.search(r"return\s*(\[\[.*\]\])", m.group(2))
+    try:
+      up_pw, up_salt = ast.literal_eval(up.group(1))[:2]
+    except Exception:
+      up_pw, up_salt = [0, 256], [0, 256]
+    pw = [up_pw[0], min(up_pw[1], a.pw_max)]
+    return (m.group(1) + f"  # {TODO}: the device's limits: [pure pw, pure salt, optimized pw, optimized salt, combined].\n"
+                         f"  # The salt entry is mode {a.mode}'s (a salt string length); narrow it to the salt strings the device takes.\n"
+                         f"  return [{pw}, {list(up_salt)}, [-1, -1], [-1, -1], [-1, -1]]\n")
+  text, n = re.subn(r"(def module_constraints\(\):\n)((?:[ \t]+.*\n)+)", constraints, text, count=1)
   if n != 1:
     text += f"\n\n# {TODO}: module_constraints() with the device's limits.\n"
   head = (f"\n# {a.name} computed on an FPGA (fpga_{a.name} bridge). The oracle is mode {a.mode}'s; the constraints\n"
@@ -337,6 +371,9 @@ def main():
   if not (1 <= a.digest_bytes <= min(24, 4 * a.digest_words)):
     die("--digest-bytes: 1 to 4 * digest-words, at most 24")
   a.result_len = a.result_len or a.digest_bytes
+  if a.iter_min < 1:
+    die("--iter-min: at least 1. The bridge spreads candidates over hashcat's loop calls by the iteration\n"
+        "count; a fixed-count algorithm gives its count (descrypt: --iter-min 25 --iter-max 25)")
   if a.result_len < a.digest_bytes or a.result_len % 2:
     die("--result-len: even, and at least digest-bytes")
   if not (1 <= a.pw_max <= 124):
