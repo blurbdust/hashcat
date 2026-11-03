@@ -1040,6 +1040,17 @@ A YPCB-00338-1P1 in another host also worked in one slot but not another, althou
 
 The Enigma X1 cannot use the cold-boot ordering described below because slot power is unavailable while the host is off and its FPGA configuration is volatile. Use a reboot after programming it.
 
+### Wrong digests, or results that never come back: one batch, step by step
+
+`hcfpga_step`, built by the same `make tools`, sends a single batch the way the bridge does and prints every result record next to the digest the host computes for it: which core answered, what flags it set, and whether the digest is right.
+
+```
+src/fpga/bcrypt/software/user/hcfpga_step hashcat password123
+src/fpga/bcrypt/software/user/hcfpga_step --spread 2048 --quiet
+```
+
+`--spread K` sends K candidates per core and ends with a table of right and wrong digests per core. A few cores returning wrong digests, at a rate that rises as the card warms up, means those cores miss timing at the clock the design was built for: rebuild it at a lower clock. `--hex` also dumps the raw records, and `--cost` and `--salt` change the configuration. The tool needs the DMA engines to itself, so stop hashcat first.
+
 ## The card is missing and looks dead
 
 The host must see an endpoint answer during POST. When none does, the root port is hidden from the operating system as well, so `lspci` shows neither the card nor the bridge it should sit behind, and a PCIe rescan recovers neither. That looks exactly like a dead board and usually is not one.

@@ -60,6 +60,8 @@ BOARD_SHAPE = {
 
 PCIE_MGMT_FREQ = 50e6
 
+AS_CLOCKS = {12.5: "FREQ_12_5MHZ", 25: "FREQ_25MHZ", 50: "FREQ_50MHZ", 100: "FREQ_100MHZ"}
+
 class _CRG(LiteXModule):
     def __init__(self, platform, sys_clk_freq, cslow=1):
         self.rst          = Signal()
@@ -90,7 +92,7 @@ class _CRG(LiteXModule):
         ]
 
 class BcryptSoC(SoCMini):
-    def __init__(self, sys_clk_freq=150e6, num_cores=1, with_led=True, feed_group=0, feed_shard=0, collect_group=0, init_batch=0, num_cores_dist=0, with_dump=1, with_cmp=1, din_bits=32, abi=1, cslow=1, pcie_connector=0, placement_margin=0.0):
+    def __init__(self, sys_clk_freq=150e6, num_cores=1, with_led=True, feed_group=0, feed_shard=0, collect_group=0, init_batch=0, num_cores_dist=0, with_dump=1, with_cmp=1, din_bits=32, abi=1, cslow=1, pcie_connector=0, placement_margin=0.0, as_clock_mhz=100):
         platform = microsoft_storey_peak.Platform()
 
         self.crg = _CRG(platform, sys_clk_freq, cslow)
@@ -132,6 +134,17 @@ class BcryptSoC(SoCMini):
             "set_global_assignment -name OPTIMIZE_POWER_DURING_FITTING OFF",
             "set_global_assignment -name OPTIMIZATION_TECHNIQUE SPEED",
             "set_global_assignment -name OPTIMIZATION_MODE \"AGGRESSIVE PERFORMANCE\"",
+        ]
+
+        # The card boots from its N25Q256A in Active Serial x4. Declaring that, rather than Quartus'
+        # passive-serial default, puts the right scheme in the flash image header. The AS clock sets how
+        # long configuration takes after power-on, which is time the PCIe endpoint does not exist: the
+        # factory image reads at 25 MHz, 100 MHz loads a full image in about a quarter of a second.
+        platform.toolchain.additional_qsf_commands += [
+            "set_global_assignment -name STRATIXV_CONFIGURATION_SCHEME \"ACTIVE SERIAL X4\"",
+            "set_global_assignment -name USE_CONFIGURATION_DEVICE ON",
+            "set_global_assignment -name STRATIX_CONFIGURATION_DEVICE EPCQ256",
+            f"set_global_assignment -name ACTIVE_SERIAL_CLOCK {AS_CLOCKS[as_clock_mhz]}",
         ]
 
         # Extra setup uncertainty squeezes placement. Quartus places and routes in one run and the PLL
@@ -221,6 +234,7 @@ def main():
     parser.add_argument("--placement-margin", type=float, default=0.0, help="Extra ns of setup clock uncertainty on sys_clk to over-constrain placement.")
     parser.add_argument("--pcie-shim",    default=None, help="Prebuilt sv_pcie_hip_enable.so, otherwise built from source.")
     parser.add_argument("--fitter-seed",  type=int, default=None, help="Quartus fitter seed. Different seeds give different placements and a spread of Fmax.")
+    parser.add_argument("--as-clock",     type=float, default=100, choices=[12.5, 25, 50, 100], help="Active Serial clock in MHz for booting from flash. The factory image uses 25.")
     parser.add_argument("--num-processors", type=int, default=None, help="Cap Quartus parallel processors, so several builds can share a machine.")
     args = parser.parse_args()
 
@@ -257,6 +271,7 @@ def main():
         cslow            = args.cslow,
         pcie_connector   = args.pcie_connector,
         placement_margin = args.placement_margin,
+        as_clock_mhz     = args.as_clock,
     )
 
     if args.fitter_seed is not None:

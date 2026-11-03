@@ -10,7 +10,7 @@ LDFLAGS=-g
 CC=$(CROSS_COMPILE)gcc
 AR=ar
 
-PROGS=dma_ek_test
+PROGS=dma_ek_test hcfpga_step
 
 all: $(PROGS)
 
@@ -19,6 +19,9 @@ liblitepcie/liblitepcie.a: liblitepcie/litepcie_dma.o liblitepcie/litepcie_flash
 	ranlib $@
 
 dma_ek_test: liblitepcie/liblitepcie.a dma_ek_test.o
+	$(CC) $(LDFLAGS) -o $@ $^ -Lliblitepcie -llitepcie
+
+hcfpga_step: liblitepcie/liblitepcie.a hcfpga_step.o
 	$(CC) $(LDFLAGS) -o $@ $^ -Lliblitepcie -llitepcie
 
 clean:
