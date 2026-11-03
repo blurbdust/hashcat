@@ -4,6 +4,8 @@ scrypt (`SCRYPT:N:r:p:salt:key`, hashcat mode 8900) is the fifth algorithm on th
 
 Result: hash mode 98900 (bridge `fpga_scrypt`) cracks scrypt with r = 1, p = 1 and N up to 32768 through hashcat's litexbone transport against a Verilator simulation of a LiteX board, over UARTBone and Etherbone, with the self-test on. `tools/test.py -m 98900 -P` passes with `HCFPGA_TEST=1`. The core is LiteX-Scrypt's unit, which is not one of John the Ripper's; its full mode, the one hashcat needs, had never run and computed no correct key: three fixes in the unit made it agree with Python's `hashlib.scrypt`. The template, bcrypt's files and the other algorithms did not change. No bitstream has been built for a real board.
 
+**Layout changed after these notes.** The template they describe was replaced by hashcat's documented layout. `src/bridges/bridge_fpga_scrypt.c` is one complete bridge, upstream's `bridge_fpga_bcrypt.c` with scrypt's specifics (`diff` the two), in place of a hook file on the shared `src/bridges/fpga/hcfpga_bridge.c`; and `src/fpga/scrypt/` carries its own copies of the shared RTL, bench, wrapper base and simulated board (`src/fpga/scrypt/hcfpga_sim.py`, without `--algo`) in place of `src/fpga/common/`. The template and the scaffold moved to the LiteX hashcat Guide (`template/`). The paths and hook names below are as they were when the notes were written. On the new layout, the bench, the example hash with the self-test on over UARTBone, `test.py` and the injected-failure row were rerun and passed.
+
 ## 1. What was ported
 
 LiteX-Scrypt (the repository owner's own design, built after John the Ripper's ZTEX designs) has the same three layers as JtR's:

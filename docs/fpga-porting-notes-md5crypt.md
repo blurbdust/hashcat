@@ -4,6 +4,8 @@ md5crypt (`$1$`, hashcat mode 500) is the first algorithm after bcrypt on the FP
 
 Result: hash mode 90500 (bridge `fpga_md5crypt`) cracks md5crypt through hashcat's litexbone transport against a Verilator simulation of a LiteX board, over UARTBone and Etherbone, with the self-test on. `tools/test.py -m 90500 -P` passes with `HCFPGA_TEST=1`. No bitstream has been built for a real board.
 
+**Layout changed after these notes.** The template they describe was replaced by hashcat's documented layout. `src/bridges/bridge_fpga_md5crypt.c` is one complete bridge, upstream's `bridge_fpga_bcrypt.c` with md5crypt's specifics (`diff` the two), in place of a hook file on the shared `src/bridges/fpga/hcfpga_bridge.c`; and `src/fpga/md5crypt/` carries its own copies of the shared RTL, bench, wrapper base and simulated board (`src/fpga/md5crypt/hcfpga_sim.py`, without `--algo`) in place of `src/fpga/common/`. The template and the scaffold moved to the LiteX hashcat Guide (`template/`). The paths and hook names below are as they were when the notes were written. On the new layout, the bench, the example hash with the self-test on over UARTBone, `test.py` and the injected-failure row with the comparator, no-compare, wrong-salt and loops-below-rounds rows, were rerun and passed.
+
 ## 1. What was ported
 
 John the Ripper's ZTEX md5crypt design (`src/ztex/fpga-md5crypt/` in openwall/john, Denis Burykin) has three layers:

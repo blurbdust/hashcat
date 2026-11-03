@@ -4,6 +4,8 @@ sha256crypt (`$5$`, hashcat mode 7400) is the second algorithm on the shared FPG
 
 Result: hash mode 97400 (bridge `fpga_sha256crypt`) cracks sha256crypt through hashcat's litexbone transport against a Verilator simulation of a LiteX board, over UARTBone and Etherbone, with the self-test on. `tools/test.py -m 97400 -P` passes with `HCFPGA_TEST=1`, with every attack. The port found one bug in the shared bridge, which hit every algorithm on the template whenever hashcat's loop count is lower than a hash's rounds; it is fixed in a commit of its own (`affaa7010`) and md5crypt's proofs and the bcrypt regression were rerun on the fix. bcrypt's files did not change. No bitstream has been built for a real board.
 
+**Layout changed after these notes.** The template they describe was replaced by hashcat's documented layout. `src/bridges/bridge_fpga_sha256crypt.c` is one complete bridge, upstream's `bridge_fpga_bcrypt.c` with sha256crypt's specifics (`diff` the two), in place of a hook file on the shared `src/bridges/fpga/hcfpga_bridge.c`; and `src/fpga/sha256crypt/` carries its own copies of the shared RTL, bench, wrapper base and simulated board (`src/fpga/sha256crypt/hcfpga_sim.py`, without `--algo`) in place of `src/fpga/common/`. The template and the scaffold moved to the LiteX hashcat Guide (`template/`). The paths and hook names below are as they were when the notes were written. On the new layout, the bench, the example hash with the self-test on over UARTBone, `test.py` and the injected-failure row were rerun and passed.
+
 ## 1. What was ported
 
 John the Ripper's ZTEX sha256crypt design (`src/ztex/fpga-sha256crypt/` in openwall/john, Denis Burykin) has the same three layers as its md5crypt design:

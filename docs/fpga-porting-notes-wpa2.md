@@ -4,6 +4,8 @@ WPA-PBKDF2-PMKID+EAPOL (hashcat mode 22000, hcxtools' `WPA*01*` and `WPA*02*` li
 
 Result: hash mode 92500 (bridge `fpga_wpa2`) cracks mode 22000's PMKID and EAPOL lines, FT forms included, through hashcat's litexbone transport against a Verilator simulation of a LiteX board, over UARTBone and Etherbone, with the self-test on. The device computes the PMK, PBKDF2-HMAC-SHA1 (passphrase, ESSID, 4096 iterations, 32 bytes), from the password and the ESSID, and hashcat's kernels compute everything after it as mode 22000's do. The PMK is 32 bytes and a C2H record carries 24, so this port came with a template extension, multi-part C2H results, in two commits of its own before the wpa2 commits. No bitstream has been built for a real board.
 
+**Layout changed after these notes.** The template they describe was replaced by hashcat's documented layout. `src/bridges/bridge_fpga_wpa2.c` is one complete bridge, upstream's `bridge_fpga_bcrypt.c` with wpa2's specifics (`diff` the two), in place of a hook file on the shared `src/bridges/fpga/hcfpga_bridge.c`; and `src/fpga/wpa2/` carries its own copies of the shared RTL, bench, wrapper base and simulated board (`src/fpga/wpa2/hcfpga_sim.py`, without `--algo`) in place of `src/fpga/common/`. The template and the scaffold moved to the LiteX hashcat Guide (`template/`). The paths and hook names below are as they were when the notes were written. On the new layout, the bench, the example hash with the self-test on over UARTBone, `test.py` and the injected-failure row with the three broken-parts rows, were rerun and passed.
+
 ## 1. What was ported
 
 OpenCiphers (David Hulton, for Pico Computing, 2006; BSD) published a WPA-PSK cracker for Pico's Virtex-4 cards in three layers:
