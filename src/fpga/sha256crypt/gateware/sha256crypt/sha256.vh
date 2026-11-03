@@ -7,6 +7,11 @@
  *
  */
 
+// Modified for hashcat from John the Ripper's original.
+// src/fpga/sha256crypt/PROVENANCE.md lists every change.
+
+`include "log2.vh"
+
 // Include Verilog code for "blackbox" modules
 // (ISE Project Navigator requires restart after switching this)
 `define	SIMULATION
