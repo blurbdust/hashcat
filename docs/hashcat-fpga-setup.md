@@ -58,11 +58,11 @@ Mode 75000 is excluded from automatic detection because it shares the `$2*$` has
 
 Mode 90500 takes mode 500's `$1$` hashes and is likewise excluded from automatic detection. No md5crypt bitstream is published: the design has so far run on a simulated LiteX board only, see `src/fpga/md5crypt/README.md`. It takes passwords up to 64 bytes and salts of 1 to 8 bytes.
 
+Mode 91500 takes mode 1500's descrypt hashes (2 salt characters and 11 hash characters) and is likewise excluded from automatic detection. No descrypt bitstream is published: the design has so far run on a simulated LiteX board only, see `src/fpga/descrypt/README.md`. It takes passwords up to 8 bytes, as mode 1500 does, and every hash mode 1500 takes; the self-test, which mode 1500 leaves off, runs.
+
 Mode 91800 takes mode 1800's `$6$` hashes and is likewise excluded from automatic detection. No sha512crypt bitstream is published: the design has so far run on a simulated LiteX board only, see `src/fpga/sha512crypt/README.md`. It takes passwords up to 64 bytes, salts of 1 to 16 bytes and 1 to 999999999 rounds; mode 1800 also takes an empty salt and round counts outside that range, which mode 91800 refuses.
 
 Mode 97400 takes mode 7400's `$5$` hashes and is likewise excluded from automatic detection. No sha256crypt bitstream is published: the design has so far run on a simulated LiteX board only, see `src/fpga/sha256crypt/README.md`. It takes passwords up to 32 bytes, salts of 1 to 16 bytes and 1 to 999999999 rounds; mode 7400 also takes an empty salt and salts of up to 20 bytes, which mode 97400 refuses.
-
-Mode 91500 takes mode 1500's descrypt hashes (2 salt characters and 11 hash characters) and is likewise excluded from automatic detection. No descrypt bitstream is published: the design has so far run on a simulated LiteX board only, see `src/fpga/descrypt/README.md`. It takes passwords up to 8 bytes, as mode 1500 does, and every hash mode 1500 takes; the self-test, which mode 1500 leaves off, runs.
 
 ## Why board-specific setup is required
 
