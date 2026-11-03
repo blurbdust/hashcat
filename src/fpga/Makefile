@@ -377,6 +377,10 @@ SIM_SCRIPT_scrypt := scrypt/gateware/scrypt/tb_datapath.py
 
 SIM_TOOL_scrypt := verilator
 
+SIM_SCRIPT_wpa2 := wpa2/gateware/wpa2/tb_datapath.py
+
+SIM_TOOL_wpa2 := verilator
+
 SIM_SCRIPT      := $(SIM_SCRIPT_$(ALGO))
 
 SIM_TOOL        := $(or $(SIM_TOOL_$(ALGO)),$(IVERILOG))

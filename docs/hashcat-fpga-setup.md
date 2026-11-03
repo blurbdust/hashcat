@@ -52,6 +52,7 @@ The host side of the `Speed.#*` line and the 90c watchdog refer to this candidat
 | 90500 | md5crypt  | `fpga_md5crypt` |
 | 91500 | descrypt  | `fpga_descrypt` |
 | 91800 | sha512crypt | `fpga_sha512crypt` |
+| 92500 | wpa2      | `fpga_wpa2`     |
 | 97400 | sha256crypt | `fpga_sha256crypt` |
 | 98900 | scrypt    | `fpga_scrypt`   |
 
