@@ -57,6 +57,7 @@ All under `gateware/wpa2/`, in upstream's module directories (`wpapsk/`, `sha1/`
 | File | Change |
 |---|---|
 | `wpapsk/Sha1.v`, `wpapsk/Sha1BRAM.v`, `wpapsk/R.v`, `wpapsk/Add32.v` | none |
+| `wpapsk/PBKDF2.v` | the result accumulator is cleared on `Rst` (below) |
 | `sha1/Sha1.v` | the module is renamed `Sha1Full` (below) |
 
 Not taken: `wpapsk/PBKDF2Bridge.v` (the Pico bus bridge and the core array), `wpapsk/PBKDF2BRAM.v` and `wpapsk/BRAM.v` (the host-written ipad, opad and U1 tables; `BRAM.v` is a Xilinx `RAMB16` unless `SIMULATION` is defined), `wpapsk/PBKDF2BridgeTest.v`, `wpapsk/Sha1Defines.v` (empty), `wpapsk/wpapsk.ise`, `wpapsk/Attic/`, `sha1/Sha1Top.v` (the bus wrapper of the SHA-1 core), `sha1/Sha1Test.v`, `sha1/sha1.ise`, `sha1/README` and `sha1/Sha1Defines.v`. Upstream's host computed the HMAC setup (ipad, opad and U1 of each block) and wrote it into the tables; hashcat's engine computes it on the device from the password and the ESSID instead.
@@ -65,7 +66,13 @@ Not taken: `wpapsk/PBKDF2Bridge.v` (the Pico bus bridge and the core array), `wp
 
 `sha1/Sha1.v` and `wpapsk/Sha1.v` both define `module Sha1`, and the design needs both: `wpapsk`'s is specialised for PBKDF2's 20-byte messages (it builds their padding and length itself), `sha1`'s compresses any 16-word block. `sha1/Sha1.v`'s module is renamed `Sha1Full`; nothing else in the file changes.
 
+### `wpapsk/PBKDF2.v`: a clear accumulator on `Rst`
+
+`PBKDF2.v` XORs every U into its outputs, `mac_Fo..mac_Jo`, and `Rst` reloads ipad, opad and U1 and restarts the count but leaves those outputs as they are. So every run after the first returned the previous run's result XORed with its own. A bench of the core alone, driven as the engine drives it, gave the right block for the first of 12 runs and wrong ones for the other 11; with the outputs cleared on `Rst`, all 12. How upstream's own bridge (`PBKDF2Bridge.v`) and host software lived with this was not followed further. An older LiteX port of this core made the same change. The five `<= 0` assignments are the whole change.
+
 ### Left as upstream wrote it
+
+- `PBKDF2.v` starts one more SHA-1 compression in the cycle its count reaches the end (`Sha1Done & GoLatch` still starts the core), and a run started before that compression ends goes wrong: the core is busy and does not take the new run's first `Go`. The bench of the core alone found every restart 80 cycles or more after `Done` right, and restarts at 78 and fewer wrong. That is not changed in the core: the engine lets a pair rest 128 cycles after `Done` before it starts it again.
 
 - Verilator's width warnings in both `Sha1.v` files: `WAddr0..3` (`T + 13`, `T + 8`, `T + 2`, `T`) and `WAddr4` (`T_0`) truncate the 7-bit round counter to 4 bits. They address the 16-word window of the message schedule, which wraps; that is intended.
 - Non-blocking assignments in `PBKDF2.v`'s `initial` block, and the `//synthesis attribute init` comments (Xilinx XST) beside each register.
@@ -74,9 +81,12 @@ Not taken: `wpapsk/PBKDF2Bridge.v` (the Pico bus bridge and the core array), `wp
 
 | File | Notes |
 |---|---|
+| `gateware/wpa2/hcfpga_wpa2_engine.v` | the setup unit (the HMAC setup on `Sha1Full`), the PBKDF2 pairs, the generation, the collector with two C2H records per candidate |
 | `gateware/wpa2/hcfpga_wpa2_top.sv` | the datapath top |
 | `gateware/wpa2_dma_wrapper.py` | the LiteX wrapper |
 | `gateware/wpa2/tb_datapath.py`, `tb_dut.vh`, `wpa2_ref.py` | the datapath bench and its reference |
+| `src/bridges/bridge_fpga_wpa2.c`, `src/bridges/fpga/hcfpga_wpa2_ref.h` | the bridge hooks and the canary's reference |
+| `src/modules/module_92500.c`, `OpenCL/m92500-pure.cl`, `tools/test_modules/m92500.py` | mode 22000's module, kernel and test module, bridged |
 
 Shared with every algorithm on the template: `src/fpga/common/` (see its README).
 

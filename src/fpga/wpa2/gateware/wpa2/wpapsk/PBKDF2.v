@@ -1,5 +1,7 @@
 `timescale 1ns / 1ps
 
+// Modified for hashcat, see src/fpga/wpa2/PROVENANCE.md.
+
 /* This specifies the number of bits of iterations (4096 in this case) */
 `define ITERATIONS 12
 
@@ -127,6 +129,12 @@ always @(posedge Clk) begin
       mac_H_  <= mac_H;
       mac_I_  <= mac_I;
       mac_J_  <= mac_J;
+      // hashcat: a run starts from a clear accumulator, not from the last run's result.
+      mac_Fo  <= 0;
+      mac_Go  <= 0;
+      mac_Ho  <= 0;
+      mac_Io  <= 0;
+      mac_Jo  <= 0;
       Counter <= 14'h1;
       GoLatch <= 0;
    end
