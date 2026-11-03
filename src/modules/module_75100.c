@@ -23,7 +23,7 @@ static const u32   DGST_POS3      = 3;
 static const u32   DGST_SIZE      = DGST_SIZE_4_4;
 static const u32   HASH_CATEGORY  = HASH_CATEGORY_OS;
 static const char *HASH_NAME      = "md5crypt, MD5 (Unix), Cisco-IOS $1$ (MD5) [Bridged: FPGA]";
-static const u64   KERN_TYPE      = 90500;
+static const u64   KERN_TYPE      = 75100;
 static const u32   OPTI_TYPE      = OPTI_TYPE_ZERO_BYTE;
 static const u64   OPTS_TYPE      = OPTS_TYPE_STOCK_MODULE
                                   | OPTS_TYPE_PT_GENERATE_LE

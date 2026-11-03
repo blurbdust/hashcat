@@ -26,7 +26,7 @@ typedef struct scrypt_bridge_tmp
 
 } scrypt_bridge_tmp_t;
 
-KERNEL_FQ KERNEL_FA void m98900_init (KERN_ATTR_TMPS (scrypt_bridge_tmp_t))
+KERNEL_FQ KERNEL_FA void m75500_init (KERN_ATTR_TMPS (scrypt_bridge_tmp_t))
 {
   const u64 gid = get_global_id (0);
 
@@ -45,11 +45,11 @@ KERNEL_FQ KERNEL_FA void m98900_init (KERN_ATTR_TMPS (scrypt_bridge_tmp_t))
   }
 }
 
-KERNEL_FQ KERNEL_FA void m98900_loop (KERN_ATTR_TMPS (scrypt_bridge_tmp_t))
+KERNEL_FQ KERNEL_FA void m75500_loop (KERN_ATTR_TMPS (scrypt_bridge_tmp_t))
 {
 }
 
-KERNEL_FQ KERNEL_FA void m98900_comp (KERN_ATTR_TMPS (scrypt_bridge_tmp_t))
+KERNEL_FQ KERNEL_FA void m75500_comp (KERN_ATTR_TMPS (scrypt_bridge_tmp_t))
 {
   const u64 gid = get_global_id (0);
 

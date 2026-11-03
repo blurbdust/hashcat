@@ -145,7 +145,7 @@ DECLSPEC void make_kn (PRIVATE_AS u32 *k)
   k[3] ^= c * 0x87000000;
 }
 
-KERNEL_FQ KERNEL_FA void m92500_init (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t))
+KERNEL_FQ KERNEL_FA void m75600_init (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t))
 {
   const u64 gid = get_global_id (0);
 
@@ -164,16 +164,16 @@ KERNEL_FQ KERNEL_FA void m92500_init (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, w
   }
 }
 
-KERNEL_FQ KERNEL_FA void m92500_loop (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t))
+KERNEL_FQ KERNEL_FA void m75600_loop (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t))
 {
 }
 
-KERNEL_FQ KERNEL_FA void m92500_comp (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t))
+KERNEL_FQ KERNEL_FA void m75600_comp (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t))
 {
   // not in use here, special case...
 }
 
-KERNEL_FQ KERNEL_FA void m92500_aux1 (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t))
+KERNEL_FQ KERNEL_FA void m75600_aux1 (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t))
 {
   const u64 gid = get_global_id (0);
 
@@ -366,7 +366,7 @@ KERNEL_FQ KERNEL_FA void m92500_aux1 (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, w
   }
 }
 
-KERNEL_FQ KERNEL_FA void m92500_aux2 (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t))
+KERNEL_FQ KERNEL_FA void m75600_aux2 (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t))
 {
   const u64 gid = get_global_id (0);
 
@@ -549,7 +549,7 @@ KERNEL_FQ KERNEL_FA void m92500_aux2 (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, w
   }
 }
 
-KERNEL_FQ KERNEL_FA void m92500_aux3 (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t))
+KERNEL_FQ KERNEL_FA void m75600_aux3 (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t))
 {
   /**
    * aes shared
@@ -823,7 +823,7 @@ KERNEL_FQ KERNEL_FA void m92500_aux3 (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, w
   }
 }
 
-KERNEL_FQ KERNEL_FA void m92500_aux4 (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t))
+KERNEL_FQ KERNEL_FA void m75600_aux4 (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t))
 {
   const u64 gid = get_global_id (0);
 
@@ -916,7 +916,7 @@ KERNEL_FQ KERNEL_FA void m92500_aux4 (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, w
   #endif
 }
 
-KERNEL_FQ KERNEL_FA void m92500_aux5 (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t))
+KERNEL_FQ KERNEL_FA void m75600_aux5 (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t))
 {
   const u64 gid = get_global_id (0);
 
@@ -1088,7 +1088,7 @@ KERNEL_FQ KERNEL_FA void m92500_aux5 (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, w
   #endif
 }
 
-KERNEL_FQ KERNEL_FA void m92500_aux6 (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t))
+KERNEL_FQ KERNEL_FA void m75600_aux6 (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t))
 {
   /**
    * aes shared

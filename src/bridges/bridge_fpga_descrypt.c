@@ -18,7 +18,7 @@
 #include "fpga/hcfpga_pool.h"
 #include "fpga/hcfpga_descrypt_ref.h"
 
-// descrypt on an FPGA (hash mode 91500): bcrypt's bridge with descrypt's specifics. The gateware is
+// descrypt on an FPGA (hash mode 75200): bcrypt's bridge with descrypt's specifics. The gateware is
 // src/fpga/descrypt.
 //
 // No register beyond the shared block: salt0 is hashcat's salt_buf[0], whose bits 11:0 are the
@@ -110,7 +110,7 @@
 
 #define FPGA_CHUNKS_DEFAULT  2
 
-// The module's and the kernel's tmp struct (module_91500.c, m91500-pure.cl): an 8-byte password,
+// The module's and the kernel's tmp struct (module_75200.c, m75200-pure.cl): an 8-byte password,
 // and mode 1500's 4 digest words. All three files keep the same struct.
 typedef struct
 {

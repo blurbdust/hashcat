@@ -24,7 +24,7 @@ static const u32   DGST_POS3      = 3;
 static const u32   DGST_SIZE      = DGST_SIZE_8_8;
 static const u32   HASH_CATEGORY  = HASH_CATEGORY_OS;
 static const char *HASH_NAME      = "sha512crypt $6$, SHA512 (Unix) [Bridged: FPGA]";
-static const u64   KERN_TYPE      = 91800;
+static const u64   KERN_TYPE      = 75300;
 static const u32   OPTI_TYPE      = OPTI_TYPE_ZERO_BYTE
                                   | OPTI_TYPE_USES_BITS_64;
 static const u64   OPTS_TYPE      = OPTS_TYPE_STOCK_MODULE
@@ -62,7 +62,7 @@ u32 module_kernel_loops_max (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_
   return kernel_loops_max;
 }
 
-// The tmp struct the kernel (m91800-pure.cl) and the bridge (bridge_fpga_sha512crypt.c) share.
+// The tmp struct the kernel (m75300-pure.cl) and the bridge (bridge_fpga_sha512crypt.c) share.
 
 typedef struct sha512crypt_bridge_tmp
 {

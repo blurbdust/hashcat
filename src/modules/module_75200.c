@@ -33,7 +33,7 @@ static const u32   DGST_POS3      = 3;
 static const u32   DGST_SIZE      = DGST_SIZE_4_4; // originally DGST_SIZE_4_2
 static const u32   HASH_CATEGORY  = HASH_CATEGORY_OS;
 static const char *HASH_NAME      = "descrypt, DES (Unix), Traditional DES [Bridged: FPGA]";
-static const u64   KERN_TYPE      = 91500;
+static const u64   KERN_TYPE      = 75200;
 static const u32   OPTI_TYPE      = OPTI_TYPE_ZERO_BYTE;
 static const u64   OPTS_TYPE      = OPTS_TYPE_STOCK_MODULE
                                   | OPTS_TYPE_PT_GENERATE_LE
@@ -68,7 +68,7 @@ u32 module_kernel_loops_max (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_
   return kernel_loops_max;
 }
 
-// The tmp struct the kernel (m91500-pure.cl) and the bridge (bridge_fpga_descrypt.c) share.
+// The tmp struct the kernel (m75200-pure.cl) and the bridge (bridge_fpga_descrypt.c) share.
 
 typedef struct descrypt_bridge_tmp
 {

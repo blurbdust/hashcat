@@ -86,7 +86,7 @@ Not taken: `wpapsk/PBKDF2Bridge.v` (the Pico bus bridge and the core array), `wp
 | `gateware/wpa2_dma_wrapper.py` | the LiteX wrapper |
 | `gateware/wpa2/tb_datapath.py`, `tb_dut.vh`, `wpa2_ref.py` | the datapath bench and its reference |
 | `src/bridges/bridge_fpga_wpa2.c`, `src/bridges/fpga/hcfpga_wpa2_ref.h` | the bridge (bcrypt's with wpa2's specifics) and the canary's reference |
-| `src/modules/module_92500.c`, `OpenCL/m92500-pure.cl`, `tools/test_modules/m92500.py` | mode 22000's module, kernel and test module, bridged |
+| `src/modules/module_75600.c`, `OpenCL/m75600-pure.cl`, `tools/test_modules/m75600.py` | mode 22000's module, kernel and test module, bridged |
 
 Shared with every algorithm after bcrypt, identical in each: `hcfpga_*.py` and `hcfpga_iface.vh` here, the shared RTL and bench in `gateware/wpa2/`.
 

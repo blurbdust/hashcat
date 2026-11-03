@@ -18,7 +18,7 @@
 #include "fpga/hcfpga_pool.h"
 #include "fpga/hcfpga_scrypt_ref.h"
 
-// scrypt on an FPGA (hash mode 98900): bcrypt's bridge with scrypt's specifics. The gateware is
+// scrypt on an FPGA (hash mode 75500): bcrypt's bridge with scrypt's specifics. The gateware is
 // src/fpga/scrypt.
 
 #define ALGO_NAME "scrypt"
@@ -113,7 +113,7 @@
 
 #define FPGA_CHUNKS_DEFAULT  2
 
-// The module's and the kernel's tmp struct (module_98900.c, m98900-pure.cl): the password, and
+// The module's and the kernel's tmp struct (module_75500.c, m75500-pure.cl): the password, and
 // the derived key's first 16 bytes. All three files keep the same struct.
 typedef struct
 {

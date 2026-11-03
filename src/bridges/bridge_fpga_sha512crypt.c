@@ -18,7 +18,7 @@
 #include "fpga/hcfpga_pool.h"
 #include "fpga/hcfpga_sha512crypt_ref.h"
 
-// sha512crypt on an FPGA (hash mode 91800): bcrypt's bridge with sha512crypt's specifics. The gateware is
+// sha512crypt on an FPGA (hash mode 75300): bcrypt's bridge with sha512crypt's specifics. The gateware is
 // src/fpga/sha512crypt.
 
 #define ALGO_NAME "sha512crypt"
@@ -113,7 +113,7 @@
 
 #define FPGA_CHUNKS_DEFAULT  2
 
-// The module's and the kernel's tmp struct (module_91800.c, m91800-pure.cl): a 64-byte password,
+// The module's and the kernel's tmp struct (module_75300.c, m75300-pure.cl): a 64-byte password,
 // the first 16 result bytes. All three files keep the same struct.
 typedef struct
 {

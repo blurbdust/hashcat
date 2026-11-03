@@ -31,7 +31,7 @@ static const u32   DGST_POS3      = 3;
 static const u32   DGST_SIZE      = DGST_SIZE_4_16;
 static const u32   HASH_CATEGORY  = HASH_CATEGORY_GENERIC_KDF;
 static const char *HASH_NAME      = "scrypt [Bridged: FPGA]";
-static const u64   KERN_TYPE      = 98900;
+static const u64   KERN_TYPE      = 75500;
 static const u32   OPTI_TYPE      = OPTI_TYPE_ZERO_BYTE;
 static const u64   OPTS_TYPE      = OPTS_TYPE_STOCK_MODULE
                                   | OPTS_TYPE_PT_GENERATE_LE
@@ -69,7 +69,7 @@ u32 module_kernel_loops_max (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_
   return kernel_loops_max;
 }
 
-// The tmp struct the kernel (m98900-pure.cl) and the bridge (bridge_fpga_scrypt.c) share.
+// The tmp struct the kernel (m75500-pure.cl) and the bridge (bridge_fpga_scrypt.c) share.
 
 typedef struct scrypt_bridge_tmp
 {

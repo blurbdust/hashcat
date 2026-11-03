@@ -5,7 +5,7 @@
 
 // wpa2 computed on an FPGA through the fpga_wpa2 bridge (src/fpga/wpa2). Made from
 // module_22000.c: hash format, example hash and self-test are
-// mode 22000's. The device computes the PMK and the bridge replaces the PBKDF2 loop; m92500-pure.cl
+// mode 22000's. The device computes the PMK and the bridge replaces the PBKDF2 loop; m75600-pure.cl
 // keeps mode 22000's comp kernels (aux1 to aux6), which read the PMK from the bridge's tmp struct,
 // so OPTS_TYPE_DEEP_COMP_KERNEL, KERN_BITS and module_deep_comp_kernel stay as upstream has them.
 // The module options (wpa_module_register_options: --eapol-message-pair, --nonce-error-corrections
@@ -29,7 +29,7 @@
 #include "emu_general.h"
 #include "emu_inc_cipher_aes.h"
 #include "emu_inc_hash_md5.h"
-#include "m92500-pure.cl"
+#include "m75600-pure.cl"
 #include "wpa_common.c"
 
 static const u32   ATTACK_EXEC    = ATTACK_EXEC_OUTSIDE_KERNEL;
@@ -40,7 +40,7 @@ static const u32   DGST_POS3      = 3;
 static const u32   DGST_SIZE      = DGST_SIZE_4_4;
 static const u32   HASH_CATEGORY  = HASH_CATEGORY_NETWORK_PROTOCOL;
 static const char *HASH_NAME      = "WPA-PBKDF2-PMKID+EAPOL [Bridged: FPGA]";
-static const u64   KERN_TYPE      = 92500;
+static const u64   KERN_TYPE      = 75600;
 static const u32   OPTI_TYPE      = OPTI_TYPE_ZERO_BYTE;
 static const u64   OPTS_TYPE      = OPTS_TYPE_STOCK_MODULE
                                   | OPTS_TYPE_PT_GENERATE_LE
@@ -86,7 +86,7 @@ u32 module_kernel_loops_max (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_
 }
 
 // The tmp struct the kernel and the bridge (bridge_fpga_wpa2.c) share, wpa2_bridge_tmp_t, comes
-// from m92500-pure.cl, included above for the comp kernels the potfile check runs.
+// from m75600-pure.cl, included above for the comp kernels the potfile check runs.
 
 u64 module_tmp_size (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra)
 {
@@ -745,25 +745,25 @@ bool module_potfile_custom_check (MAYBE_UNUSED const hashconfig_t *hashconfig, M
 
   u32 d_return_buf = 0;
 
-  void (*m92500_aux) (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t));
+  void (*m75600_aux) (KERN_ATTR_TMPS_ESALT (wpa2_bridge_tmp_t, wpa_t));
 
   if (wpa_db->type == 1)
   {
-    m92500_aux = m92500_aux4;
+    m75600_aux = m75600_aux4;
   }
   else if (wpa_db->type == 2)
   {
     if (wpa_db->keyver == 1)
     {
-      m92500_aux = m92500_aux1;
+      m75600_aux = m75600_aux1;
     }
     else if (wpa_db->keyver == 2)
     {
-      m92500_aux = m92500_aux2;
+      m75600_aux = m75600_aux2;
     }
     else if (wpa_db->keyver == 3)
     {
-      m92500_aux = m92500_aux3;
+      m75600_aux = m75600_aux3;
     }
     else
     {
@@ -772,13 +772,13 @@ bool module_potfile_custom_check (MAYBE_UNUSED const hashconfig_t *hashconfig, M
   }
   else if (wpa_db->type == 3)
   {
-    m92500_aux = m92500_aux5;
+    m75600_aux = m75600_aux5;
   }
   else if (wpa_db->type == 4)
   {
     if (wpa_db->keyver != 3) return false;
 
-    m92500_aux = m92500_aux6;
+    m75600_aux = m75600_aux6;
   }
   else
   {
@@ -799,7 +799,7 @@ bool module_potfile_custom_check (MAYBE_UNUSED const hashconfig_t *hashconfig, M
   kernel_param.pws_pos             = 0;
   kernel_param.gid_max             = 1;
 
-  m92500_aux
+  m75600_aux
   (
     NULL,               // pws
     NULL,               // rules_buf

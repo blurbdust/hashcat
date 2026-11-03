@@ -18,7 +18,7 @@
 #
 #   src/fpga/md5crypt/hcfpga_sim.py --bridge uartbone --build-only
 #   src/fpga/md5crypt/hcfpga_sim.py --bridge uartbone --no-build &
-#   HCFPGA_LITEXBONE=tcp:127.0.0.1:2430 ./hashcat -m 90500 hash.txt words.txt
+#   HCFPGA_LITEXBONE=tcp:127.0.0.1:2430 ./hashcat -m 75600 hash.txt words.txt
 #
 # Etherbone needs a tap interface the user may open (--tap) and hashcat able to reach the board
 # at its address: HCFPGA_LITEXBONE=udp:192.168.9.50.

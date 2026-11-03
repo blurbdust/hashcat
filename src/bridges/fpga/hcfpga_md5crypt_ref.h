@@ -133,7 +133,7 @@ static void hcfpga_md5_final (hcfpga_md5_t *ctx, uint8_t out[16])
   }
 }
 
-// FreeBSD's crypt-md5.c, the "$1$" magic, rounds as the salt_iter of mode 500 and 90500.
+// FreeBSD's crypt-md5.c, the "$1$" magic, rounds as the salt_iter of mode 500 and 75100.
 static void hcfpga_md5crypt (const uint8_t *pw, uint32_t pw_len, const uint8_t *salt, uint32_t salt_len, uint32_t rounds, uint32_t out[4])
 {
   hcfpga_md5_t ctx;

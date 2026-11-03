@@ -18,7 +18,7 @@
 #include "fpga/hcfpga_pool.h"
 #include "fpga/hcfpga_sha256crypt_ref.h"
 
-// sha256crypt on an FPGA (hash mode 97400): bcrypt's bridge with sha256crypt's specifics. The gateware is
+// sha256crypt on an FPGA (hash mode 75400): bcrypt's bridge with sha256crypt's specifics. The gateware is
 // src/fpga/sha256crypt.
 
 #define ALGO_NAME "sha256crypt"
@@ -113,7 +113,7 @@
 
 #define FPGA_CHUNKS_DEFAULT  2
 
-// The module's and the kernel's tmp struct (module_97400.c, m97400-pure.cl): a 32-byte password,
+// The module's and the kernel's tmp struct (module_75400.c, m75400-pure.cl): a 32-byte password,
 // the first 16 result bytes. All three files keep the same struct.
 typedef struct
 {

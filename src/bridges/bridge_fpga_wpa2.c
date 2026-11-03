@@ -18,7 +18,7 @@
 #include "fpga/hcfpga_pool.h"
 #include "fpga/hcfpga_wpa2_ref.h"
 
-// wpa2 on an FPGA (hash mode 92500): bcrypt's bridge with wpa2's specifics. The gateware is
+// wpa2 on an FPGA (hash mode 75600): bcrypt's bridge with wpa2's specifics. The gateware is
 // src/fpga/wpa2.
 
 #define ALGO_NAME "wpa2"
@@ -118,7 +118,7 @@
 
 #define FPGA_CHUNKS_DEFAULT  2
 
-// The module's and the kernel's tmp struct (module_92500.c, m92500-pure.cl): the password, and
+// The module's and the kernel's tmp struct (module_75600.c, m75600-pure.cl): the password, and
 // the PMK the device returns. All three files keep the same struct.
 typedef struct
 {

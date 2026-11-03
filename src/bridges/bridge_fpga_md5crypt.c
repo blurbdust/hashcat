@@ -18,7 +18,7 @@
 #include "fpga/hcfpga_pool.h"
 #include "fpga/hcfpga_md5crypt_ref.h"
 
-// md5crypt on an FPGA (hash mode 90500): bcrypt's bridge with md5crypt's specifics. The gateware is
+// md5crypt on an FPGA (hash mode 75100): bcrypt's bridge with md5crypt's specifics. The gateware is
 // src/fpga/md5crypt.
 
 #define ALGO_NAME "md5crypt"
@@ -110,7 +110,7 @@
 
 #define FPGA_CHUNKS_DEFAULT  2
 
-// The module's and the kernel's tmp struct (module_90500.c, m90500-pure.cl): a 64-byte password,
+// The module's and the kernel's tmp struct (module_75100.c, m75100-pure.cl): a 64-byte password,
 // the 16 bytes md5crypt ends with. All three files keep the same struct.
 typedef struct
 {

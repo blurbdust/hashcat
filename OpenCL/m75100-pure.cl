@@ -13,10 +13,10 @@
 #define COMPARE_S M2S(INCLUDE_PATH/inc_comp_single.cl)
 #define COMPARE_M M2S(INCLUDE_PATH/inc_comp_multi.cl)
 
-// sha512crypt on an FPGA (fpga_sha512crypt bridge): init hands the candidate to the bridge, the bridge
-// replaces the loop and writes back the digest words the device returns, comp compares them.
+// md5crypt on an FPGA (fpga_md5crypt bridge): init hands the candidate to the bridge, the bridge
+// replaces the loop and writes back the 16 bytes md5crypt ends with, comp compares them.
 
-typedef struct sha512crypt_bridge_tmp
+typedef struct md5crypt_bridge_tmp
 {
   u32 pw_len;
 
@@ -24,9 +24,9 @@ typedef struct sha512crypt_bridge_tmp
 
   u32 digest[4];
 
-} sha512crypt_bridge_tmp_t;
+} md5crypt_bridge_tmp_t;
 
-KERNEL_FQ KERNEL_FA void m91800_init (KERN_ATTR_TMPS (sha512crypt_bridge_tmp_t))
+KERNEL_FQ KERNEL_FA void m75100_init (KERN_ATTR_TMPS (md5crypt_bridge_tmp_t))
 {
   const u64 gid = get_global_id (0);
 
@@ -45,11 +45,11 @@ KERNEL_FQ KERNEL_FA void m91800_init (KERN_ATTR_TMPS (sha512crypt_bridge_tmp_t))
   }
 }
 
-KERNEL_FQ KERNEL_FA void m91800_loop (KERN_ATTR_TMPS (sha512crypt_bridge_tmp_t))
+KERNEL_FQ KERNEL_FA void m75100_loop (KERN_ATTR_TMPS (md5crypt_bridge_tmp_t))
 {
 }
 
-KERNEL_FQ KERNEL_FA void m91800_comp (KERN_ATTR_TMPS (sha512crypt_bridge_tmp_t))
+KERNEL_FQ KERNEL_FA void m75100_comp (KERN_ATTR_TMPS (md5crypt_bridge_tmp_t))
 {
   const u64 gid = get_global_id (0);
 
