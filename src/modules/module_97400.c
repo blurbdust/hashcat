@@ -40,20 +40,24 @@ static const char *ST_HASH        = "$5$7777657035274252$XftMj84MW.New1/ViLY5V4C
 
 #include "hooks_common.c"
 
-// The device's limits, see src/fpga/sha256crypt/README.md. HCFPGA-TODO: check each against the core.
+// The device's limits, see src/fpga/sha256crypt/README.md. John the Ripper's unit keeps the key in
+// thread memory words 10..17 (32 bytes) and the salt in words 2..5 (16 bytes, and an empty one is
+// not computed), and its CPU counts rounds in 32 bits from 1. Mode 7400 also takes an empty salt,
+// salts of 17 to 20 bytes and 0 rounds; this mode refuses them. 999999999 is sha256crypt's own
+// limit, which John the Ripper's ZTEX format keeps too.
 
 static const u32   FPGA_PW_MAX    = 32;
 static const u32   FPGA_SALT_MIN  = 1;
-static const u32   FPGA_SALT_MAX  = 16; // 0: no limit beyond the upstream parser's
+static const u32   FPGA_SALT_MAX  = 16;
 static const u32   FPGA_ITER_MIN  = 1;
-static const u32   FPGA_ITER_MAX  = 999999999; // 0: no limit beyond the upstream parser's
+static const u32   FPGA_ITER_MAX  = 999999999;
 
 const char *module_bridge_name    (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra) { return BRIDGE_NAME;     }
 u64         module_bridge_type    (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra) { return BRIDGE_TYPE;     }
 
 u32 module_kernel_loops_max (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra)
 {
-  const u32 kernel_loops_max = (FPGA_ITER_MAX > 0) ? FPGA_ITER_MAX : (1u << 20);
+  const u32 kernel_loops_max = FPGA_ITER_MAX;
 
   return kernel_loops_max;
 }
@@ -93,7 +97,7 @@ u32 module_salt_min (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED c
 
 u32 module_salt_max (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra)
 {
-  const u32 salt_max = (FPGA_SALT_MAX > 0) ? FPGA_SALT_MAX : SALT_MAX;
+  const u32 salt_max = FPGA_SALT_MAX;
 
   return salt_max;
 }
@@ -327,6 +331,11 @@ int module_hash_decode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSE
     salt->salt_iter = hc_strtoul ((const char *) token.opt_buf + 7, NULL, 10); // 7 = "rounds="
   }
 
+  // The device's round count limits.
+
+  if (salt->salt_iter < FPGA_ITER_MIN) return (PARSER_SALT_ITERATION);
+  if (salt->salt_iter > FPGA_ITER_MAX) return (PARSER_SALT_ITERATION);
+
   const u8 *salt_pos = token.buf[1];
   const int salt_len = token.len[1];
 
@@ -334,18 +343,14 @@ int module_hash_decode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSE
 
   if (parse_rc == false) return (PARSER_SALT_LENGTH);
 
+  // The device's salt length limits.
+
+  if (salt->salt_len < FPGA_SALT_MIN) return (PARSER_SALT_LENGTH);
+  if (salt->salt_len > FPGA_SALT_MAX) return (PARSER_SALT_LENGTH);
+
   const u8 *hash_pos = token.buf[2];
 
   sha256crypt_decode ((u8 *) digest, hash_pos);
-
-  // The device's limits. HCFPGA-TODO: place these where the parser has set what they check, and add
-  // anything else the device cannot compute.
-
-  if (salt->salt_len < FPGA_SALT_MIN) return (PARSER_SALT_LENGTH);
-  if ((FPGA_SALT_MAX > 0) && (salt->salt_len > FPGA_SALT_MAX)) return (PARSER_SALT_LENGTH);
-
-  if (salt->salt_iter < FPGA_ITER_MIN) return (PARSER_SALT_ITERATION);
-  if ((FPGA_ITER_MAX > 0) && (salt->salt_iter > FPGA_ITER_MAX)) return (PARSER_SALT_ITERATION);
 
   return (PARSER_OK);
 }

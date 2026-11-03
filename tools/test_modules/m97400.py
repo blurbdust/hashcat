@@ -6,8 +6,8 @@
 ##
 
 # sha256crypt computed on an FPGA (fpga_sha256crypt bridge). The oracle is mode 7400's; the constraints
-# are the device's. HCFPGA-TODO: module_generate_hash must only produce what the device computes (salt
-# lengths, rounds), or test.py feeds the bridge hashes it refuses.
+# are the device's: passwords up to 32 bytes, salts of 1 to 16. The rounds module_generate_hash
+# writes (5000, or 1000 to 999999999) are all ones the device computes (1 to 999999999).
 
 import hashlib
 
@@ -22,7 +22,6 @@ def sha256(data):
 
 
 def module_constraints():
-  # HCFPGA-TODO: the device's limits: [pure pw, pure salt, optimized pw, optimized salt, combined].
   return [[0, 32], [1, 16], [-1, -1], [-1, -1], [-1, -1]]
 
 
