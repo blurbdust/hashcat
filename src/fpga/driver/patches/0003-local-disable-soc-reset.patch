@@ -1,4 +1,4 @@
-Subject: [PATCH 3/5] LOCAL ONLY: do not pulse soc_rst at probe
+Subject: [PATCH 3/6] LOCAL ONLY: do not pulse soc_rst at probe
 
 NOT for upstream. Bit 0 of the SoCController reset register resets the full SoC, and on the hcfpga
 designs the PCIe endpoint is part of that SoC. Probe therefore pulses a reset through the link it is

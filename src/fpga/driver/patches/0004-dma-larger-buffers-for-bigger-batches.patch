@@ -1,4 +1,4 @@
-Subject: [PATCH 4/5] dma: 32 KB buffers, so a batch can be four times as big
+Subject: [PATCH 4/6] dma: 32 KB buffers, so a batch can be four times as big
 
 The ring is DMA_BUFFER_COUNT * DMA_BUFFER_SIZE and it is what bounds a bcrypt batch: the bridge asks
 the transport how much it will take at once and divides by its own worst-case record to get the

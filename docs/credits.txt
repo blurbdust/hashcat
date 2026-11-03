@@ -97,6 +97,11 @@ blurbdust (@blurbdust)
 
 * The idea, and the first bcrypt FPGA implementation for hashcat (PR 4626), which guided the work at the start
 * YPCB-00338-1P1 support in openFPGALoader and litex-boards
+* Microsoft Storey Peak support in litex-boards, and the Stratix V PCIe PHY in LitePCIe
+
+Ruurd Keizer
+
+* How Quartus can place the Stratix V PCIe hard IP block the Storey Peak's edge lanes 0-7 use
 
 # hashcat's FPGA bcrypt core uses the following work:
 

@@ -111,7 +111,7 @@ The ZTEX 1.15y bitstream and firmware are John the Ripper's own files, redistrib
 |---|---|
 | `gateware/ztex_fx2/ezusb_io.v`, `ezusb_lsi.v` | ZTEX GmbH, unmodified, Solderpad Hardware License 0.51, see `gateware/ztex_fx2/PROVENANCE.md` and `docs/license_libs/ZTEX_SOLDERPAD_LICENSE.txt` |
 | `software/user/liblitepcie/` | LiteX's `liblitepcie` (BSD-2-Clause, EnjoyDigital), the user space library `dma_ek_test` links against |
-| `deps/litepcie-2026.08/` | the LitePCIe kernel driver, built with the 5 patches in `src/fpga/driver/patches/` |
+| `deps/litepcie-2026.08/` | the LitePCIe kernel driver, built with the 6 patches in `src/fpga/driver/patches/` |
 | `extra/fpga/zc706-sdboot/fsbl.elf` | Xilinx's first stage boot loader, a 181 KB binary kept in the tree as an exception so that users need no Vivado installation to boot a ZC706 from SD. `build_fsbl.tcl` beside it rebuilds it, see `docs/license_libs/XILINX_FSBL_LICENSE.txt` |
 
 ## Written for hashcat
@@ -130,8 +130,10 @@ The ZTEX 1.15y bitstream and firmware are John the Ripper's own files, redistrib
 | `bcrypt_*_dma.py`, `bcrypt_ztex213_usb.py`, `bcrypt_artyz7_ps.py`, `hcfpga_abi.py`, `hcfpga_litepcie.py` | the board targets, the shared ABI reader and the settings the PCIe targets share |
 | `hcfpga_iface.vh`, `software/user/hcfpga_iface.h` | the frame contract between host and gateware |
 | `ps_app/`, `software/user/dma_ek_test.c` | the Arty Z7 application and the PCIe self test |
+| `software/user/hcfpga_step.c` | the one-batch diagnostic and the wave model measurement |
+| `hcfpga_stratixv.py`, `gateware/stratixv/hcfpga_sv_tsd.v` | the Stratix V temperature and chip ID registers, the PCIe hard IP settings and the flash image conversion |
 | testbenches and scripts in `gateware/bcrypt/` and `bcrypt_core/` | `tb_core`, `tb_core_c2`, `tb_datapath`, `tb_hetero`, `tb_cmp`, `tb_expand`, `tb_feed_throughput`, their vector generators, `bcrypt_ref.py` and the `run_*.sh` scripts. `run_iverilog_sim.sh` is the merge gate |
 
 ## Toolchain
 
-LiteX, litex-boards and LitePCIe, openFPGALoader to program boards, Vivado or Quartus to synthesise and iverilog to simulate. The tools are used unmodified. The LitePCIe kernel driver is built with the patches named above.
+LiteX, litex-boards and LitePCIe, openFPGALoader to program boards, Vivado or Quartus to synthesise and iverilog to simulate. The tools are used unmodified, with one exception. Writing the Storey Peak's flash needs an openFPGALoader that addresses it with 4-byte commands, which no release does yet. The Stratix V chip ID reader is Intel's `altchip_id`, taken from the Quartus installation at build time. The LitePCIe kernel driver is built with the patches named above.

@@ -1,4 +1,4 @@
-Subject: [PATCH 2/5] msi: acknowledge before reading channel status
+Subject: [PATCH 2/6] msi: acknowledge before reading channel status
 
 The handler cleared the MSI vector at the very end, after every loop status had been read. A
 descriptor completing in between had its notification destroyed by that clear: the status read had
