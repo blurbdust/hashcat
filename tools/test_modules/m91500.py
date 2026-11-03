@@ -6,8 +6,9 @@
 ##
 
 # descrypt computed on an FPGA (fpga_descrypt bridge). The oracle is mode 1500's; the constraints
-# are the device's. HCFPGA-TODO: module_generate_hash must only produce what the device computes (salt
-# lengths, rounds), or test.py feeds the bridge hashes it refuses.
+# are the device's, which are mode 1500's: passwords of 0 to 8 bytes, and a salt of 2 characters
+# (the parser's salt_len of 4 is those 12 bits plus the 2 characters, not a longer salt). Every
+# hash module_generate_hash makes is one the device computes: 25 encryptions, fixed.
 
 from lib import libcrypt
 from lib.test_helpers import split_hash_word
@@ -19,8 +20,7 @@ from lib.test_helpers import split_hash_word
 
 
 def module_constraints():
-  # HCFPGA-TODO: the device's limits: [pure pw, pure salt, optimized pw, optimized salt, combined].
-  return [[0, 8], [4, 4], [-1, -1], [-1, -1], [-1, -1]]
+  return [[0, 8], [2, 2], [-1, -1], [-1, -1], [-1, -1]]
 
 
 def module_generate_hash(word, salt, iterations=None):

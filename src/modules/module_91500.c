@@ -7,8 +7,14 @@
 // src/fpga/common/new_fpga_algo.py from module_01500.c: hash format, example hash and self-test are
 // mode 1500's; the kernel is a pass-through and the bridge replaces the loop.
 // Dropped with the upstream kernel: module_jit_build_options, module_kernel_loops_min, module_kernel_loops_max, module_unstable_warning, module_pw_max.
-// HCFPGA-TODO: the upstream mode is not ATTACK_EXEC_OUTSIDE_KERNEL. The bridge replaces the loop of a
-// slow hash; a fast hash needs a different bridge type.
+//
+// Mode 1500 is a fast hash (ATTACK_EXEC_INSIDE_KERNEL, a bitsliced kernel with its own TM kernel
+// bits); this mode is the bridged slow-hash shape instead: ATTACK_EXEC_OUTSIDE_KERNEL, so that
+// hashcat runs init, the loop the bridge replaces, and comp. Also dropped with the upstream kernel:
+// KERN_BIT_TM (module_kern_bits), module_jit_cache_disable, OPTI_TYPE_REGISTER_LIMIT. The parser
+// sets salt_iter to crypt(3)'s 25 encryptions, which mode 1500 leaves at 0: the bridge spreads the
+// candidates over hashcat's loop calls by it. OPTS_TYPE_SELF_TEST_DISABLE is gone too: the device
+// computes mode 1500's example hash, so the self-test runs.
 
 #include "common.h"
 #include "types.h"
@@ -19,7 +25,7 @@
 #include "parser.h"
 #include "emu_inc_cipher_des.h"
 
-static const u32   ATTACK_EXEC    = ATTACK_EXEC_INSIDE_KERNEL;
+static const u32   ATTACK_EXEC    = ATTACK_EXEC_OUTSIDE_KERNEL;
 static const u32   DGST_POS0      = 0;
 static const u32   DGST_POS1      = 1;
 static const u32   DGST_POS2      = 2;
@@ -28,14 +34,11 @@ static const u32   DGST_SIZE      = DGST_SIZE_4_4; // originally DGST_SIZE_4_2
 static const u32   HASH_CATEGORY  = HASH_CATEGORY_OS;
 static const char *HASH_NAME      = "descrypt, DES (Unix), Traditional DES [Bridged: FPGA]";
 static const u64   KERN_TYPE      = 91500;
-static const u32   OPTI_TYPE      = OPTI_TYPE_ZERO_BYTE
-                                  | OPTI_TYPE_REGISTER_LIMIT;
+static const u32   OPTI_TYPE      = OPTI_TYPE_ZERO_BYTE;
 static const u64   OPTS_TYPE      = OPTS_TYPE_STOCK_MODULE
                                   | OPTS_TYPE_PT_GENERATE_LE
-                                  | OPTS_TYPE_SELF_TEST_DISABLE
                                   | OPTS_TYPE_NATIVE_THREADS
                                   | OPTS_TYPE_AUTODETECT_DISABLE;
-static const u64   KERN_BITS      = KERN_BIT_TM;
 static const u32   SALT_TYPE      = SALT_TYPE_EMBEDDED;
 static const u64   BRIDGE_TYPE    = BRIDGE_TYPE_REPLACE_LOOP
                                   | BRIDGE_TYPE_LOOP_CHUNKED;
@@ -45,20 +48,22 @@ static const char *ST_HASH        = "24leDr0hHfb3A";
 
 #include "hooks_common.c"
 
-// The device's limits, see src/fpga/descrypt/README.md. HCFPGA-TODO: check each against the core.
+// The device's limits, see src/fpga/descrypt/README.md. A DES key is 8 bytes (mode 1500's limit
+// too). Every hash mode 1500 parses is one the device computes: the salt is always the 12-bit value
+// of 2 characters (salt_len 4: those bits and the 2 characters, which hashcat keeps to print the
+// hash), and the count is always crypt(3)'s 25, fixed in the core.
 
 static const u32   FPGA_PW_MAX    = 8;
 static const u32   FPGA_SALT_MIN  = 4;
-static const u32   FPGA_SALT_MAX  = 4; // 0: no limit beyond the upstream parser's
-static const u32   FPGA_ITER_MIN  = 25;
-static const u32   FPGA_ITER_MAX  = 25; // 0: no limit beyond the upstream parser's
+static const u32   FPGA_SALT_MAX  = 4;
+static const u32   FPGA_ITER      = 25;
 
 const char *module_bridge_name    (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra) { return BRIDGE_NAME;     }
 u64         module_bridge_type    (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra) { return BRIDGE_TYPE;     }
 
 u32 module_kernel_loops_max (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra)
 {
-  const u32 kernel_loops_max = (FPGA_ITER_MAX > 0) ? FPGA_ITER_MAX : (1u << 20);
+  const u32 kernel_loops_max = FPGA_ITER;
 
   return kernel_loops_max;
 }
@@ -98,12 +103,10 @@ u32 module_salt_min (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED c
 
 u32 module_salt_max (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra)
 {
-  const u32 salt_max = (FPGA_SALT_MAX > 0) ? FPGA_SALT_MAX : SALT_MAX;
+  const u32 salt_max = FPGA_SALT_MAX;
 
   return salt_max;
 }
-
-u64         module_kern_bits      (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra) { return KERN_BITS;       }
 
 int module_build_plain_postprocess (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const hashes_t *hashes, MAYBE_UNUSED const void *tmps, const u32 *src_buf, MAYBE_UNUSED const size_t src_sz, MAYBE_UNUSED const int src_len, u32 *dst_buf, MAYBE_UNUSED const size_t dst_sz)
 {
@@ -134,16 +137,6 @@ int module_build_plain_postprocess (MAYBE_UNUSED const hashconfig_t *hashconfig,
   }
 
   return src_len;
-}
-
-bool module_jit_cache_disable (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra, MAYBE_UNUSED const hashes_t *hashes, MAYBE_UNUSED const hc_device_param_t *device_param)
-{
-  if ((user_options->attack_mode == ATTACK_MODE_BF) && (hashes->salts_cnt == 1) && (user_options->slow_candidates == false))
-  {
-    return true;
-  }
-
-  return false;
 }
 
 int module_hash_decode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED void *digest_buf, MAYBE_UNUSED salt_t *salt, MAYBE_UNUSED void *esalt_buf, MAYBE_UNUSED void *hook_salt_buf, MAYBE_UNUSED hashinfo_t *hash_info, const char *line_buf, MAYBE_UNUSED const int line_len)
@@ -192,6 +185,10 @@ int module_hash_decode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSE
 
   salt->salt_len = 4; // actually it is only 2 (but we need to add the original salt_sign to it)
 
+  // crypt(3)'s 25 DES encryptions: hashcat's loop count, which the bridge replaces.
+
+  salt->salt_iter = FPGA_ITER;
+
   u32 tmp[16] = { 0 };
 
   base64_decode (itoa64_to_int, hash_pos, hash_len, (u8 *) tmp);
@@ -202,15 +199,6 @@ int module_hash_decode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSE
   digest[3] = 0;
 
   DES_IP (digest[0], digest[1]);
-
-  // The device's limits. HCFPGA-TODO: place these where the parser has set what they check, and add
-  // anything else the device cannot compute.
-
-  if (salt->salt_len < FPGA_SALT_MIN) return (PARSER_SALT_LENGTH);
-  if ((FPGA_SALT_MAX > 0) && (salt->salt_len > FPGA_SALT_MAX)) return (PARSER_SALT_LENGTH);
-
-  if (salt->salt_iter < FPGA_ITER_MIN) return (PARSER_SALT_ITERATION);
-  if ((FPGA_ITER_MAX > 0) && (salt->salt_iter > FPGA_ITER_MAX)) return (PARSER_SALT_ITERATION);
 
   return (PARSER_OK);
 }
@@ -258,8 +246,6 @@ void module_init (module_ctx_t *module_ctx)
   module_ctx->module_build_plain_postprocess  = module_build_plain_postprocess;
   module_ctx->module_hash_decode              = module_hash_decode;
   module_ctx->module_hash_encode              = module_hash_encode;
-  module_ctx->module_jit_cache_disable        = module_jit_cache_disable;
-  module_ctx->module_kern_bits                = module_kern_bits;
   module_ctx->module_kernel_loops_max         = module_kernel_loops_max;
   module_ctx->module_pw_max                   = module_pw_max;
   module_ctx->module_salt_max                 = module_salt_max;
