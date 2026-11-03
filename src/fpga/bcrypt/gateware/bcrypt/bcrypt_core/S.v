@@ -43,7 +43,11 @@
 
 `define HC_S_MODULE    S_block
 `define HC_S_RAM_STYLE "block"
-`define HC_S_RAMSTYLE  "M20K"
+`ifdef ALTERA_RESERVED_QIS
+`define HC_S_RAMSTYLE  , ramstyle = "M20K"
+`else
+`define HC_S_RAMSTYLE
+`endif
 `include "S_body.vh"
 `undef HC_S_MODULE
 `undef HC_S_RAM_STYLE
@@ -51,7 +55,11 @@
 
 `define HC_S_MODULE    S_dist
 `define HC_S_RAM_STYLE "distributed"
-`define HC_S_RAMSTYLE  "MLAB"
+`ifdef ALTERA_RESERVED_QIS
+`define HC_S_RAMSTYLE  , ramstyle = "MLAB"
+`else
+`define HC_S_RAMSTYLE
+`endif
 `include "S_body.vh"
 `undef HC_S_MODULE
 `undef HC_S_RAM_STYLE

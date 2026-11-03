@@ -51,7 +51,11 @@ module P_2x32 #(
 	// Quartus builds 1024 flops instead unless told that does not matter. Here it does not: MC[5] is
 	// the only microcode word that writes PD, and it consumes nothing that PD_out feeds (Ltmp, L and
 	// the S read address).
+`ifdef ALTERA_RESERVED_QIS
 	(* RAM_STYLE="DISTRIBUTED", ramstyle = "MLAB, no_rw_check" *)
+`else
+	(* RAM_STYLE="DISTRIBUTED" *)
+`endif
 	reg [MSB:0] PD [31:0];
 	initial begin
 		// - EK(18)

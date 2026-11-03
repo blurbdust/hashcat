@@ -558,7 +558,11 @@ module P_c2 #(
 	//
 	// no_rw_check for the reason P_2x32 gives: MC[5] is still the only word that writes PD, and each
 	// cycle's controls come from one word.
+`ifdef ALTERA_RESERVED_QIS
 	(* RAM_STYLE="DISTRIBUTED", ramstyle = "MLAB, no_rw_check" *)
+`else
+	(* RAM_STYLE="DISTRIBUTED" *)
+`endif
 	reg [MSB:0] PD [63:0];
 	initial begin
 		PD[31] = 0;
@@ -655,10 +659,17 @@ module S_c2 #(
 	output [MSB:0] out
 	);
 
+`ifdef ALTERA_RESERVED_QIS
 	(* RAM_STYLE = "block", ramstyle = "M20K" *) reg [MSB:0] S0 [511:0];
 	(* RAM_STYLE = "block", ramstyle = "M20K" *) reg [MSB:0] S1 [511:0];
 	(* RAM_STYLE = "block", ramstyle = "M20K" *) reg [MSB:0] S2 [511:0];
 	(* RAM_STYLE = "block", ramstyle = "M20K" *) reg [MSB:0] S3 [511:0];
+`else
+	(* RAM_STYLE = "block" *) reg [MSB:0] S0 [511:0];
+	(* RAM_STYLE = "block" *) reg [MSB:0] S1 [511:0];
+	(* RAM_STYLE = "block" *) reg [MSB:0] S2 [511:0];
+	(* RAM_STYLE = "block" *) reg [MSB:0] S3 [511:0];
+`endif
 
 	reg [MSB:0] S0_l = 0, S1_l = 0, S2_l = 0, S3_l = 0;
 	reg [MSB:0] U_q = 0, S2_q = 0, S3_q = 0;

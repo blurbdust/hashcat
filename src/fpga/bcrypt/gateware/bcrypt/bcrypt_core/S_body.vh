@@ -49,10 +49,10 @@ module `HC_S_MODULE #(
 	output [MSB:0] out
 	);
 
-	(* RAM_STYLE = `HC_S_RAM_STYLE, ramstyle = `HC_S_RAMSTYLE *) reg [MSB:0] S0 [255:0];
-	(* RAM_STYLE = `HC_S_RAM_STYLE, ramstyle = `HC_S_RAMSTYLE *) reg [MSB:0] S1 [255:0];
-	(* RAM_STYLE = `HC_S_RAM_STYLE, ramstyle = `HC_S_RAMSTYLE *) reg [MSB:0] S2 [255:0];
-	(* RAM_STYLE = `HC_S_RAM_STYLE, ramstyle = `HC_S_RAMSTYLE *) reg [MSB:0] S3 [255:0];
+	(* RAM_STYLE = `HC_S_RAM_STYLE `HC_S_RAMSTYLE *) reg [MSB:0] S0 [255:0];
+	(* RAM_STYLE = `HC_S_RAM_STYLE `HC_S_RAMSTYLE *) reg [MSB:0] S1 [255:0];
+	(* RAM_STYLE = `HC_S_RAM_STYLE `HC_S_RAMSTYLE *) reg [MSB:0] S2 [255:0];
+	(* RAM_STYLE = `HC_S_RAM_STYLE `HC_S_RAMSTYLE *) reg [MSB:0] S3 [255:0];
 
 	reg [MSB:0] S0_out = 0, S1_out = 0, S2_out = 0, S3_out = 0;
 
