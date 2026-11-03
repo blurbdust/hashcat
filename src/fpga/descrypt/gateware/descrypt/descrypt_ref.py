@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+
+##
+## Author......: See docs/credits.txt
+## License.....: MIT
+##
+
+# descrypt reference for the bench: the digest bytes the gateware returns at C2H bytes 4.., and
+# the values of the algorithm's extra registers.
+
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "common"))
+
+import hcfpga_bench as hb
+
+PW_MAX       = 8
+RESULT_LEN   = 8
+DIGEST_OFF   = 0
+DIGEST_BYTES = 8
+
+# HCFPGA-TODO: a salt and a cost the core takes, and a cost that keeps a bench run short.
+SALT   = b"saltsalt"
+ROUNDS = 1000
+
+# The bridge's canary password (hcfpga_algo_t.canary_pw, default "hcfpga-ztex-canary").
+CANARY_PW = b"hcfpga-ztex-canary"[:PW_MAX]
+
+def descrypt_digest(pw, salt, rounds):
+  """The DIGEST_BYTES the device returns for pw under salt and rounds, in C2H order."""
+  # HCFPGA-TODO: the real algorithm, e.g. from hashcat's tools/test_modules/m01500.py. Until
+  # the core is in, this is the stub's toy hash (hcfpga_jtr_unit_stub.v, or the engine stub).
+  return hb.toy_result(pw, salt, rounds, RESULT_LEN)[DIGEST_OFF:DIGEST_OFF + DIGEST_BYTES]
+
+def extra_regs(salt, rounds):
+  """The extra registers from 0x3c, in EXTRA_CSRS order, as the bridge's config_extra writes them."""
+  # HCFPGA-TODO: one value per EXTRA_CSRS entry.
+  return []
