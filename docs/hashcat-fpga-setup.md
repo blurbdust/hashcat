@@ -67,7 +67,7 @@ An FPGA must be configured with a **bitstream** before its hardware interface ex
 | ZTEX USB-FPGA 2.13 | USB | **hashcat, when not configured** | [ZTEX 2.13](#ztex-213) |
 | Arty Z7-20 | Ethernet | **hashcat, when not configured** | [Arty Z7-20](#arty-z7-20) |
 
-You program four of these boards yourself, and hashcat identifies the design already running on each FPGA. Programming removes and recreates the PCIe endpoint, so the host has to **reboot** before it can use the device. Those four also need a locally built **kernel driver**, signed with a trusted key when Secure Boot is enabled.
+You program four of these boards yourself, and hashcat identifies the design already running on each FPGA. Programming removes and recreates the PCIe endpoint, so the host has to **reboot** before it can use the device. The Storey Peak only needs a PCIe rescan, see its section. Those four also need a locally built **kernel driver**, signed with a trusted key when Secure Boot is enabled.
 
 hashcat uploads the design to the other four boards itself. The Alveo is programmed at every start that uses it. A ZTEX board or an Arty that an earlier run left running the design is reused, so only the first start after a power cycle uploads to it. An Arty bitstream built before its shell reported an identity is the exception and is programmed at every start that uses the board. A board that `-d` leaves out is listed but not driven: hashcat reads its identity and leaves it free for another hashcat run. An Arty that is left out is not programmed when it already runs a design of this build's ABI, but a blank Arty, or one running another design, is programmed during discovery whether or not `-d` selects it, because hashcat cannot identify it otherwise. The bitstream must be installed before the bridge can initialise. The configuration is volatile, so a power cycle clears it. The ZTEX boards and Arty need no kernel driver. The Alveo requires XRT's kernel drivers. Programming these boards does not require a reboot.
 
@@ -215,9 +215,9 @@ Edge lanes 0-7 are the only ones connected in a slot or riser narrower than x16.
 
 The card carries its own FT232H JTAG adapter, reached through its USB port. Load the design into configuration SRAM:
 
-1. If `lspci` lists the card, unload the driver and remove the device first: `echo 1 > /sys/bus/pci/devices/<address>/remove`.
+1. If `lspci` lists the card, unload the driver and remove the device: `echo 1 > /sys/bus/pci/devices/<address>/remove`. A reload resets the card's configuration space, so the old device entry no longer works.
 2. `openFPGALoader -c ft232 <build>.rbf`
-3. Reboot. A PCIe rescan does not bring the Stratix V link back after a reload, but the reset a warm reboot sends does, and the design survives it.
+3. Rescan: `echo 1 > /sys/bus/pci/rescan`. The link needs a moment after the load, so repeat it until `lspci` lists the card. No reboot is needed. A warm reboot also works, and the design survives it.
 4. [Build the driver](#4-build-and-load-the-kernel-driver) and [set permissions](#5-device-permissions). The driver recognises the card as `1172:e001`, so `lspci -nn -d 1172:` should show `Processor [0b80]: Altera Corporation Device [1172:e001]`.
 
 hashcat reports the die temperature from the FPGA's own sensor, and the FPGA's chip ID as the board serial. The FPGA has no voltage sensors, so none are reported.
@@ -247,7 +247,7 @@ make -C src/fpga bcrypt BOARD=storeypeak EXTRA_ARGS=--rpd
 openFPGALoader -c ft232 --fpga-part 5sgsd5 -f --verify <build>_flash_auto.rpd
 ```
 
-openFPGALoader reconfigures the FPGA from flash when the write completes. Reboot, as after a JTAG load, and the card comes up running the flashed design. Coming up from the flash at a cold power-on is not reliable yet.
+openFPGALoader reconfigures the FPGA from flash when the write completes. Remove and rescan the device, as after a JTAG load, and the card comes up running the flashed design. Coming up from the flash at a cold power-on is not reliable yet.
 
 ## Alveo U50
 
