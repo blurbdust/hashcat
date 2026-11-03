@@ -10,8 +10,8 @@
 // Dropped with the upstream kernel by hand: KERN_BITS (KERN_BIT_LOOP_PREPARE, a kernel the
 // pass-through does not have), module_kern_bits, scrypt_common.c (its GPU tuning, TMTO option and
 // SCRYPT_THREADS).
-// The example hash is not mode 8900's (N = 16384, r = 8), which the device cannot compute: it is an
-// N = 1024, r = 1, p = 1 hash of the same password, checked with Python's hashlib.scrypt.
+// The example hash is mode 8900's (N = 16384, r = 8, p = 1), which the device computes since r is
+// taken at run time.
 
 #include <inttypes.h>
 #include "common.h"
@@ -42,22 +42,24 @@ static const u64   BRIDGE_TYPE    = BRIDGE_TYPE_REPLACE_LOOP
                                   | BRIDGE_TYPE_LOOP_CHUNKED;
 static const char *BRIDGE_NAME    = "fpga_scrypt";
 static const char *ST_PASS        = "hashcat";
-static const char *ST_HASH        = "SCRYPT:1024:1:1:MDIwMzMwNTQwNDQyNQ==:5FW+zWivLxgCWj7qLiQbeC8zaNQ+qdO0NUinvqyFcfo=";
+static const char *ST_HASH        = "SCRYPT:16384:8:1:OTEyNzU0ODg=:Cc8SPjRH1hFQhuIPCdF51uNGtJ2aOY/isuoMlMUsJ8c=";
 
 #include "hooks_common.c"
 
 // The device's limits, see src/fpga/scrypt/README.md. The unit keeps a 64-byte HMAC key (a longer
-// one would have to be hashed first) and a 32-byte salt, runs its PBKDF2 on 128-byte blocks, so r = 1
-// and p = 1, and holds N blocks of 128 bytes in its V table, 2^15 of them (N_LOG2_MAX). The cost is
-// salt_iter, which is N. Mode 8900 also takes a 33-byte salt, any r and p, and N up to 6 digits.
+// one would have to be hashed first) and a 32-byte salt, takes r at run time up to the build's R_MAX,
+// 8, computes one SMix, so p = 1, and holds N blocks of 128 r bytes in its V table, up to 2^15 of
+// them (N_LOG2_MAX). The cost is salt_iter, which is N. Mode 8900 also takes a 33-byte salt, any r
+// and p, and N up to 6 digits.
 
-static const u32   FPGA_PW_MAX    = 64;
-static const u32   FPGA_SALT_MIN  = 0;
-static const u32   FPGA_SALT_MAX  = 32;
-static const u32   FPGA_ITER_MIN  = 2;
-static const u32   FPGA_ITER_MAX  = 32768;
-static const u32   FPGA_SCRYPT_R  = 1;
-static const u32   FPGA_SCRYPT_P  = 1;
+static const u32   FPGA_PW_MAX       = 64;
+static const u32   FPGA_SALT_MIN     = 0;
+static const u32   FPGA_SALT_MAX     = 32;
+static const u32   FPGA_ITER_MIN     = 2;
+static const u32   FPGA_ITER_MAX     = 32768;
+static const u32   FPGA_SCRYPT_R_MIN = 1;
+static const u32   FPGA_SCRYPT_R_MAX = 8;
+static const u32   FPGA_SCRYPT_P     = 1;
 
 const char *module_bridge_name    (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra) { return BRIDGE_NAME;     }
 u64         module_bridge_type    (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra) { return BRIDGE_TYPE;     }
@@ -187,8 +189,9 @@ int module_hash_decode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSE
   if (salt->salt_iter < FPGA_ITER_MIN) return (PARSER_SALT_ITERATION);
   if (salt->salt_iter > FPGA_ITER_MAX) return (PARSER_SALT_ITERATION);
 
-  if (salt->scrypt_r != FPGA_SCRYPT_R) return (PARSER_SALT_VALUE);
-  if (salt->scrypt_p != FPGA_SCRYPT_P) return (PARSER_SALT_VALUE);
+  if (salt->scrypt_r < FPGA_SCRYPT_R_MIN) return (PARSER_SALT_VALUE);
+  if (salt->scrypt_r > FPGA_SCRYPT_R_MAX) return (PARSER_SALT_VALUE);
+  if (salt->scrypt_p != FPGA_SCRYPT_P)     return (PARSER_SALT_VALUE);
 
   // salt
 

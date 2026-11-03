@@ -12,16 +12,21 @@
 // words. Self-contained, it runs once per salt. It agrees with the bench's reference
 // (src/fpga/scrypt/gateware/scrypt/scrypt_ref.py), which is Python's hashlib.scrypt.
 //
-// What the device computes: scrypt with r = 1 and p = 1, N a power of two, a key of at most 64 bytes
-// (HMAC-SHA256 takes such a key as it is, zero filled to the block) and a salt of at most 32 bytes:
+// What the device computes: scrypt with p = 1, r from 1 to HCFPGA_SCRYPT_R_MAX, N a power of two, a
+// key of at most 64 bytes (HMAC-SHA256 takes such a key as it is, zero filled to the block) and a salt
+// of at most 32 bytes:
 //
-//   B  = PBKDF2-HMAC-SHA256 (pw, salt, 1, 128)
-//   B' = ROMix (B, N), BlockMix over Salsa20/8 with r = 1
+//   B  = PBKDF2-HMAC-SHA256 (pw, salt, 1, 128 r)
+//   B' = ROMix (B, N), BlockMix over Salsa20/8 with r
 //   DK = PBKDF2-HMAC-SHA256 (pw, B', 1, 32)
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+// The widest r the reference computes (the gateware's R_MAX in the simulated board's build).
+
+#define HCFPGA_SCRYPT_R_MAX 8
 
 typedef struct
 {
@@ -209,73 +214,76 @@ static void hcfpga_scrypt_salsa8 (uint32_t b[16])
   for (int i = 0; i < 16; i++) b[i] += x[i];
 }
 
-// BlockMix with r = 1 on 32 little-endian words, in place.
+// BlockMix with r on 32 r little-endian words (2 r blocks of 16), in place: Y[i] = Salsa20/8 (Y[i - 1]
+// ^ B[i]) from Y[-1] = B[2r - 1], then the even Y first and the odd ones after them.
 
-static void hcfpga_scrypt_blockmix (uint32_t b[32])
+static void hcfpga_scrypt_blockmix (uint32_t *b, const uint32_t r)
 {
   uint32_t x[16];
-  uint32_t y[32];
+  uint32_t y[32 * HCFPGA_SCRYPT_R_MAX];
 
-  memcpy (x, b + 16, sizeof (x));
+  memcpy (x, b + 16 * (2 * r - 1), sizeof (x));
 
-  for (int i = 0; i < 16; i++) x[i] ^= b[i];
+  for (uint32_t i = 0; i < 2 * r; i++)
+  {
+    for (int k = 0; k < 16; k++) x[k] ^= b[16 * i + k];
 
-  hcfpga_scrypt_salsa8 (x);
+    hcfpga_scrypt_salsa8 (x);
 
-  memcpy (y, x, sizeof (x));
+    memcpy (y + 16 * ((i / 2) + ((i & 1) ? r : 0)), x, sizeof (x));
+  }
 
-  for (int i = 0; i < 16; i++) x[i] ^= b[16 + i];
-
-  hcfpga_scrypt_salsa8 (x);
-
-  memcpy (y + 16, x, sizeof (x));
-
-  memcpy (b, y, sizeof (y));
+  memcpy (b, y, 32 * r * sizeof (uint32_t));
 }
 
-// The device's 16 bytes for pw under salt with cost n (a power of two, at least 2). A key longer
-// than 64 bytes or a salt longer than 32 is outside what the device takes; the bridge never asks.
+// The device's 16 bytes for pw under salt with cost n (a power of two, at least 2) and r (1 to
+// HCFPGA_SCRYPT_R_MAX). A key longer than 64 bytes, a salt longer than 32 or another r is outside
+// what the device takes; the bridge never asks.
 
-static void hcfpga_scrypt (const uint8_t *pw, uint32_t pw_len, const uint8_t *salt, uint32_t salt_len, uint32_t n, uint32_t out[4])
+static void hcfpga_scrypt (const uint8_t *pw, uint32_t pw_len, const uint8_t *salt, uint32_t salt_len, uint32_t n, uint32_t r, uint32_t out[4])
 {
-  uint8_t  b[128];
-  uint32_t x[32];
+  uint8_t  b[128 * HCFPGA_SCRYPT_R_MAX];
+  uint32_t x[32 * HCFPGA_SCRYPT_R_MAX];
   uint8_t  dk[32];
 
   memset (out, 0, 4 * sizeof (uint32_t));
 
+  if ((r < 1) || (r > HCFPGA_SCRYPT_R_MAX)) return;
+
   if (pw_len > 64) pw_len = 64;
 
-  for (uint32_t i = 0; i < 4; i++) hcfpga_scrypt_hmac (pw, pw_len, salt, salt_len, i + 1, b + 32 * i);
+  const uint32_t words = 32 * r;
 
-  for (int i = 0; i < 32; i++)
+  for (uint32_t i = 0; i < 4 * r; i++) hcfpga_scrypt_hmac (pw, pw_len, salt, salt_len, i + 1, b + 32 * i);
+
+  for (uint32_t i = 0; i < words; i++)
   {
     x[i] = (uint32_t) b[4 * i] | ((uint32_t) b[4 * i + 1] << 8) | ((uint32_t) b[4 * i + 2] << 16) | ((uint32_t) b[4 * i + 3] << 24);
   }
 
-  uint32_t *v = (uint32_t *) malloc ((size_t) n * sizeof (x));
+  uint32_t *v = (uint32_t *) malloc ((size_t) n * words * sizeof (uint32_t));
 
   if (v == NULL) return;
 
   for (uint32_t i = 0; i < n; i++)
   {
-    memcpy (v + 32 * (size_t) i, x, sizeof (x));
+    memcpy (v + words * (size_t) i, x, words * sizeof (uint32_t));
 
-    hcfpga_scrypt_blockmix (x);
+    hcfpga_scrypt_blockmix (x, r);
   }
 
   for (uint32_t i = 0; i < n; i++)
   {
-    const uint32_t j = x[16] & (n - 1);
+    const uint32_t j = x[16 * (2 * r - 1)] & (n - 1);
 
-    for (int k = 0; k < 32; k++) x[k] ^= v[32 * (size_t) j + k];
+    for (uint32_t k = 0; k < words; k++) x[k] ^= v[words * (size_t) j + k];
 
-    hcfpga_scrypt_blockmix (x);
+    hcfpga_scrypt_blockmix (x, r);
   }
 
   free (v);
 
-  for (int i = 0; i < 32; i++)
+  for (uint32_t i = 0; i < words; i++)
   {
     b[4 * i + 0] = (uint8_t) (x[i] >>  0);
     b[4 * i + 1] = (uint8_t) (x[i] >>  8);
@@ -283,7 +291,7 @@ static void hcfpga_scrypt (const uint8_t *pw, uint32_t pw_len, const uint8_t *sa
     b[4 * i + 3] = (uint8_t) (x[i] >> 24);
   }
 
-  hcfpga_scrypt_hmac (pw, pw_len, b, 128, 1, dk);
+  hcfpga_scrypt_hmac (pw, pw_len, b, 128 * r, 1, dk);
 
   for (uint32_t i = 0; i < 4; i++)
   {

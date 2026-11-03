@@ -28,11 +28,16 @@ typedef struct scrypt_bridge_tmp
 
 } scrypt_bridge_tmp_t;
 
-// The registers beyond the shared block, in the wrapper's EXTRA_CSRS order: the salt length, and
-// salt bytes 16..31 (salt0..3 carry bytes 0..15). The cost needs none: iter_count is N.
+// The registers beyond the shared block, in the wrapper's EXTRA_CSRS order: the salt length, salt
+// bytes 16..31 (salt0..3 carry bytes 0..15), and r. iter_count is N.
 
 #define CSR_SALT_LEN  HCFPGA_CSR_EXTRA (0)
 #define CSR_SALT4     HCFPGA_CSR_EXTRA (1)
+#define CSR_R         HCFPGA_CSR_EXTRA (5)
+
+// The widest r the simulated board's build computes (the wrapper's r_max), and the reference's.
+
+#define SCRYPT_R_MAX  HCFPGA_SCRYPT_R_MAX
 
 static bool scrypt_config_extra (hcfpga_cfg_t *cfg, const salt_t *salt)
 {
@@ -45,17 +50,20 @@ static bool scrypt_config_extra (hcfpga_cfg_t *cfg, const salt_t *salt)
     if (hcfpga_cfg_write (cfg, CSR_SALT4 + (4 * i), salt->salt_buf[4 + i], names[i]) == false) return false;
   }
 
+  if (hcfpga_cfg_write (cfg, CSR_R, salt->scrypt_r, "r") == false) return false;
+
   return true;
 }
 
-// What the iteration and salt limits do not say: the unit computes r = 1 and p = 1 only, and takes
-// N as log2 (N), so N has to be a power of two. The module refuses anything else at parse time.
+// What the iteration and salt limits do not say: the unit computes r from 1 to SCRYPT_R_MAX and p = 1
+// only, and takes N as log2 (N), so N has to be a power of two. The module refuses anything else at
+// parse time.
 
 static bool scrypt_salt_check (const salt_t *salt, char *buf, const size_t len)
 {
-  if (salt->scrypt_r != 1)
+  if ((salt->scrypt_r < 1) || (salt->scrypt_r > SCRYPT_R_MAX))
   {
-    snprintf (buf, len, "r = %u, the device computes r = 1 only", salt->scrypt_r);
+    snprintf (buf, len, "r = %u, the device computes r = 1 to %u", salt->scrypt_r, SCRYPT_R_MAX);
 
     return false;
   }
@@ -77,15 +85,15 @@ static bool scrypt_salt_check (const salt_t *salt, char *buf, const size_t len)
   return true;
 }
 
-// The canary's reference: scrypt on the host (r = 1, p = 1, N = salt_iter), the derived key's first
-// 16 bytes as hashcat's digest_buf words. The device returns the same bytes in order, so the C2H
-// words need no swap.
+// The canary's reference: scrypt on the host (p = 1, N = salt_iter, the salt's r), the derived key's
+// first 16 bytes as hashcat's digest_buf words. The device returns the same bytes in order, so the
+// C2H words need no swap.
 
 static void scrypt_canary_digest (const u8 *pw, const u32 pw_len, const salt_t *salt, u32 *digest)
 {
   const u32 salt_len = MIN (salt->salt_len, (u32) sizeof (salt->salt_buf));
 
-  hcfpga_scrypt (pw, pw_len, (const u8 *) salt->salt_buf, salt_len, salt->salt_iter, digest);
+  hcfpga_scrypt (pw, pw_len, (const u8 *) salt->salt_buf, salt_len, salt->salt_iter, salt->scrypt_r, digest);
 }
 
 static const hcfpga_algo_t SCRYPT =
@@ -111,10 +119,12 @@ static const hcfpga_algo_t SCRYPT =
   .iter_min     = 2,
   .iter_max     = 32768,
 
-  // One N step is two BlockMix calls, about 64 cycles; a candidate also spends about 2000 cycles
-  // in PBKDF2 and its packets, which this has to cover at N = 2 too. Generous, it only sets the
-  // batch timeout.
-  .wait_cycles_per_iter = 1000,
+  // One N step is two BlockMix calls of 2 r Salsa20/8 calls each, about 63 cycles at r = 1 and 430
+  // at r = 8, and with a lookup gap G about (G - 1) / 2 BlockMix calls more (about 1200 cycles at
+  // r = 8, G = 8); a candidate also spends about 2000 to 11000 cycles in PBKDF2 and its packets,
+  // which this has to cover at N = 2 too. Generous (the simulated board runs below the 1 MHz it
+  // declares), it only sets the batch timeout.
+  .wait_cycles_per_iter = 2000,
 
   // No board measured yet: every board is autotuned. Rows come from hcfpga_step --wave-model.
   .wave_models = NULL,
