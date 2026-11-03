@@ -625,9 +625,38 @@ static bool unit_selected (const user_options_t *user_options, const int unit_id
   return selected;
 }
 
+// The hooks are the algorithm's own file; refuse a set that cannot work rather than misbehave later.
+
+static bool algo_valid (hashcat_ctx_t *hashcat_ctx)
+{
+  const char *why = NULL;
+
+  if (ALGO == NULL)
+  {
+    event_log_error (hashcat_ctx, "FPGA bridge: bridge_init () did not hand the shared bridge an algorithm.");
+
+    return false;
+  }
+
+  if ((ALGO->name == NULL) || (ALGO->core_name == NULL))                    why = "name and core_name are required";
+  else if ((ALGO->digest_words == 0) || (ALGO->digest_words > HCFPGA_DIGEST_WORDS_MAX)) why = "the tmp struct's digest must be 1 to 6 words";
+  else if ((ALGO->pw_max == 0) || (ALGO->pw_max > (ALGO->tmp_pw_words * 4)) || (ALGO->pw_max > 255)) why = "pw_max must fit the tmp struct's pw_buf and the H2C length byte";
+  else if (ALGO->grain_per_core == 0)                                       why = "grain_per_core must be at least 1";
+  else if (ALGO->canary_digest == NULL)                                     why = "canary_digest is required";
+  else if (strlen (canary_password ()) > ALGO->pw_max)                      why = "the canary password is longer than pw_max";
+
+  if (why == NULL) return true;
+
+  event_log_error (hashcat_ctx, "FPGA bridge: the %s bridge's hooks cannot work: %s.", (ALGO->name != NULL) ? ALGO->name : "?", why);
+
+  return false;
+}
+
 static void *platform_init (hashcat_ctx_t *hashcat_ctx)
 {
   MAYBE_UNUSED folder_config_t *folder_config = hashcat_ctx->folder_config;
+
+  if (algo_valid (hashcat_ctx) == false) return NULL;
 
   hcfpga_bridge_t *ctx = (hcfpga_bridge_t *) hcmalloc (sizeof (hcfpga_bridge_t));
 
