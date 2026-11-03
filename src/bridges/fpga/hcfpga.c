@@ -774,6 +774,13 @@ void fpga_status_report (hashcat_ctx_t *hashcat_ctx, const fpga_status_t status,
       break;
 
     case FPGA_STATUS_NO_PCI_DEVICE:
+
+      if (getenv (FPGA_LITEXBONE_ENV) != NULL)
+      {
+        event_log_error (hashcat_ctx, "FPGA bridge: no board listed in %s answered, and no other FPGA was found.", FPGA_LITEXBONE_ENV);
+        break;
+      }
+
       event_log_error (hashcat_ctx, "FPGA bridge: no FPGA PCIe device found.");
       event_log_info (hashcat_ctx, "No programmed FPGA endpoint was detected. Load a design before starting hashcat.");
       event_log_info (hashcat_ctx, NULL);
@@ -2099,6 +2106,7 @@ const fpga_transport_t *const fpga_transports[] =
   &fpga_transport_ztex213,
   &fpga_transport_xrt,
   &fpga_transport_artyz7,
+  &fpga_transport_litexbone,
 };
 
 const int fpga_transports_cnt = (int) (sizeof (fpga_transports) / sizeof (fpga_transports[0]));

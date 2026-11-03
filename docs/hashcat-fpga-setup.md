@@ -65,12 +65,15 @@ An FPGA must be configured with a **bitstream** before its hardware interface ex
 | ZTEX USB-FPGA 1.15y | USB | **hashcat, when not configured** | [ZTEX 1.15y](#ztex-115y) |
 | ZTEX USB-FPGA 2.13 | USB | **hashcat, when not configured** | [ZTEX 2.13](#ztex-213) |
 | Arty Z7-20 | Ethernet | **hashcat, when not configured** | [Arty Z7-20](#arty-z7-20) |
+| LiteX board without PCIe | Etherbone or UARTBone | you, out of band | [LiteX boards over Etherbone or UARTBone](#litex-boards-over-etherbone-or-uartbone) |
 
-You program three of these boards yourself, and hashcat identifies the design already running on each FPGA. Programming removes and recreates the PCIe endpoint, so the host has to **reboot** before it can use the device. Those three also need a locally built **kernel driver**, signed with a trusted key when Secure Boot is enabled.
+You program the three PCIe boards yourself, and hashcat identifies the design already running on each FPGA. Programming removes and recreates the PCIe endpoint, so the host has to **reboot** before it can use the device. Those three also need a locally built **kernel driver**, signed with a trusted key when Secure Boot is enabled.
 
 hashcat uploads the design to the other four boards itself. The Alveo is programmed at every start that uses it. A ZTEX board or an Arty that an earlier run left running the design is reused, so only the first start after a power cycle uploads to it. An Arty bitstream built before its shell reported an identity is the exception and is programmed at every start that uses the board. A board that `-d` leaves out is listed but not driven: hashcat reads its identity and leaves it free for another hashcat run. An Arty that is left out is not programmed when it already runs a design of this build's ABI, but a blank Arty, or one running another design, is programmed during discovery whether or not `-d` selects it, because hashcat cannot identify it otherwise. The bitstream must be installed before the bridge can initialise. The configuration is volatile, so a power cycle clears it. The ZTEX boards and Arty need no kernel driver. The Alveo requires XRT's kernel drivers. Programming these boards does not require a reboot.
 
 The Arty Z7 uses USB for programming and Ethernet for candidate traffic. Its section explains both connections.
+
+A LiteX board reached over Etherbone or UARTBone is programmed by you as well, but needs no kernel driver and no reboot. hashcat finds it only where it is told to look, see its section.
 
 The bridge distinguishes these failure modes and directs the user to the applicable section below.
 
@@ -458,6 +461,37 @@ The number is the bridge unit, and the `Hardware.Mon` line shows which board it 
 Without a fan the part is not at risk, because the 80 C abort protects it, but the abort stops this workload before it finishes. Do not rely on the abort as a substitute for cooling.
 
 The commercial grade junction limit for this part is 85 C, so the 80 C abort exists to stop short of it rather than to mark a safe operating point.
+
+## LiteX boards over Etherbone or UARTBone
+
+A LiteX board without PCIe can run the same bcrypt design as the PCIe cards. The DMA engine is replaced by two rings in register space, and hashcat moves the candidates and the results through them with plain register accesses over the board's LiteX bus bridge: Etherbone over UDP, or UARTBone over a serial port. hashcat speaks both protocols itself, so neither a kernel driver nor `litex_server` is involved.
+
+No bitstream is published for these boards. Build one for your board and program it with the board's usual tool before starting hashcat.
+
+hashcat does not search for these boards. Probing every serial port would send bytes to devices that are not FPGAs, and scanning a network is slow and intrusive. List the boards in `HCFPGA_LITEXBONE` instead, separated by commas or spaces:
+
+```
+HCFPGA_LITEXBONE=udp:192.168.1.50 hashcat -m 75000 hash.txt wordlist.txt
+HCFPGA_LITEXBONE=uart:/dev/ttyUSB0:1000000,udp:192.168.1.51 hashcat -m 75000 hash.txt wordlist.txt
+```
+
+| Entry | Bridge | Default |
+|---|---|---|
+| `udp:HOST[:PORT]` | Etherbone | port 1234 |
+| `uart:DEVICE[:BAUD]` | UARTBone | 115200 baud |
+| `tcp:HOST:PORT` | UARTBone carried over TCP, for example by `ser2net` or the LiteX simulator | none |
+
+The baud rate has to be the one the board was built with. Opening a serial port needs read and write access to it, usually through the `dialout` group. Each board is shown after `Path:` in the `Assimilation Bridge` block at startup, and an entry that does not answer is named and left out.
+
+The design has to keep its registers where hashcat looks for them: `bcrypt` at 0x0000, `ctrl` at 0x0800, `identifier_mem` at 0x1000, and the two rings and their pointers at 0xc000, 0xc800 and 0xd000. These boards report no temperature, so the temperature abort does not watch them.
+
+Every register access waits for its answer, so the link sets the pace for short bcrypt costs. Etherbone needs the SoC's etherbone `buffer_depth` at 16 or more, which is LiteX's default. A USB serial adapter from FTDI holds a short reply for up to its latency timer, 16 ms by default, and every access waits for one. Setting it to 1 ms removes that wait:
+
+```
+echo 1 | sudo tee /sys/bus/usb-serial/devices/ttyUSB0/latency_timer
+```
+
+`HCFPGA_DEBUG=1` prints the ring sizes and burst lengths hashcat found on each board.
 
 ---
 

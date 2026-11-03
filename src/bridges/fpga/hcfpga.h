@@ -190,6 +190,7 @@ extern const fpga_transport_t fpga_transport_ztex115y;
 extern const fpga_transport_t fpga_transport_ztex213;
 extern const fpga_transport_t fpga_transport_xrt;
 extern const fpga_transport_t fpga_transport_artyz7;
+extern const fpga_transport_t fpga_transport_litexbone;
 
 extern const fpga_transport_t *const fpga_transports[];
 extern const int                     fpga_transports_cnt;
@@ -248,6 +249,8 @@ typedef struct fpga_reject
 bool        fpga_shipped_file  (const folder_config_t *folder_config, const char *name, char *out, const size_t out_sz);
 
 #define FPGA_DOC_RELPATH "docs/hashcat-fpga-setup.md"
+
+#define FPGA_LITEXBONE_ENV "HCFPGA_LITEXBONE"
 
 const char *fpga_support_file  (const hashcat_ctx_t *hashcat_ctx, const char *name, char *out, const size_t out_sz);
 
