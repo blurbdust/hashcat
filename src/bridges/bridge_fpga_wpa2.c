@@ -19,7 +19,7 @@
 #include "fpga/hcfpga_wpa2_ref.h"
 
 // wpa2 on an FPGA (hash mode 92500): bcrypt's bridge with wpa2's specifics. The gateware is
-// src/fpga/wpa2; its README gives the reason for each value below.
+// src/fpga/wpa2; the LiteX hashcat Guide's ports/wpa2/README.md gives the reason for each value below.
 
 #define ALGO_NAME "wpa2"
 

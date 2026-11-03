@@ -19,7 +19,7 @@
 #include "fpga/hcfpga_descrypt_ref.h"
 
 // descrypt on an FPGA (hash mode 91500): bcrypt's bridge with descrypt's specifics. The gateware is
-// src/fpga/descrypt; its README gives the reason for each value below.
+// src/fpga/descrypt; the LiteX hashcat Guide's ports/descrypt/README.md gives the reason for each value below.
 //
 // No register beyond the shared block: salt0 is hashcat's salt_buf[0], whose bits 11:0 are the
 // 12-bit salt the core takes, and the count is fixed.

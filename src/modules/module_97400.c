@@ -40,7 +40,7 @@ static const char *ST_HASH        = "$5$7777657035274252$XftMj84MW.New1/ViLY5V4C
 
 #include "hooks_common.c"
 
-// The device's limits, see src/fpga/sha256crypt/README.md. John the Ripper's unit keeps the key in
+// The device's limits, see the LiteX hashcat Guide, ports/sha256crypt/README.md. John the Ripper's unit keeps the key in
 // thread memory words 10..17 (32 bytes) and the salt in words 2..5 (16 bytes, and an empty one is
 // not computed), and its CPU counts rounds in 32 bits from 1. Mode 7400 also takes an empty salt,
 // salts of 17 to 20 bytes and 0 rounds; this mode refuses them. 999999999 is sha256crypt's own

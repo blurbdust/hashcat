@@ -10,7 +10,7 @@
 // cycles (START_CRYPT), circle 25 times (400 cycles) and leave it on 16 consecutive cycles, slot i
 // at cycle 400 + i after the first key went in. Upstream's descrypt_core.v wraps the same ring in
 // this control plus a 35-bit comparator that reports only matches; hashcat compares on the host,
-// so the control is here and every result leaves the core (see README.md, Decisions).
+// so the control is here and every result leaves the core (see the LiteX hashcat Guide, ports/descrypt/README.md, Decisions).
 //
 //   loader     takes one record every 2 cycles (the password is 2 words), packs its 8 bytes into
 //              upstream's 56-bit word (7 low bits per byte, byte 0 in bits 6:0, zero past len) and

@@ -46,7 +46,7 @@ static const char *ST_HASH        = "SCRYPT:1024:1:1:MDIwMzMwNTQwNDQyNQ==:5FW+zW
 
 #include "hooks_common.c"
 
-// The device's limits, see src/fpga/scrypt/README.md. The unit keeps a 64-byte HMAC key (a longer
+// The device's limits, see the LiteX hashcat Guide, ports/scrypt/README.md. The unit keeps a 64-byte HMAC key (a longer
 // one would have to be hashed first) and a 32-byte salt, runs its PBKDF2 on 128-byte blocks, so r = 1
 // and p = 1, and holds N blocks of 128 bytes in its V table, 2^15 of them (N_LOG2_MAX). The cost is
 // salt_iter, which is N. Mode 8900 also takes a 33-byte salt, any r and p, and N up to 6 digits.

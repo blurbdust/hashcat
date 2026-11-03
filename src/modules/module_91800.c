@@ -40,7 +40,7 @@ static const char *ST_HASH        = "$6$72820166$U4DVzpcYxgw7MVVDGGvB2/H5lRistD5
 
 #include "hooks_common.c"
 
-// The device's limits, see src/fpga/sha512crypt/README.md. John the Ripper's unit keeps the key in
+// The device's limits, see the LiteX hashcat Guide, ports/sha512crypt/README.md. John the Ripper's unit keeps the key in
 // thread memory words 5..12 (8 words of 64 bits, 64 bytes) and the salt in words 1..2 (16 bytes,
 // and an empty one is not computed), and its CPU counts rounds in 32 bits from 1. Mode 1800 also
 // takes an empty salt and 0 rounds; this mode refuses them. 999999999 is sha512crypt's own limit,

@@ -66,7 +66,7 @@ static const char *ST_HASH        = "WPA*01*4d4fe7aac3a2cecab195321ceb99a7d0*fc6
 
 #include "hooks_common.c"
 
-// The device's limits, see src/fpga/wpa2/README.md: passphrases up to 63 bytes (mode 22000's own
+// The device's limits, see the LiteX hashcat Guide, ports/wpa2/README.md: passphrases up to 63 bytes (mode 22000's own
 // limit), the ESSID of 0 to 32 bytes the parser already allows, and the format's fixed count.
 
 static const u32   FPGA_PW_MAX    = 63;

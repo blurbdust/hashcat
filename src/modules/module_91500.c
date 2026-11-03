@@ -48,7 +48,7 @@ static const char *ST_HASH        = "24leDr0hHfb3A";
 
 #include "hooks_common.c"
 
-// The device's limits, see src/fpga/descrypt/README.md. A DES key is 8 bytes (mode 1500's limit
+// The device's limits, see the LiteX hashcat Guide, ports/descrypt/README.md. A DES key is 8 bytes (mode 1500's limit
 // too). Every hash mode 1500 parses is one the device computes: the salt is always the 12-bit value
 // of 2 characters (salt_len 4: those bits and the 2 characters, which hashcat keeps to print the
 // hash), and the count is always crypt(3)'s 25, fixed in the core.

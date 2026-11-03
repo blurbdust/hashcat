@@ -19,7 +19,7 @@
 #include "fpga/hcfpga_scrypt_ref.h"
 
 // scrypt on an FPGA (hash mode 98900): bcrypt's bridge with scrypt's specifics. The gateware is
-// src/fpga/scrypt; its README gives the reason for each value below.
+// src/fpga/scrypt; the LiteX hashcat Guide's ports/scrypt/README.md gives the reason for each value below.
 
 #define ALGO_NAME "scrypt"
 
