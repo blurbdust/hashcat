@@ -3,34 +3,49 @@
  * License.....: MIT
  */
 
-// Result collector.
+// Result collector for John the Ripper's crypt-family computing units, in place of JtR's
+// arbiter_rx.v and comparator.v.
 //
-// Polls the computing units round robin and reads one result at a time over a unit's 2 bit
-// output, the way John the Ripper's arbiter_rx does: one rd_en cycle, a start marker 2'b11, then
-// 12 16-bit words, least significant dibit first, then 2'b00. The CPU program writes the words:
+// Polls the units round robin and reads one result at a time over a unit's 2-bit output, the way
+// arbiter_rx does: one rd_en cycle, a start marker 2'b11, then 4 + RESULT_LEN/2 16-bit words, least
+// significant dibit first, then 2'b00. The unit's program writes the words:
 //
 //   word  0..1   candidate id         (input bytes 24..27)
 //   word  2      generation           (input bytes 28..29)
 //   word  3      zero                 (input bytes 30..31)
-//   word  4..11  the 16 digest bytes, MD5 output order, byte 0 in bits 7:0 of word 4
+//   word  4..    the RESULT_LEN result bytes, byte 0 in bits 7:0 of word 4
 //
-// A result of another generation is dropped and not retired: it belongs to a batch that a framing
-// reset or a new arm abandoned. Otherwise the comparator looks the low 7 bits of digest byte 0
-// up in the bitmap (hashcat's digest[0] & 0x7f, as on bcrypt). A miss retires the result without
-// sending it, a hit sends one 32-byte C2H record:
+// RESULT_LEN is JtR's `RESULT_LEN: 16 for md5crypt, 32 for sha256crypt, 64 for sha512crypt.
+// hashcat's comp kernel compares four digest words, so a C2H record carries DIGEST_BYTES (16, at
+// most 24) of the result, from byte DIGEST_OFF on; the rest is read and dropped.
+//
+// A result of another generation (hcfpga_gen.v) is dropped and not retired: it belongs to a batch
+// that a framing reset or a new arm abandoned. Otherwise the comparator looks the low 7 bits of the
+// forwarded byte CMP_BYTE up in the bitmap; this has to be the low byte of the bridge's digest[0]
+// (hashcat's digest[0] & 0x7f, as on bcrypt). A miss retires the result without sending it, a hit
+// sends one 32-byte C2H record:
 //
 //   bytes  0..3   candidate id, little-endian
-//   bytes  4..19  digest, the 16 bytes in MD5 output order (hashcat's digest[k] is the
-//                 little-endian word at 4+4k, no byte swap, unlike bcrypt)
-//   bytes 20..27  zero
-//   bytes 28..29  core_id, little-endian: the computing unit (3 MD5 cores, 12 threads each)
+//   bytes  4..    the DIGEST_BYTES forwarded result bytes, in the unit's order
+//   ..     27     zero
+//   bytes 28..29  core_id, little-endian: the unit index (the unit picks the thread, so no core can
+//                 be named)
 //   bytes 30..31  flags, little-endian: 0x0001 CORE_ERR when the unit's output framing was off
 //
 // retire pulses once per result retired, sent or filtered, after a sent record's last byte.
+// err_count counts results whose framing was off, and units that gave no start marker.
 
 `timescale 1ns / 1ps
-module hcfpga_md5crypt_collect #(
+
+`include "hcfpga_iface.vh"
+
+module hcfpga_jtr_unit_collect #(
   parameter NUM_UNITS = 1,
+
+  parameter RESULT_LEN   = 16,
+  parameter DIGEST_OFF   = 0,
+  parameter DIGEST_BYTES = 16,
+  parameter CMP_BYTE     = 0,
 
   parameter WITH_CMP = 1
 )(
@@ -58,6 +73,13 @@ module hcfpga_md5crypt_collect #(
 
   localparam UW = (NUM_UNITS <= 1) ? 1 : $clog2(NUM_UNITS);
 
+  // Dibits on the wire after the marker, and which of them are kept: the 32 of the ID words, then
+  // the 4 * DIGEST_BYTES of the forwarded window.
+  localparam DIBITS    = (8 + RESULT_LEN) * 4;
+  localparam KEEP_LO   = (8 + DIGEST_OFF) * 4;
+  localparam KEEP_HI   = KEEP_LO + DIGEST_BYTES * 4;
+  localparam CAP_BITS  = (8 + DIGEST_BYTES) * 8;
+
   localparam C_WAIT = 3'd0, C_WAIT2 = 3'd1, C_RDEN = 3'd2, C_HDR = 3'd3, C_DATA = 3'd4, C_END = 3'd5, C_EMIT = 3'd6;
 
   reg [2:0]    state    = C_WAIT;
@@ -77,10 +99,10 @@ module hcfpga_md5crypt_collect #(
   always @(posedge CLK)
     if (cmp_load == 1'b1) bitmap <= cmp_bitmap;
 
-  reg [191:0] cap    = 0;
-  reg [6:0]   cnt    = 0;
-  reg [7:0]   wait_t = 0;
-  reg         bad    = 0;
+  reg [CAP_BITS-1:0] cap    = 0;
+  reg [9:0]          cnt    = 0;
+  reg [7:0]          wait_t = 0;
+  reg                bad    = 0;
 
   reg [255:0] frame   = 0;
   reg [4:0]   bytecnt = 0;
@@ -89,14 +111,19 @@ module hcfpga_md5crypt_collect #(
   assign m_valid = (state == C_EMIT);
   assign m_last  = (state == C_EMIT) & (bytecnt == 5'd31);
 
-  wire [31:0]  r_id     = cap[31:0];
-  wire [15:0]  r_gen    = cap[47:32];
-  wire [127:0] r_digest = cap[191:64];
+  wire [31:0]               r_id     = cap[31:0];
+  wire [15:0]               r_gen    = cap[47:32];
+  wire [8*DIGEST_BYTES-1:0] r_digest = cap[CAP_BITS-1:64];
 
-  wire [6:0] cmp_idx = r_digest[6:0];
+  // C2H bytes 4..27, the forwarded bytes zero extended.
+  wire [191:0] dig_field = r_digest;
+
+  wire [6:0] cmp_idx = r_digest[8*CMP_BYTE +: 7];
   wire       cmp_hit = (WITH_CMP == 0) | bitmap[cmp_idx];
 
   wire [15:0] core_id = {{(16-UW){1'b0}}, unit_num};
+
+  wire keep = (cnt < 32) | ((cnt >= KEEP_LO) & (cnt < KEEP_HI));
 
   wire [UW-1:0] unit_next = (unit_num == NUM_UNITS-1) ? {UW{1'b0}} : unit_num + 1'b1;
 
@@ -146,9 +173,9 @@ module hcfpga_md5crypt_collect #(
 
     C_DATA:
     begin
-      cap <= {din, cap[191:2]};
+      if (keep == 1'b1) cap <= {din, cap[CAP_BITS-1:2]};
       cnt <= cnt + 1'b1;
-      if (cnt == 7'd95) state <= C_END;
+      if (cnt == DIBITS - 1) state <= C_END;
     end
 
     C_END:
@@ -172,7 +199,7 @@ module hcfpga_md5crypt_collect #(
       end
       else
       begin
-        frame   <= { (((din != 2'b00) || bad) ? 16'h0001 : 16'h0000), core_id, 64'd0, r_digest, r_id };
+        frame   <= { (((din != 2'b00) || bad) ? `HCFPGA_FLAG_CORE_ERR : `HCFPGA_FLAG_OK), core_id, dig_field, r_id };
         bytecnt <= 0;
         state   <= C_EMIT;
       end

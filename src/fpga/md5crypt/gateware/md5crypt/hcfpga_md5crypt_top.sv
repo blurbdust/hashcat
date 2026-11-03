@@ -6,6 +6,10 @@
 // md5crypt datapath top: H2C records in, C2H records out, John the Ripper's computing units in
 // between. The ports are bcrypt's hcfpga_top.sv ports, with salt_len added and mode_dump dropped.
 //
+// Everything around the units is shared (src/fpga/common/rtl/): the JtR unit feeder and collector,
+// the generation counter and the end-of-batch tail. What is md5crypt's is the unit, its geometry
+// (64-byte keys in 4-byte steps, a 16-byte result) and CORES_PER_UNIT.
+//
 //   s_*      H2C, 32-bit words, first byte of the host buffer in bits 7:0
 //   m_*      C2H, bytes, m_last on byte 31 of every 32-byte record
 //   CLK      the stream, CSR and unit I/O clock (JtR's PKT_COMM_CLK)
@@ -59,16 +63,9 @@ module hcfpga_md5crypt_top #(
 
   // Generation: bumped by every framing reset and every arm. Units cannot be reset, so their
   // results carry the generation they were fed under, and the collector drops the stale ones.
-  reg [15:0] gen   = 0;
-  reg        rst_q = 0;
+  wire [15:0] gen;
 
-  always @(posedge CLK)
-  begin
-    rst_q <= rst;
-
-    if (((rst == 1'b1) && (rst_q == 1'b0)) || (batch_arm == 1'b1))
-      gen <= gen + 1'b1;
-  end
+  hcfpga_gen generation (.CLK(CLK), .rst(rst), .batch_arm(batch_arm), .gen(gen));
 
   wire [31:0] feed_status;
 
@@ -82,7 +79,7 @@ module hcfpga_md5crypt_top #(
   wire [2*NUM_UNITS-1:0] unit_dout;
   wire [NUM_UNITS-1:0]   unit_rd_en;
 
-  hcfpga_md5crypt_feed #(.NUM_UNITS(NUM_UNITS)) feed (
+  hcfpga_jtr_unit_feed #(.NUM_UNITS(NUM_UNITS), .PW_MAX(64), .KEY_ALIGN(4)) feed (
     .CLK(CLK), .rst(rst),
     .s_data(s_data), .s_valid(s_valid), .s_ready(s_ready), .s_last(s_last),
     .frame_status(feed_status),
@@ -116,7 +113,7 @@ module hcfpga_md5crypt_top #(
   wire       r_ready;
   wire       r_last;
 
-  hcfpga_md5crypt_collect #(.NUM_UNITS(NUM_UNITS), .WITH_CMP(WITH_CMP)) collect (
+  hcfpga_jtr_unit_collect #(.NUM_UNITS(NUM_UNITS), .RESULT_LEN(16), .DIGEST_OFF(0), .DIGEST_BYTES(16), .WITH_CMP(WITH_CMP)) collect (
     .CLK(CLK), .rst(rst),
     .gen(gen),
     .cmp_bitmap(cmp_bitmap), .cmp_load(cmp_load),

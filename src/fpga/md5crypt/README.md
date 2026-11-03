@@ -2,23 +2,24 @@
 
 Hash mode 90500 (bridge `fpga_md5crypt`) computes md5crypt (`$1$`, mode 500's format) on an FPGA. It is the second algorithm on the hcfpga framework bcrypt (mode 75000) introduced, and it keeps every generic part of bcrypt's design: the H2C record, the C2H record and its end-of-batch flag, the register block, the identity string and the transports. `docs/fpga-porting-notes-md5crypt.md` explains how it was ported and what a later algorithm can reuse.
 
-No bitstream is published. The design runs on a simulated LiteX board (`md5crypt_sim.py`), which hashcat reaches through the litexbone transport.
+No bitstream is published. The design runs on a simulated LiteX board (`src/fpga/common/hcfpga_sim.py --algo md5crypt`), which hashcat reaches through the litexbone transport.
+
+md5crypt was the first port onto the shared template in `src/fpga/common` (gateware) and `src/bridges/fpga/hcfpga_bridge.c` (host). What is md5crypt's own is the unit, the top that sizes the shared parts for it, one extra register and the bridge hooks; the rest is shared.
 
 ## Layout
 
 | Path | What |
 |---|---|
 | `gateware/md5crypt/` | John the Ripper's md5crypt unit (`md5unit.v` and below, see `PROVENANCE.md`) and hashcat's datapath around it |
-| `gateware/md5crypt/hcfpga_md5crypt_top.sv` | datapath top: feeder, `NUM_UNITS` units, collector, end-of-batch tail |
-| `gateware/md5crypt/hcfpga_md5crypt_feed.v` | H2C intake and the unit input packet |
-| `gateware/md5crypt/hcfpga_md5crypt_collect.v` | unit output, generation check, comparator, C2H record |
-| `gateware/md5crypt/hcfpga_c2h_eob.v` | retired count, EOB record, granule padding (algorithm independent) |
-| `gateware/md5crypt_dma_wrapper.py` | the LiteX wrapper and its CSRs |
-| `md5crypt_sim.py` | the simulated board (Verilator, Etherbone or UARTBone, memstream) |
-| `gateware/md5crypt/tb_datapath.py` | the datapath bench, the merge gate (`make -C src/fpga sim ALGO=md5crypt`) |
-| `hcfpga_iface.vh`, `hcfpga_abi.py` | the frame contract, the ABI reader |
+| `gateware/md5crypt/hcfpga_md5crypt_top.sv` | datapath top: the shared JtR unit feeder (64-byte keys, 4-byte steps), `NUM_UNITS` units, the shared collector (16-byte result), the generation, the end-of-batch tail |
+| `gateware/md5crypt_dma_wrapper.py` | the LiteX wrapper: the shared `HcfpgaDmaWrapper` plus `salt_len` |
+| `gateware/md5crypt/tb_datapath.py`, `tb_dut.vh` | the datapath bench on the shared one, the merge gate (`make -C src/fpga sim ALGO=md5crypt`) |
+| `src/fpga/common/rtl/hcfpga_jtr_unit_feed.v` | (shared) H2C intake and the unit input packet |
+| `src/fpga/common/rtl/hcfpga_jtr_unit_collect.v` | (shared) unit output, generation check, comparator, C2H record |
+| `src/fpga/common/rtl/hcfpga_gen.v`, `hcfpga_c2h_eob.v` | (shared) the generation counter; retired count, EOB record, granule padding |
+| `src/fpga/common/hcfpga_sim.py` | (shared) the simulated board (Verilator, Etherbone or UARTBone, memstream) |
 
-Host side: `src/bridges/bridge_fpga_md5crypt.c`, `src/bridges/fpga/hcfpga_md5crypt_ref.h` (the canary's reference), `src/modules/module_90500.c`, `OpenCL/m90500-pure.cl`, `tools/test_modules/m90500.py`.
+Host side: `src/bridges/bridge_fpga_md5crypt.c` (the hooks of the shared `src/bridges/fpga/hcfpga_bridge.c`), `src/bridges/fpga/hcfpga_md5crypt_ref.h` (the canary's reference), `src/modules/module_90500.c`, `OpenCL/m90500-pure.cl`, `tools/test_modules/m90500.py`.
 
 ## The computing unit
 
@@ -91,12 +92,12 @@ A framing reset or an arm bumps a 16-bit generation. Each packet carries the gen
 ## Running it in simulation
 
 ```
-cd src/fpga/md5crypt
-./md5crypt_sim.py --bridge uartbone --build-only        # needs the LiteX hashcat Guide, see --guide
-./md5crypt_sim.py --bridge uartbone --no-build &
-cd ../../..
+src/fpga/common/hcfpga_sim.py --algo md5crypt --bridge uartbone --build-only
+src/fpga/common/hcfpga_sim.py --algo md5crypt --bridge uartbone --no-build &
 HCFPGA_LITEXBONE=tcp:127.0.0.1:2430 ./hashcat -m 90500 hash.txt words.txt
 ```
+
+`--uart-port` moves the UARTBone port when another sim has 2430. Etherbone (`--bridge etherbone`, `HCFPGA_LITEXBONE=udp:192.168.9.50`) needs a tap, so run the sim and hashcat under the LiteX hashcat Guide's `debug/simns.sh`.
 
 The bench, which needs Verilator only:
 

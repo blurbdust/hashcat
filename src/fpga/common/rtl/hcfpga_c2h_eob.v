@@ -5,8 +5,10 @@
 
 // C2H tail: retired count, end-of-batch record and granule padding.
 //
-// Nothing here is md5crypt's. It is the batch accounting of bcrypt's hcfpga_collect_group.v,
-// taken out on its own so that any algorithm's collector can sit in front of it:
+// Algorithm independent: the batch accounting of bcrypt's hcfpga_collect_group.v, taken out on
+// its own so that any algorithm's collector can sit in front of it. The collector produces whole
+// 32-byte result records on r_* and pulses retire once per candidate it is done with, returned or
+// filtered; everything else about a batch is here:
 //
 // - retired counts the retire pulses since the last arm or reset, and is the retired register.
 // - Writing batch_target arms: target = batch_target, retired = 0. A target of 0 disarms.
@@ -17,6 +19,9 @@
 // - Result records pass through unchanged, one whole record at a time, last on byte 31.
 
 `timescale 1ns / 1ps
+
+`include "hcfpga_iface.vh"
+
 module hcfpga_c2h_eob (
   input  wire CLK,
   input  wire rst,
@@ -41,7 +46,7 @@ module hcfpga_c2h_eob (
   output wire        m_last
 );
 
-  localparam [15:0] FLAG_EOB = 16'h8000;
+  localparam [15:0] FLAG_EOB = `HCFPGA_FLAG_EOB;
 
   reg [31:0] retired = 0;
 

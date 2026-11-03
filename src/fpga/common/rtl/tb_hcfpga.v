@@ -3,19 +3,41 @@
  * License.....: MIT
  */
 
-// Datapath bench for hcfpga_md5crypt_top, driven by tb_datapath.py.
+// Datapath bench for any hcfpga algorithm top, driven by src/fpga/common/hcfpga_bench.py.
 //
-// Reads the batch from files the script writes: cfg.hex (salt0..3, iter_count, salt_len,
-// bitmap0..3, records, pad_recs, h2c word count, gaps), h2c.hex (the H2C words). Streams the
-// words in with s_valid gaps, collects the C2H bytes, and prints one line per 32-byte record:
+// The algorithm's top is instantiated by tb_dut.vh, which each algorithm keeps next to its bench
+// (found through the include path): it names the module, its parameters and any port beyond the
+// shared ones, which `HCFPGA_TB_PORTS connects. Everything else is the same for every algorithm.
+//
+// Reads the batch from files the script writes: cfg.hex and h2c.hex (the H2C words).
+//
+//   cfg[0..3]   salt0..3          cfg[10]  records (batch_target)
+//   cfg[4]      iter_count        cfg[11]  pad_recs
+//   cfg[5]      unused            cfg[12]  H2C word count
+//   cfg[6..9]   cmp bitmap        cfg[13]  idle cycles between H2C words when not zero
+//   cfg[16..31] the algorithm's extra registers, 0x3c first
+//
+// Streams the words in, collects the C2H bytes, and prints one line per 32-byte record:
 //
 //   REC <32 bytes hex, byte 0 first>
 //
-// until the end-of-batch record, then DONE <retired> <frame_status> <cycles>. The script checks
-// the lines against its md5crypt reference.
+// until the end-of-batch record, then DONE <retired> <frame_status> <cycles>.
 
 `timescale 1ns / 1ps
-module tb_datapath;
+
+`define HCFPGA_TB_PORTS \
+    .CLK(CLK), .rst(rst), \
+    .s_data(s_data), .s_valid(s_valid), .s_ready(s_ready), .s_last(s_last), \
+    .frame_status(frame_status), \
+    .salt0(cfg[0]), .salt1(cfg[1]), .salt2(cfg[2]), .salt3(cfg[3]), \
+    .iter_count(cfg[4]), \
+    .cmp_bitmap(bitmap), .cmp_load(cmp_load), \
+    .batch_target(batch_target), .batch_arm(batch_arm), \
+    .pad_recs(cfg[11][15:0]), \
+    .retired_cnt(retired_cnt), \
+    .m_data(m_data), .m_valid(m_valid), .m_ready(m_ready), .m_last(m_last)
+
+module tb_hcfpga;
 
   parameter NUM_UNITS = 1;
   parameter WITH_CMP  = 1;
@@ -38,7 +60,7 @@ module tb_datapath;
   reg        m_ready = 1;
   wire       m_last;
 
-  reg [31:0] cfg [0:15];
+  reg [31:0] cfg [0:31];
   reg [31:0] h2c [0:16383];
 
   reg [127:0] bitmap   = 0;
@@ -47,18 +69,7 @@ module tb_datapath;
   reg [31:0] batch_target = 0;
   reg        batch_arm    = 0;
 
-  hcfpga_md5crypt_top #(.NUM_UNITS(NUM_UNITS), .CORES_PER_UNIT(3), .WITH_CMP(WITH_CMP)) dut (
-    .CLK(CLK), .CLK_CORE(CLK), .rst(rst),
-    .s_data(s_data), .s_valid(s_valid), .s_ready(s_ready), .s_last(s_last),
-    .frame_status(frame_status),
-    .salt0(cfg[0]), .salt1(cfg[1]), .salt2(cfg[2]), .salt3(cfg[3]),
-    .iter_count(cfg[4]), .salt_len(cfg[5]),
-    .cmp_bitmap(bitmap), .cmp_load(cmp_load),
-    .batch_target(batch_target), .batch_arm(batch_arm),
-    .pad_recs(cfg[11][15:0]),
-    .retired_cnt(retired_cnt),
-    .m_data(m_data), .m_valid(m_valid), .m_ready(m_ready), .m_last(m_last)
-  );
+  `include "tb_dut.vh"
 
   integer i, n_words, gaps, seed;
   integer cycles = 0;
@@ -113,6 +124,8 @@ module tb_datapath;
 
   initial
   begin
+    for (i = 0; i < 32; i = i + 1) cfg[i] = 0;
+
     $readmemh("cfg.hex", cfg);
     $readmemh("h2c.hex", h2c);
 
