@@ -3,26 +3,29 @@
  * License.....: MIT
  */
 
-// descrypt datapath top: H2C records in, C2H records out, this algorithm's engine in between.
+// descrypt datapath top: H2C records in, C2H records out, NUM_CORES of John the Ripper's DES
+// pipelines in between (hcfpga_descrypt_engine.v).
 //
 // The shared parts (src/fpga/common/rtl/) are the H2C intake, which delivers one whole record at a
 // time, and the end-of-batch tail, which counts retired candidates and closes the batch. The engine
 // takes records from the intake, computes, and hands the tail whole 32-byte result records plus a
-// retire pulse per candidate.
+// retire pulse per candidate. It also sees the arm (batch_target, batch_arm): a batch's last
+// candidates go into a ring that is not full as soon as no record of the batch is left.
 //
-// HCFPGA-TODO: hcfpga_descrypt_engine.v is a one-candidate stub with a toy hash, so this top builds,
-// lints and benches from the start. Replace it with the real cores, their distribution and
-// collection. If the cores cannot be reset in the middle of a job, add hcfpga_gen.v: the candidate
-// carries the generation, the collector drops results of another one without retiring them.
+// descrypt's geometry: passwords of up to 8 bytes (DES keys), 8 digest bytes (hashcat's
+// digest_buf[0..1]), the 12-bit salt in salt0[11:0]. salt1..3 and iter_count are unused: the salt
+// is the 2 characters of the hash and the count is crypt(3)'s 25, fixed in the ring. A core holds
+// 16 candidates, the identity's cores= counts cores.
 
 `timescale 1ns / 1ps
 module hcfpga_descrypt_top #(
-  // The identity's cores= (the wrapper's core_count). The stub engine is one core.
-  /* verilator lint_off UNUSEDPARAM */
+  // The identity's cores= (the wrapper's core_count): DES rings of 16 candidates each.
   parameter NUM_CORES = 1,
-  /* verilator lint_on UNUSEDPARAM */
 
-  parameter WITH_CMP = 1
+  parameter WITH_CMP = 1,
+
+  // A partly filled ring starts after this many cycles without a record.
+  parameter IDLE_FLUSH = 4096
 )(
   input  wire CLK,
   input  wire rst,
@@ -34,11 +37,13 @@ module hcfpga_descrypt_top #(
 
   output wire [31:0] frame_status,
 
+  /* verilator lint_off UNUSEDSIGNAL */
   input  wire [31:0] salt0,
   input  wire [31:0] salt1,
   input  wire [31:0] salt2,
   input  wire [31:0] salt3,
   input  wire [31:0] iter_count,
+  /* verilator lint_on UNUSEDSIGNAL */
 
   input  wire [127:0] cmp_bitmap,
   input  wire         cmp_load,
@@ -56,20 +61,16 @@ module hcfpga_descrypt_top #(
   output wire        m_last
 );
 
-  localparam PW_MAX       = 8;
-  localparam DIGEST_BYTES = 8;
-
-  localparam PW_WORDS = (PW_MAX + 3) / 4;
-  localparam PW_AW    = (PW_WORDS <= 2) ? 1 : $clog2(PW_WORDS);
+  localparam PW_MAX = 8;
 
   wire [31:0] intake_status;
 
-  wire             rec_valid;
-  wire [7:0]       rec_len;
-  wire [31:0]      rec_id;
-  wire [PW_AW-1:0] pw_rd_addr;
-  wire [31:0]      pw_rd_data;
-  wire             rec_taken;
+  wire        rec_valid;
+  wire [7:0]  rec_len;
+  wire [31:0] rec_id;
+  wire        pw_rd_addr;
+  wire [31:0] pw_rd_data;
+  wire        rec_taken;
 
   hcfpga_h2c_intake #(.PW_MAX(PW_MAX)) intake (
     .CLK(CLK), .rst(rst),
@@ -87,12 +88,13 @@ module hcfpga_descrypt_top #(
   wire       r_ready;
   wire       r_last;
 
-  hcfpga_descrypt_engine #(.PW_MAX(PW_MAX), .DIGEST_BYTES(DIGEST_BYTES), .WITH_CMP(WITH_CMP)) engine (
+  hcfpga_descrypt_engine #(.NUM_CORES(NUM_CORES), .WITH_CMP(WITH_CMP), .IDLE_FLUSH(IDLE_FLUSH)) engine (
     .CLK(CLK), .rst(rst),
     .rec_valid(rec_valid), .rec_len(rec_len), .rec_id(rec_id),
     .pw_rd_addr(pw_rd_addr), .pw_rd_data(pw_rd_data), .rec_taken(rec_taken),
-    .salt0(salt0), .salt1(salt1), .salt2(salt2), .salt3(salt3), .iter_count(iter_count),
+    .salt(salt0[11:0]),
     .cmp_bitmap(cmp_bitmap), .cmp_load(cmp_load),
+    .batch_target(batch_target), .batch_arm(batch_arm),
     .retire(retire),
     .r_data(r_data), .r_valid(r_valid), .r_ready(r_ready), .r_last(r_last)
   );
@@ -106,7 +108,7 @@ module hcfpga_descrypt_top #(
     .m_data(m_data), .m_valid(m_valid), .m_ready(m_ready), .m_last(m_last)
   );
 
-  // The shared frame status. Bits 31:16 are the algorithm's (md5crypt counts unit errors there).
+  // The shared frame status; bits 31:16 are unused.
   assign frame_status = {16'd0, intake_status[15:0]};
 
 endmodule

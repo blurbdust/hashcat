@@ -6,6 +6,7 @@
  * modification, are permitted.
  *
  */
+// Modified for hashcat, see PROVENANCE.md.
 `ifndef _DESCRYPT_VH_
 `define _DESCRYPT_VH_
 
@@ -36,7 +37,9 @@
 
 // Compare only first 35 bits of hash (64 is a remnant
 // from earlier versions, may not work)
-`define COMPARE_35_BIT
+// hashcat: off. hashcat compares on the host and needs all 64 bits of
+// descrypt16's hash_out; only upstream's comparator relied on 35.
+//`define COMPARE_35_BIT
 `ifdef COMPARE_35_BIT
 	`define DIN_MSB 56
 	`define HASH_MSB 34
