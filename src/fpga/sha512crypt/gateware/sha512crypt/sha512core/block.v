@@ -8,7 +8,9 @@
  *
  */
 
-`include "../sha512.vh"
+// Modified for hashcat from John the Ripper's original.
+// src/fpga/sha512crypt/PROVENANCE.md lists every change.
+`include "sha512.vh"
 
 `define	SHA512_R0(x)	(`CYCLIC (x, 1) ^ `CYCLIC (x, 8) ^ (x >> 7))
 `define	SHA512_R1(x)	(`CYCLIC (x, 19) ^ `CYCLIC (x, 61) ^ (x >> 6))
