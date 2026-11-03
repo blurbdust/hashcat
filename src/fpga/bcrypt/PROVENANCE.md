@@ -14,10 +14,11 @@ Upstream is **openwall/john**, `src/ztex/fpga-bcrypt/bcrypt/` and its `bcrypt_co
 |---|---|
 | `gateware/bcrypt/bcrypt_core/S_data.txt` | none, byte identical |
 | `gateware/bcrypt/S_data.txt` | none, byte identical. A second copy, the one the benches read as `../S_data.txt` |
-| `gateware/bcrypt/bcrypt_core/{addr_regs,P_2x32}.v` | the include path |
+| `gateware/bcrypt/bcrypt_core/addr_regs.v` | the include path |
+| `gateware/bcrypt/bcrypt_core/P_2x32.v` | the include path, a Quartus storage attribute on PD |
 | `gateware/bcrypt/bcrypt_core/unit.v` | the include path, the S storage parameter, the state dump ports |
 | `gateware/bcrypt/bcrypt_core/S.v` | rewritten as a wrapper that picks block or distributed RAM, see below. It keeps upstream's header and nothing of its logic |
-| `gateware/bcrypt/bcrypt_core/S_body.vh` | upstream `S.v`'s logic: the module name and RAM style from macros, and the state dump read path |
+| `gateware/bcrypt/bcrypt_core/S_body.vh` | upstream `S.v`'s logic: the module name and RAM styles from macros, the state dump read path, and a second form of the read register for Quartus |
 | `gateware/bcrypt/bcrypt_core/bcrypt_core.v` | the include path, the S storage parameter, a 32 bit input bus, the startup and framing reset, the state dump |
 | `gateware/bcrypt/bcrypt_core/fsm.v` | the include path, the reset, a microcode change at MC[0], the state dump |
 | `gateware/bcrypt/bcrypt.vh` | `SIMULATION` enabled, and the state dump's opcodes and jump condition |
@@ -38,6 +39,14 @@ The files write `` `include "bcrypt.vh" `` where upstream writes `` `include "..
 Upstream `S.v` declares the four banks with no storage attribute and lets synthesis choose. Here the array chooses per core, because a core's S-boxes cost either 2 block RAM tiles or a large share of LUTs, and an array of one kind runs out of one pool with the other half empty. See `NUM_CORES_DIST` in `gateware/bcrypt/hcfpga_cores.v`.
 
 A synthesis attribute takes a literal, and passing a parameter to one relies on a Vivado extension that other tools may drop. So `S.v` is now a wrapper whose `generate` picks one of two sibling modules, and both include `S_body.vh`. The logic exists once, and only the attribute differs. `S_STYLE` carries the choice through `bcrypt_core.v` and `unit.v`.
+
+### Quartus
+
+Each memory carries Quartus's `ramstyle` beside Vivado's `RAM_STYLE`. Each tool ignores the other's. The S banks take `M20K` or `MLAB` with `S_STYLE`. Vivado's netlist does not change.
+
+PD in `P_2x32.v` takes `MLAB, no_rw_check`. Its read is asynchronous at the address it is written at, and Quartus otherwise builds it from 1024 flops, because an MLAB cannot promise what such a read returns while that word is written. The answer is never used: of the 96 microcode words only MC[5] writes PD, and it enables none of PD's consumers, which are Ltmp, L and the S read address. Each cycle's controls come from one microcode word, and the reset clears them all. PN keeps no attribute. MC[40] reads and writes the same PN word in one cycle and uses what it read, so PN must keep its exact semantics, and Quartus gives it a block RAM with pass-through logic.
+
+The S read register needs different logic for each tool. Upstream resets it, and a Xilinx block RAM resets its own output latch for that. An M20K has no synchronous clear there, so Quartus implements each bank as 8192 flops and a 256:1 mux. Under `HC_S_READ_FLAG`, `S_body.vh` gives the register no reset and adds a one bit flag. The flag is set exactly when upstream's register would hold zero, and it masks the register's contents, so `out` is the same on every cycle. On Vivado that form keeps the same RAM but costs LUTs on the round loop: out of context on an Artix-7, 121 LUTs more per block RAM core and 38 more per distributed one, with the worst path 0.05 and 0.26 ns longer. So `S.v` defines `HC_S_READ_FLAG` only when Quartus defines `ALTERA_RESERVED_QIS`, and Vivado elaborates upstream's register unchanged. The merge gate runs the flag form too: `tb_core.*.read_flag` and `tb_datapath.mixed_read_flag`.
 
 ### The 32 bit input bus
 
@@ -78,6 +87,8 @@ Apart from the changes above, the Blowfish datapath, the S-box and P-array logic
 - a zero flag per virtual core replaces the reset and hold of the S read register.
 - the collision exception's re-read moves from MC[81] to MC[82], directly before its use, because the shared read latch cannot keep one virtual core's value across the other's cycle. That needs a new PN address opcode, `PNAR_LD_ADDR_P_PLUS1`.
 - the state dump is not carried, and `mode_cmp` is gone.
+- the Quartus attributes of `P_2x32.v` and `S_body.vh`: PD takes `MLAB, no_rw_check` for the same reason, and the S banks `M20K`.
+- a `phase_next` input, the value `phase` takes at the next edge. Under `HC_PN_READ_REG`, which `bcrypt_core_c2.v` defines when Quartus defines `ALTERA_RESERVED_QIS`, PN's read address takes its top bit from a register inside the core loaded from `phase_next`, which equals `phase` on every cycle. Quartus builds PN as an M20K only when it can move every register on the read address into the block, and it does not move `phase`, whose register is in `hcfpga_cores.v`. Vivado keeps reading `phase`. The merge gate runs that form too: `tb_core_c2.read_reg` and `tb_datapath.c2_shape_read_reg`.
 
 Everything else in its microcode is `fsm.v`'s, the MC[0] change included. Its header explains the design. The YPCB ships it, see `CSLOW` in `src/fpga/Makefile`.
 
@@ -123,4 +134,4 @@ The ZTEX 1.15y bitstream and firmware are John the Ripper's own files, redistrib
 
 ## Toolchain
 
-LiteX, litex-boards and LitePCIe, openFPGALoader to program boards, Vivado to synthesise and iverilog to simulate. The tools are used unmodified. The LitePCIe kernel driver is built with the patches named above.
+LiteX, litex-boards and LitePCIe, openFPGALoader to program boards, Vivado or Quartus to synthesise and iverilog to simulate. The tools are used unmodified. The LitePCIe kernel driver is built with the patches named above.

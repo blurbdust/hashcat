@@ -138,7 +138,7 @@ check:
 	 echo "  all offline checks pass"; \
 	 echo; \
 	 echo "  not run here, and each needs something this target deliberately does not assume:"; \
-	 echo "    make sim               the merge gate, 55 testbench configurations, needs iverilog"; \
+	 echo "    make sim               the merge gate, 60 testbench configurations, needs iverilog"; \
 	 echo "    make check-published   fetches every declared release, needs the network"; \
 	 echo "    make check-release     answers for one ALGO and BOARD, so build already runs it"
 

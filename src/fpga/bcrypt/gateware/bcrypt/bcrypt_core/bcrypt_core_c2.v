@@ -25,7 +25,9 @@
 // were half empty, so the second hash costs no block RAM.
 //
 // phase names the virtual core whose state is in the second stage this cycle. It toggles every
-// cycle and must agree with whatever drives the bus.
+// cycle and must agree with whatever drives the bus. phase_next is the value phase takes at the next
+// edge: phase must be a register loaded from it, starting at 0. Only the HC_PN_READ_REG form of P_c2
+// reads it, see there.
 //
 // Bus contract. Every beat on din, byte_wr_en and start is held for two cycles, a phase 0 cycle then
 // a phase 1 cycle, so each virtual core sees each beat once, and wr_sel picks which of them takes it.
@@ -51,6 +53,11 @@
 
 `define	PNAR_LD_ADDR_P_PLUS1	4'b1011
 
+// Quartus defines ALTERA_RESERVED_QIS while it synthesises. See P_c2.
+`ifdef ALTERA_RESERVED_QIS
+`define HC_PN_READ_REG
+`endif
+
 
 module bcrypt_core_c2 #(
 	parameter MSB = 31,
@@ -59,6 +66,7 @@ module bcrypt_core_c2 #(
 	input CLK,
 	input rst,
 	input phase,
+	input phase_next,
 
 	input [DIN_BITS-1:0] din,
 	input [3:0] byte_wr_en,
@@ -217,7 +225,7 @@ module bcrypt_core_c2 #(
 	// Main computing unit.
 	//
 	unit_c2 #(.MSB(MSB)) unit(
-		.CLK(CLK), .phase(phase),
+		.CLK(CLK), .phase(phase), .phase_next(phase_next),
 		.din(din_r),
 		.PS_input_select(PS_input_select), .decr(decr),
 		.PN_wr_addr(PN_wr_addr), .PN_wr_en(PN_wr_en),
@@ -425,6 +433,7 @@ module unit_c2 #(
 	)(
 	input CLK,
 	input phase,
+	input phase_next,
 	input [MSB:0] din,
 
 	input [9:0] S_wr_addr,
@@ -476,7 +485,7 @@ module unit_c2 #(
 
 	P_c2 #( .MSB(MSB)
 	) P(
-		.CLK(CLK), .phase(phase),
+		.CLK(CLK), .phase(phase), .phase_next(phase_next),
 		.PD_addr(PD_addr), .PD_wr_en(PD_wr_en), .PD_out(PD),
 		.din(din), .Ltmp_in(Ltmp),
 		.PS_input_select(PS_input_select), .decr(decr),
@@ -524,6 +533,7 @@ module P_c2 #(
 	)(
 	input CLK,
 	input phase,
+	input phase_next,
 
 	input [4:0] PD_addr,
 	input PD_wr_en,
@@ -545,7 +555,10 @@ module P_c2 #(
 
 	// Each virtual core's 32 words, the virtual core in the top address bit. Word 31 of each half is
 	// the zero word PD_ADDR_ZERO and PN_ADDR_ZERO point at, and nothing writes it.
-	(* RAM_STYLE="DISTRIBUTED" *)
+	//
+	// no_rw_check for the reason P_2x32 gives: MC[5] is still the only word that writes PD, and each
+	// cycle's controls come from one word.
+	(* RAM_STYLE="DISTRIBUTED", ramstyle = "MLAB, no_rw_check" *)
 	reg [MSB:0] PD [63:0];
 	initial begin
 		PD[31] = 0;
@@ -576,7 +589,21 @@ module P_c2 #(
 		if (PN_wr_en)
 			PN [{phase, PN_wr_addr}] <= PN_input;
 
+`ifdef HC_PN_READ_REG
+	// Quartus builds PN as an M20K, which reads synchronously, only when it can move every register
+	// that drives the read address into the block, and it does not move phase, whose register is
+	// outside the core. Without that PN is 2048 flops and a 64:1 mux. phase_pn has the same input,
+	// the same clock and the same initial value as phase, so it equals phase on every cycle. On
+	// Vivado PN is LUTRAM with an asynchronous read, and it keeps reading phase.
+	reg phase_pn = 0;
+
+	always @(posedge CLK)
+		phase_pn <= phase_next;
+
+	assign PN_out = PN [{phase_pn, PN_addr}];
+`else
 	assign PN_out = PN [{phase, PN_addr}];
+`endif
 
 	assign PN_input[31:`SETTING_MAX+1] =
 		PS_input_select == `INPUT_DIN ? din[31:`SETTING_MAX+1] :
@@ -628,10 +655,10 @@ module S_c2 #(
 	output [MSB:0] out
 	);
 
-	(* RAM_STYLE = "block" *) reg [MSB:0] S0 [511:0];
-	(* RAM_STYLE = "block" *) reg [MSB:0] S1 [511:0];
-	(* RAM_STYLE = "block" *) reg [MSB:0] S2 [511:0];
-	(* RAM_STYLE = "block" *) reg [MSB:0] S3 [511:0];
+	(* RAM_STYLE = "block", ramstyle = "M20K" *) reg [MSB:0] S0 [511:0];
+	(* RAM_STYLE = "block", ramstyle = "M20K" *) reg [MSB:0] S1 [511:0];
+	(* RAM_STYLE = "block", ramstyle = "M20K" *) reg [MSB:0] S2 [511:0];
+	(* RAM_STYLE = "block", ramstyle = "M20K" *) reg [MSB:0] S3 [511:0];
 
 	reg [MSB:0] S0_l = 0, S1_l = 0, S2_l = 0, S3_l = 0;
 	reg [MSB:0] U_q = 0, S2_q = 0, S3_q = 0;
