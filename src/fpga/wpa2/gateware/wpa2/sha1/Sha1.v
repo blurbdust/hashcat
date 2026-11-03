@@ -1,6 +1,8 @@
 `timescale 1ns / 1ps
 
-module Sha1(
+// Modified for hashcat, see src/fpga/wpa2/PROVENANCE.md.
+
+module Sha1Full(
    Clk, Go, Wait, Done, Busy,
    Ai, Bi, Ci, Di, Ei,
    Ao, Bo, Co, Do, Eo,
