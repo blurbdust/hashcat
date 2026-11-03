@@ -33,13 +33,22 @@ import hcfpga_bench as hb
 
 from sha512crypt_ref import sha512crypt_digest, PW_MAX, DIGEST_BYTES, SALT, ROUNDS, CANARY_PW, extra_regs
 
-# HCFPGA-TODO: the core's files instead of the stub's (hb.RTL_STUB).
+# The top, John the Ripper's sha512crypt unit (see PROVENANCE.md) and the shared JtR adapter.
 SOURCES = [os.path.join(HERE, f) for f in [
   "hcfpga_sha512crypt_top.sv",
-]] + hb.RTL_TAIL + hb.RTL_JTR + hb.RTL_STUB
+  "unit/sha512unit.v", "unit/unit_ctrl.v", "unit/core_ctrl.v", "unit/unit_input.v", "unit/uob.v",
+  "cpu/cpu.v", "cpu/cpu_flags.v", "cpu/cpu_state.v", "cpu/instruction.v", "cpu/integer_ops.v",
+  "cpu/registers_bram.v", "cpu/thread_number.v",
+  "sha512core/add3.v", "sha512core/block.v", "sha512core/core.v", "sha512core/ctx.v",
+  "sha512core/ff16.v", "sha512core/ff64.v", "sha512core/sha512_Kt_bram.v", "sha512core/shreg.v",
+  "sha512engine/core_input.v", "sha512engine/create_blk.v", "sha512engine/engine.v", "sha512engine/memory.v",
+  "sha512engine/next_thread_num.v", "sha512engine/procb_buf.v", "sha512engine/procb_saved_state.v",
+  "sha512engine/process_bytes.v", "sha512engine/realign8_pad.v", "sha512engine/thread_state.v",
+  "util/asymm_bram.v",
+]] + hb.RTL_TAIL + hb.RTL_JTR
 
-# HCFPGA-TODO: the core's include directories.
-INCLUDES = [HERE]
+# sha512.vh and log2.vh, and cpu/program.vh, which cpu/instruction.v includes.
+INCLUDES = [HERE, os.path.join(HERE, "util"), os.path.join(HERE, "cpu")]
 
 def run_batch(exe, work, salt, rounds, cands, bitmap, gaps=1, pad_recs=1):
   return hb.run_batch(exe, work, hb.salt_words(salt), rounds, cands, bitmap, gaps=gaps, pad_recs=pad_recs,
@@ -73,12 +82,37 @@ def main():
 
   results = []
 
-  # HCFPGA-TODO: every length class the core branches on (block boundaries of its hash), and PW_MAX.
+  # Every key length the unit takes, 0 to PW_MAX (64), each length once, so every key-length class
+  # the unit branches on is in: the program walks the key length's bits (alternate sum or key),
+  # builds the P sequence from key_len copies of the key, the unit packet's key is rounded up to 8
+  # bytes (64-bit thread memory), and a round is one SHA-512 block up to 111 bytes and two beyond
+  # (64 + salt + 2 * key_len bytes or so), which this salt crosses at a key of 19 bytes. Three waves
+  # of 32 threads.
   if args.case in ("all", "lengths"):
-    lens = sorted({0, 1, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, PW_MAX - 1, PW_MAX} & set(range(PW_MAX + 1)))
+    lens = list(range(PW_MAX + 1))
     cands = [(i, rnd(n)) for i, n in enumerate(lens)] + [(len(lens), b"hashcat"), (hb.CANARY_ID, CANARY_PW)]
     recs, done, errs, pad = run_batch(exe, work, salt, R, cands, [0xffffffff] * 4)
     results.append(check("lengths", salt, R, cands, None, recs, done, errs, pad))
+
+  # Every salt length the unit takes, 1 to 16, each with short, middle and longest keys: the S
+  # sequence is 16 + alt_result[0] copies of the salt, and the salt length moves the round's
+  # block boundary.
+  if args.case in ("all", "salts"):
+    ok = True
+    for n in range(1, 17):
+      s = rnd(n)
+      cands = [(0, rnd(0)), (1, rnd(7)), (2, rnd(39)), (3, rnd(PW_MAX))]
+      recs, done, errs, pad = run_batch(exe, work, s, R, cands, [0xffffffff] * 4)
+      ok &= check("salt%d" % n, s, R, cands, None, recs, done, errs, pad)
+    results.append(ok)
+
+  # Round counts: 1 (the least the program takes), and 65537, whose count needs the upper of the
+  # two 16-bit count registers (the program borrows from it when the lower one runs out).
+  if args.case in ("all", "rounds"):
+    for rounds in (1, 65537):
+      cands = [(0, b"hashcat"), (1, rnd(PW_MAX))]
+      recs, done, errs, pad = run_batch(exe, work, salt, rounds, cands, [0xffffffff] * 4)
+      results.append(check("rounds%d" % rounds, salt, rounds, cands, None, recs, done, errs, pad))
 
   # Several wrong candidates and one right one, the bitmap holding only the target's index:
   # the comparator has to pass the target and drop (but retire) everything that misses.
