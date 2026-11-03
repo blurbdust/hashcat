@@ -33,9 +33,12 @@ All under `gateware/scrypt/`, in upstream's directories (`scrypt/`, `util/`). Th
 
 | File | Change |
 |---|---|
-| `scrypt/v_table_bram.v`, `scrypt/blockmix.v`, `scrypt/scrypt.vh`, `scrypt/main.vh`, `util/fifo_sync.v`, `util/log2.vh` | none |
-| `scrypt/romix.v`, `scrypt/salsa20_8.v`, `scrypt/pbkdf2_sha256.v`, `scrypt/hmac_sha256.v` | comments only: em dashes replaced by colons and commas, the project's style |
-| `scrypt/scrypt_unit.v` | `main.vh` included; full mode: byte order to and from `pbkdf2_sha256`, one start pulse per PBKDF2 call (below); comment punctuation as above |
+| `scrypt/v_table_bram.v`, `scrypt/scrypt.vh`, `scrypt/main.vh`, `util/fifo_sync.v`, `util/log2.vh` | none |
+| `scrypt/salsa20_8.v`, `scrypt/hmac_sha256.v` | comments only: em dashes replaced by colons and commas, the project's style |
+| `scrypt/blockmix.v` | the output index without a reversed range at `R` 1 (below, r at run time) |
+| `scrypt/romix.v` | Integerify over the r values the build has (below, r at run time); comment punctuation as above |
+| `scrypt/pbkdf2_sha256.v` | r at run time, its blocks in `romix`'s byte order (below); comment punctuation as above |
+| `scrypt/scrypt_unit.v` | `main.vh` included; full mode: byte order to and from `pbkdf2_sha256`, one start pulse per PBKDF2 call, r handed to `pbkdf2_sha256` (below); comment punctuation as above |
 | `scrypt/sha256_core.v` | the message schedule of rounds 16 to 63 (below); comment punctuation as above |
 
 Not taken: upstream's arbiters (`arbiter_tx.v`, `arbiter_rx.v`), comparator (`comparator.v`, `scrypt_cmp_config.v`), its stream top (`scrypt_axis_8b.sv`), the packet layer (`gateware/pkt_comm/`), the LiteX wrappers and the DDR3 V table controller (`gateware/*.py`), `util/SRL16E.v`, `util/asymm_bram.v`, `util/delay.v`, `util/ff32.v`, `util/sync.v` (the unit does not use them), the sim and board targets and the host scripts. hashcat's engine and the template's collector replace the arbiters and the comparator.
@@ -49,19 +52,29 @@ Not taken: upstream's arbiters (`arbiter_tx.v`, `arbiter_rx.v`), comparator (`co
 hashcat uses the unit's full mode (`FULL_MODE` 1): password in, derived key out. Upstream's LiteX port only ran the SMix-only mode, where the host computes both PBKDF2 calls, and a bench of the unit alone against Python's `hashlib.scrypt` found that full mode computed no correct key. Three things were wrong, all fixed here; with them the unit agrees with `hashlib.scrypt` for every case the bench runs (keys of 0 to 64 bytes, salts of 0 to 32 bytes, N from 2 to 32768).
 
 - **`sha256_core.v`: the message schedule.** Rounds 16 to 63 added `W[round mod 16]`, which still holds the word of round - 16, instead of the word expanded for this round (`W_new`, which the same cycle writes into that slot for later rounds). Every hash came out wrong (`SHA-256("abc")` gave `84c010ce...`). `Wt` now takes `W_new` from round 16 on.
-- **`scrypt_unit.v`: byte order.** `pbkdf2_sha256` takes its key, its message and its result big-endian (byte 0 in the top bits, as SHA-256 reads a block); `romix` and the unit's registers keep byte 0 in bits 7:0 (the SMix-only mode feeds `romix` that way, and a bench of `romix` alone against a Python ROMix agreed, see `docs/fpga-porting-notes-scrypt.md`). The unit wired them together unchanged. The key is now stored byte 0 first in the top bits, and `rev_bytes128`/`rev_bytes32` turn the 128-byte blocks between `pbkdf2_sha256` and `romix` and the 32-byte derived key around, so the unit returns the key byte 0 first, as its SMix-only mode returns ROMix's result.
+- **`scrypt_unit.v`, `pbkdf2_sha256.v`: byte order.** `pbkdf2_sha256` took its key, its message and its result big-endian (byte 0 in the top bits, as SHA-256 reads a block); `romix` and the unit's registers keep byte 0 in bits 7:0 (the SMix-only mode feeds `romix` that way, and a bench of `romix` alone against a Python ROMix agreed, see `docs/fpga-porting-notes-scrypt.md`). The unit wired them together unchanged. The key is now stored byte 0 first in the top bits (SHA-256's order, as the HMAC pads want it), and `pbkdf2_sha256` takes `b_mixed` and gives `dk_out` in `romix`'s order: it turns each 64-byte block of `b_mixed` around as it hands it to SHA-256 and each 32-byte HMAC result around as it stores it. So the unit returns the key byte 0 first, as its SMix-only mode returns ROMix's result. (The first version of this fix turned the whole 128-byte blocks around in `scrypt_unit.v`; at 128 r bytes that reversal on `pbkdf2_sha256`'s input port cost Verilator a 1024-byte loop every cycle, most of a unit's simulation time.)
 - **`scrypt_unit.v`: one start pulse per PBKDF2 call.** The unit held `pbkdf2_start_r` high until `done`. `pbkdf2_sha256` is idle again in the cycle its `done` shows and takes a start that is still high, so every call started a second, unwanted one, and the next call's `done` came from it. The start is now one cycle, set as the unit enters the state that waits for `done`, with the mode beside it.
 
 The SMix-only path holds `romix_start` high until `done` in the same way (`ST_RUN`). hashcat does not use that mode, so it is left as upstream wrote it and was not checked.
 
 The unit takes every payload byte before the 8 ID bytes as key and ignores the length (`pw_len_reg` is unused, `pbkdf2_sha256` ignores `password_len`). That is not changed: hashcat's engine sends the password zero filled to 64 bytes, which HMAC-SHA256 treats exactly as the password.
 
+### r at run time
+
+Upstream's `romix` and `blockmix` take r at run time up to their `R` parameter, but full mode was built for `R` 1: `pbkdf2_sha256` expanded the password and salt to exactly 128 bytes (4 HMAC blocks) and derived the key from exactly 128 bytes. hashcat's engine builds the unit with `R` = R_MAX (8) and sends the salt's r in the packet's r field (bytes 40..43), which the unit already parsed and handed to `romix`.
+
+- **`pbkdf2_sha256.v`.** A parameter `R` and an input `r`, latched at start. EXPAND computes 4 r HMAC blocks, T(i) = HMAC (password, salt || INT32BE (i)) for i = 1..4 r, and stores T(i) at bytes 32 (i - 1).. of `dk_out` (`1024 R` bits wide). DERIVE hashes the inner chain ipad, the 2 r 64-byte blocks of `b_mixed`, then INT32BE (1) with the padding, whose length is (64 + 128 r + 4) * 8 bits (upstream had the r = 1 value, 0x620, fixed); then the outer chain as before. `b_mixed` is no longer copied into a register: the unit's `romix` output holds still until the next candidate, so `pbkdf2_sha256` reads its blocks from the port (1024 R flip-flops fewer).
+- **`scrypt_unit.v`.** `pbkdf2_sha256` is built with the unit's `R` and given the packet's r (`r_reg_raw`), as `romix` already was.
+- **`blockmix.v`.** The output index used `round_cnt[IDX_BITS-1:1]`, a reversed range at `R` = 1 (`round_cnt[0:1]` of a 1-bit counter). Verilator read it as 0, the right index, but a synthesis tool may refuse it. It is now `round_cnt >> 1`, and the r it adds is zero extended to the index's width (wider than r at `R` 3, 5, 6 and 7).
+- **`romix.v`.** Integerify picked the word of the last 64-byte block by a case with arms for r = 1 to 8, which select past the end of `X` when `R` is below 8 (never taken, but constant out-of-range selects a synthesis tool may refuse). It is now a loop over the r values 2..`R` the build has, every select inside `X`.
+
+With these the unit agrees with `hashlib.scrypt` for r = 1 to 8 (`tb_datapath.py`'s `rs`, `rcosts` and `example` cases: every r with salts of 4 r bytes, the longest key and the canary; r = 8 at N = 2 and 1024, then r = 1 on the same units; mode 8900's example hash, N = 16384, r = 8).
+
 ### Left as upstream wrote it
 
 A Verilator lint of `scrypt_unit` alone (`-Wall`, `FULL_MODE` 0 and 1) shows no errors. Its warnings are all in upstream code: width expansions and truncations, out-of-range selects, incomplete cases, unused signals and parameters, and style. Those in control logic were read:
 
-- `scrypt/blockmix.v`: with `R` = 1 the output index `round_cnt[IDX_BITS-1:1]` is `round_cnt[0:1]` of a 1-bit counter. Verilator reads it as 0, which is the right index (the bench checks BlockMix through ROMix and full scrypt); a synthesis tool may refuse the reversed range at `R` = 1.
-- `scrypt/romix.v`: the Integerify case has arms for r = 2 to 8 that select past the 1024 bits `R` = 1 has. `r_actual_r` is 1 bit then, so they are never taken; a synthesis tool may refuse the constant out-of-range selects.
+- `scrypt/blockmix.v`: `{r_actual, 1'b0}` (2 r) is zero extended where it meets wider operands (`num_blocks_r`, the start block's index); harmless.
 - `scrypt/scrypt_unit.v`: `pw_len_reg <= in_byte_cnt - 53` is cut to 8 bits; nothing reads it, and `pbkdf2_sha256.v` ignores its `password_len` port. The key is the 64 bytes the unit receives before the IDs, which is why hashcat's engine always sends 64.
 - `scrypt/sha256_core.v`: the schedule's `(round - k) & 4'hF` and `K[round]` are wider than their targets on purpose (indices modulo 16 and 64).
 - `util/fifo_sync.v`: `inptr + 2'b10` in John the Ripper's FIFO address arithmetic, harmless.

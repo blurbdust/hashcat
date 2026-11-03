@@ -15,6 +15,9 @@
  * Phase B (Mix):  for i=0..N-1: j=Integerify(X) mod N; X=BlockMix(X xor V[j])
  */
 
+// Modified for hashcat from LiteX-Scrypt's original.
+// src/fpga/scrypt/PROVENANCE.md lists every change.
+
 module romix #(
    parameter R                = 1,   // Max scrypt block size (compile-time)
    parameter N_LOG2_MAX       = 15,  // Max supported log2(N)
@@ -100,21 +103,14 @@ module romix #(
 
    // Integerify: first 32-bit word of the last 64-byte block for runtime r
    // Last block index = (2*r_actual - 1), at bit offset (2*r_actual - 1) * 512
-   // Use MUX over possible r values
+   // A MUX over the r values 1..R this build has (every select inside X)
+   localparam RW = $clog2(R+1);
    reg [31:0] integerify_word;
+   integer ri;
    always @(*) begin
       integerify_word = X[512 +: 32]; // default: r=1 -> block 1
-      case (r_actual_r)
-      1: integerify_word = X[  1*512 +: 32];
-      2: integerify_word = X[  3*512 +: 32];
-      3: integerify_word = X[  5*512 +: 32];
-      4: integerify_word = X[  7*512 +: 32];
-      5: integerify_word = X[  9*512 +: 32];
-      6: integerify_word = X[ 11*512 +: 32];
-      7: integerify_word = X[ 13*512 +: 32];
-      8: integerify_word = X[ 15*512 +: 32];
-      default: integerify_word = X[1*512 +: 32];
-      endcase
+      for (ri = 2; ri <= R; ri = ri + 1)
+         if (r_actual_r == ri[RW-1:0]) integerify_word = X[(2*ri - 1)*512 +: 32];
    end
    wire [N_LOG2_MAX-1:0] integerify_j = integerify_word[N_LOG2_MAX-1:0] & n_mask;
 

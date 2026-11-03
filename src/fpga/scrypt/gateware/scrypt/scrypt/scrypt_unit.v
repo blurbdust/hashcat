@@ -16,6 +16,8 @@
  *   Receives password (variable length), salt+N_log2 from cmp_config,
  *   runs PBKDF2-SHA256 expand -> ROMix -> PBKDF2-SHA256 derive,
  *   outputs 32-byte derived key + IDs via 2-bit streaming output.
+ *   r_actual (1..R) is taken at run time: PBKDF2 expands to 128*r bytes,
+ *   ROMix runs at r, PBKDF2 derives the key from 128*r bytes.
  *
  * V_TABLE_EXTERNAL=0 (default): V table stored in internal BRAM.
  * V_TABLE_EXTERNAL=1:           V table accessed via external ports (DDR3).
@@ -162,31 +164,19 @@ module scrypt_unit #(
    wire pbkdf2_done_w;
    wire [DATA_WIDTH-1:0] pbkdf2_dk_out_w;
 
-   // pbkdf2_sha256 takes and gives bytes big-endian (byte 0 in the top bits, as SHA-256 reads a
-   // block); romix and this unit's registers keep byte 0 in bits 7:0. Full mode is R=1: 128 bytes.
-   function [1023:0] rev_bytes128;
-      input [1023:0] v;
-      integer b;
-      for (b = 0; b < 128; b = b + 1)
-         rev_bytes128[8*b +: 8] = v[1016 - 8*b +: 8];
-   endfunction
-
-   function [255:0] rev_bytes32;
-      input [255:0] v;
-      integer b;
-      for (b = 0; b < 32; b = b + 1)
-         rev_bytes32[8*b +: 8] = v[248 - 8*b +: 8];
-   endfunction
+   // romix, pbkdf2_sha256's blocks (b_mixed, dk_out) and this unit's result keep byte 0 in bits
+   // 7:0; pbkdf2_sha256 turns each block around for SHA-256 itself.
 
    generate if (FULL_MODE) begin : gen_pbkdf2
-      pbkdf2_sha256 u_pbkdf2 (
+      pbkdf2_sha256 #(.R(R)) u_pbkdf2 (
          .CLK(CLK),
          .start(pbkdf2_start_r),
+         .r(r_reg_raw[$clog2(R+1)-1:0]),
          .password(pw_reg),
          .password_len(pw_len_reg),
          .salt(salt_reg),
          .salt_len(salt_len_reg),
-         .b_mixed(rev_bytes128(romix_out[1023:0])),
+         .b_mixed(romix_out),
          .mode(pbkdf2_mode_r),
          .dk_out(pbkdf2_dk_out_w),
          .done(pbkdf2_done_w)
@@ -388,7 +378,7 @@ module scrypt_unit #(
       ST_PBKDF2_EXPAND: begin
          if (FULL_MODE) begin
             if (pbkdf2_done_w) begin
-               romix_in <= rev_bytes128(pbkdf2_dk_out_w[1023:0]);
+               romix_in <= pbkdf2_dk_out_w;
                state <= ST_ROMIX_START;
             end
          end
@@ -415,7 +405,7 @@ module scrypt_unit #(
          if (FULL_MODE) begin
             if (pbkdf2_done_w) begin
                out_sr <= {{(OUT_BITS_MAX-320){1'b0}},
-                          rev_bytes32(pbkdf2_dk_out_w[255:0]), ids};
+                          pbkdf2_dk_out_w[255:0], ids};
                out_count <= 0;
                empty <= 0;
                state <= ST_OUT_READY;

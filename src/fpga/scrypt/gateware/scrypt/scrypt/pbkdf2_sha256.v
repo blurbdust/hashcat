@@ -27,11 +27,25 @@
  *   - Password up to 64 bytes (zero-padded). If >64 bytes, caller must
  *     pre-hash with SHA-256 and pass the 32-byte hash as password.
  *   - ipad_block and opad_block are computed internally from password.
+ *
+ * As hashcat uses it: r, 1..R, is taken at start. EXPAND produces 128*r bytes
+ * (4*r HMAC blocks), and DERIVE hashes the 128*r bytes of B_mixed (2*r SHA-256
+ * blocks). b_mixed and dk_out keep byte 0 in bits 7:0, as romix does; the module
+ * turns each 64-byte block it hashes and each 32-byte result around for SHA-256.
+ * b_mixed is not copied: it has to hold still until done.
  */
 
-module pbkdf2_sha256 (
+// Modified for hashcat from LiteX-Scrypt's original.
+// src/fpga/scrypt/PROVENANCE.md lists every change.
+
+module pbkdf2_sha256 #(
+   parameter R = 1             // Max scrypt r (compile-time)
+)(
    input CLK,
    input start,
+
+   // Runtime r, 1..R, taken at start
+   input [$clog2(R+1)-1:0] r,
 
    // Password (up to 64 bytes, zero-padded, big-endian)
    input [511:0] password,     // 64 bytes
@@ -42,18 +56,36 @@ module pbkdf2_sha256 (
    input [255:0] salt,         // Up to 32 bytes (big-endian)
    input [7:0] salt_len,       // Actual salt length (1-32)
 
-   // B_mixed for DERIVE mode (128 bytes = 1024 bits)
-   input [1023:0] b_mixed,
+   // B_mixed for DERIVE mode (128*r bytes, byte 0 in bits 7:0)
+   input [1024*R-1:0] b_mixed,
 
    // Mode: 0 = EXPAND (dkLen=128), 1 = DERIVE (dkLen=32)
    input mode,
 
-   // Output: 128 bytes for EXPAND, 32 bytes for DERIVE
-   // For EXPAND: dk_out[1023:0] = T1(32B) || T2(32B) || T3(32B) || T4(32B)
+   // Output: 128*r bytes for EXPAND, 32 bytes for DERIVE, byte 0 in bits 7:0
+   // For EXPAND: dk_out[1024*r-1:0] = T(4r)(32B) || ... || T2(32B) || T1(32B)
    // For DERIVE: dk_out[255:0] = T1(32B)
-   output reg [1023:0] dk_out,
+   output reg [1024*R-1:0] dk_out,
    output reg done = 0
 );
+
+   localparam DATA_WIDTH = 1024 * R;
+   localparam BLK_BITS   = (R <= 1) ? 1 : $clog2(2 * R);   // index of a 64-byte block of B_mixed
+
+   // Byte 0 in bits 7:0 (romix's order) to byte 0 in the top bits (SHA-256's) and back.
+   function [511:0] rev_bytes64;
+      input [511:0] v;
+      integer b;
+      for (b = 0; b < 64; b = b + 1)
+         rev_bytes64[8*b +: 8] = v[504 - 8*b +: 8];
+   endfunction
+
+   function [255:0] rev_bytes32;
+      input [255:0] v;
+      integer b;
+      for (b = 0; b < 32; b = b + 1)
+         rev_bytes32[8*b +: 8] = v[248 - 8*b +: 8];
+   endfunction
 
    // HMAC instance
    reg hmac_start;
@@ -90,14 +122,15 @@ module pbkdf2_sha256 (
    localparam ST_DONE      = 4'd5;
 
    reg [3:0] state = ST_IDLE;
-   reg [2:0] block_idx;        // 1..4 for EXPAND, 1 for DERIVE
-   reg [2:0] num_blocks;       // 4 for EXPAND, 1 for DERIVE
+   reg [5:0] block_idx;        // 1..4*r for EXPAND, 1 for DERIVE
+   wire [31:0] t_slot = {26'd0, block_idx} - 32'd1;   // T[block_idx] goes to slot block_idx - 1
+   reg [5:0] num_blocks;       // 4*r for EXPAND, 1 for DERIVE
    reg mode_reg;
+   reg [$clog2(R+1)-1:0] r_reg;
 
    // Saved inputs
    reg [255:0] salt_reg;
    reg [7:0] salt_len_reg;
-   reg [1023:0] b_mixed_reg;
 
    integer i;
 
@@ -167,23 +200,26 @@ module pbkdf2_sha256 (
 
    // Additional states for DERIVE mode (direct SHA-256 chaining)
    localparam ST_DERIVE_INNER0  = 4'd6;  // Inner: ipad block
-   localparam ST_DERIVE_INNER1  = 4'd7;  // Inner: B_mixed[0:63]
-   localparam ST_DERIVE_INNER2  = 4'd8;  // Inner: B_mixed[64:127]
+   localparam ST_DERIVE_INNER1  = 4'd7;  // Inner: B_mixed blocks 0..2r-1, one per call
    localparam ST_DERIVE_INNER3  = 4'd9;  // Inner: INT32BE(1) + padding
    localparam ST_DERIVE_OUTER0  = 4'd10; // Outer: opad block
    localparam ST_DERIVE_OUTER1  = 4'd11; // Outer: inner_hash + padding
 
    reg [255:0] derive_inner_state;
+   reg [BLK_BITS-1:0] derive_blk;        // the B_mixed block being hashed, 0..2r-1
+                                         // (block k: bytes 64k..64k+63, b_mixed[512k +: 512])
+   wire [31:0] derive_next = {{(32-BLK_BITS){1'b0}}, derive_blk} + 32'd1;
 
    // Build the last message block for DERIVE inner hash:
    // INT32BE(1) (4 bytes) || 0x80 || zeros || length
-   // Length = (64 + 128 + 4) * 8 = 196 * 8 = 1568 bits = 0x620
+   // Length = (64 + 128*r + 4) * 8 bits (r = 1: 196 * 8 = 1568 bits = 0x620)
+   wire [63:0] derive_bitlen = 64'd544 + 64'd1024 * r_reg;
    wire [511:0] derive_inner_last_block = {
       32'h0000_0001,            // INT32BE(1)
       8'h80,                    // padding start
       407'b0,                   // zero padding
       1'b0,                     // total 408 zero bits
-      64'h0000_0000_0000_0620   // 1568 bits = 0x620
+      derive_bitlen
    };
 
    // Build outer hash block for DERIVE:
@@ -216,7 +252,7 @@ module pbkdf2_sha256 (
             expand_msg_block[511 - i*8 -: 8] = salt_reg[255 - i*8 -: 8];
       end
       // INT32BE(block_idx) at offset salt_len
-      expand_msg_block[511 - salt_len_reg*8 -: 32] = {29'b0, block_idx};
+      expand_msg_block[511 - salt_len_reg*8 -: 32] = {26'b0, block_idx};
       // 0x80 padding byte
       expand_msg_block[511 - (salt_len_reg + 4)*8 -: 8] = 8'h80;
       // Length at end (last 64 bits)
@@ -238,10 +274,10 @@ module pbkdf2_sha256 (
             end
             salt_reg <= salt;
             salt_len_reg <= salt_len;
-            b_mixed_reg <= b_mixed;
             mode_reg <= mode;
+            r_reg <= r;
             block_idx <= 1;
-            num_blocks <= mode ? 3'd1 : 3'd4;
+            num_blocks <= mode ? 6'd1 : 6'd4 * r;     // DERIVE 1, EXPAND 4*r
             state <= ST_PREP_KEYS;
          end
       end
@@ -274,13 +310,8 @@ module pbkdf2_sha256 (
 
       ST_HMAC_WAIT: begin
          if (hmac_done) begin
-            // Store T[block_idx] into dk_out
-            case (block_idx)
-               3'd1: dk_out[1023:768] <= hmac_out;
-               3'd2: dk_out[ 767:512] <= hmac_out;
-               3'd3: dk_out[ 511:256] <= hmac_out;
-               3'd4: dk_out[ 255:  0] <= hmac_out;
-            endcase
+            // Store T[block_idx] into dk_out, bytes 32*(block_idx-1).., byte 0 in bits 7:0
+            dk_out[256*t_slot +: 256] <= rev_bytes32(hmac_out);
             state <= ST_NEXT;
          end
       end
@@ -300,8 +331,9 @@ module pbkdf2_sha256 (
          // Wait for ipad block hash
          if (sha_direct_done) begin
             derive_inner_state <= sha_direct_state_out;
-            // Hash B_mixed[0:63] (first 64 bytes, big-endian)
-            sha_direct_block <= b_mixed_reg[1023:512];
+            // Hash B_mixed block 0 (first 64 bytes, big-endian)
+            derive_blk <= 0;
+            sha_direct_block <= rev_bytes64(b_mixed[511:0]);
             sha_direct_state_in <= sha_direct_state_out;
             sha_direct_start <= 1;
             state <= ST_DERIVE_INNER1;
@@ -311,22 +343,17 @@ module pbkdf2_sha256 (
       ST_DERIVE_INNER1: begin
          if (sha_direct_done) begin
             derive_inner_state <= sha_direct_state_out;
-            // Hash B_mixed[64:127] (second 64 bytes)
-            sha_direct_block <= b_mixed_reg[511:0];
             sha_direct_state_in <= sha_direct_state_out;
             sha_direct_start <= 1;
-            state <= ST_DERIVE_INNER2;
-         end
-      end
-
-      ST_DERIVE_INNER2: begin
-         if (sha_direct_done) begin
-            derive_inner_state <= sha_direct_state_out;
-            // Hash last block: INT32BE(1) + padding
-            sha_direct_block <= derive_inner_last_block;
-            sha_direct_state_in <= sha_direct_state_out;
-            sha_direct_start <= 1;
-            state <= ST_DERIVE_INNER3;
+            if ({1'b0, derive_blk} == {r_reg, 1'b0} - 1'b1) begin
+               // Hash last block: INT32BE(1) + padding
+               sha_direct_block <= derive_inner_last_block;
+               state <= ST_DERIVE_INNER3;
+            end else begin
+               // Hash the next 64 bytes of B_mixed
+               derive_blk <= derive_blk + 1'b1;
+               sha_direct_block <= rev_bytes64(b_mixed[512*derive_next +: 512]);
+            end
          end
       end
 
@@ -354,7 +381,7 @@ module pbkdf2_sha256 (
 
       ST_DERIVE_OUTER1: begin
          if (sha_direct_done) begin
-            dk_out[255:0] <= sha_direct_state_out;
+            dk_out[255:0] <= rev_bytes32(sha_direct_state_out);
             state <= ST_DONE;
          end
       end

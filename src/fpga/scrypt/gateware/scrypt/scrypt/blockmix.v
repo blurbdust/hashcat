@@ -16,6 +16,9 @@
  *           (evens first, then odds)
  */
 
+// Modified for hashcat from LiteX-Scrypt's original.
+// src/fpga/scrypt/PROVENANCE.md lists every change.
+
 module blockmix #(
    parameter R = 1    // Max scrypt block size (compile-time)
 )(
@@ -68,10 +71,15 @@ module blockmix #(
    // Output index: reorder evens then odds
    // i even -> position i/2
    // i odd  -> position r_actual + (i-1)/2
-   // = round_cnt[0] ? (r_latched + round_cnt[MSB:1]) : round_cnt[MSB:1]
+   // = round_cnt[0] ? (r_latched + round_cnt / 2) : round_cnt / 2
+   // (a shift, not round_cnt[IDX_BITS-1:1], which is a reversed range at R = 1)
+   wire [IDX_BITS-1:0] half_cnt = round_cnt >> 1;
+   /* verilator lint_off WIDTHEXPAND */
+   wire [IDX_BITS-1:0] r_idx    = r_latched;     // zero extended: IDX_BITS is never narrower
+   /* verilator lint_on WIDTHEXPAND */
    wire [IDX_BITS-1:0] out_idx = round_cnt[0]
-      ? (r_latched[IDX_BITS-1:0] + round_cnt[IDX_BITS-1:1])
-      : round_cnt[IDX_BITS-1:1];
+      ? (r_idx + half_cnt)
+      : half_cnt;
 
    // Flatten Y array to output
    genvar gi;
