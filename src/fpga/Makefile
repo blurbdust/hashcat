@@ -28,6 +28,16 @@ CLK_ztex213     := 105
 CORES_artyz7    := 68
 CLK_artyz7      := 91
 
+CORES_storeypeak := 4
+CLK_storeypeak   := 150
+
+# Quartus board: no Xilinx startup clock, a .rbf, and no published bitstream to check against.
+TOOL_storeypeak          := quartus_sh
+TOOL_HINT_storeypeak     := put Quartus Prime Standard's quartus/bin on PATH, with a license that covers Stratix V
+EXT_storeypeak           := rbf
+NO_STARTUPCLK_storeypeak := 1
+NO_RELEASE_storeypeak    := 1
+
 CORES           ?= $(or $(CORES_$(BOARD)),240)
 CLK             ?= $(or $(CLK_$(BOARD)),155)
 
@@ -69,7 +79,12 @@ ABI             := $(shell awk '$$2 == "FPGA_ABI_CURRENT" { print $$3 }' ../brid
 
 SET             := $(shell awk '$$2 == "FPGA_SET_CURRENT" { print $$3 }' ../bridges/fpga/hcfpga.h)
 
-STARTUP_SUFFIX  := _$(shell echo $(STARTUPCLK) | tr 'A-Z' 'a-z')
+STARTUP_SUFFIX  := $(if $(NO_STARTUPCLK_$(BOARD)),,_$(shell echo $(STARTUPCLK) | tr 'A-Z' 'a-z'))
+
+STARTUP_ARGS    := $(if $(NO_STARTUPCLK_$(BOARD)),,--startup-clk $(STARTUPCLK))
+
+BUILD_TOOL      := $(or $(TOOL_$(BOARD)),vivado)
+BUILD_TOOL_HINT := $(or $(TOOL_HINT_$(BOARD)),source settings64.sh first)
 
 SHAPE_SUFFIX    := $(if $(filter-out 0,$(FEED_GROUP)),_fg$(FEED_GROUP),)$(if $(filter-out 0,$(NO_DUMP)),_nodump,)$(if $(filter-out 0,$(NO_CMP)),_nocmp,)$(if $(filter-out 8,$(DIN_BITS)),_din$(DIN_BITS),)$(if $(filter-out 0,$(NUM_CORES_DIST)),_d$(NUM_CORES_DIST),)$(if $(filter-out 0,$(FEED_SHARD)),_fs$(FEED_SHARD),)$(if $(filter-out 0,$(COLLECT_GROUP)),_cg$(COLLECT_GROUP),)$(if $(filter-out 0,$(INIT_BATCH)),_ib$(INIT_BATCH),)
 
@@ -81,7 +96,7 @@ PLACE_SUFFIX    = $(if $(PLACE_DIRECTIVE),$(if $(filter-out $(PLACE_DEFAULT),$(P
 CSLOW_SUFFIX    = $(if $(filter-out 1,$(CSLOW)),_cs$(CSLOW),)
 
 BUILD_NAME      = $(ALGO)_$(BOARD)_$(FLOW)_c$(CORES)_$(CLK)mhz$(if $(filter-out 0,$(N)),_n$(N)_r$(R)_u$(UNROLL),)$(STARTUP_SUFFIX)$(LANES_SUFFIX)$(SHAPE_SUFFIX)$(PLACE_SUFFIX)$(CSLOW_SUFFIX)
-BITSTREAM_EXT   := $(or $(shell awk -F'[(,)]' '/^FPGA_RELEASE/ { gsub(/[" ]/,""); if ($$2 == "$(ALGO)" && $$3 == "$(BOARD)") print $$6 }' $(RELEASES_DEF) 2>/dev/null | head -1),bit)
+BITSTREAM_EXT   := $(or $(EXT_$(BOARD)),$(shell awk -F'[(,)]' '/^FPGA_RELEASE/ { gsub(/[" ]/,""); if ($$2 == "$(ALGO)" && $$3 == "$(BOARD)") print $$6 }' $(RELEASES_DEF) 2>/dev/null | head -1),bit)
 
 BITSTREAM       := $(ALGO)/build/$(BUILD_NAME)/gateware/$(BUILD_NAME).$(BITSTREAM_EXT)
 
@@ -260,16 +275,17 @@ EXTRA_ARGS      ?=
 
 FEED_ARGS       := $(if $(HAS_SHAPE),--din-bits $(DIN_BITS) --feed-group $(FEED_GROUP) --feed-shard $(FEED_SHARD) --collect-group $(COLLECT_GROUP) --num-cores-dist $(NUM_CORES_DIST) --init-batch $(INIT_BATCH),)$(if $(filter-out 0,$(NO_DUMP)), --no-dump,)$(if $(filter-out 0,$(NO_CMP)), --no-cmp,)$(if $(filter-out 1,$(CSLOW)), --cslow $(CSLOW),)
 
-build: check-release
-	@command -v vivado >/dev/null 2>&1 || { echo "vivado not on PATH, source settings64.sh first"; exit 1; }
+build: $(if $(NO_RELEASE_$(BOARD)),,check-release)
+	@command -v $(BUILD_TOOL) >/dev/null 2>&1 || { echo "$(BUILD_TOOL) not on PATH, $(BUILD_TOOL_HINT)"; exit 1; }
 	cd $(ALGO) && python3 $(notdir $(TARGET)) --build \
 	  --cores $(CORES) $(PARAM_ARGS) $(FEED_ARGS) \
-	  --startup-clk $(STARTUPCLK) $(LANES_ARGS) \
+	  $(STARTUP_ARGS) $(LANES_ARGS) \
 	  --abi $(ABI) $(PLACE_ARGS) $(EXTRA_ARGS) \
 	  --sys-clk-freq $(CLK)e6 --threads $(THREADS)
 
 LOAD_NOTE_DEFAULT := Programmed. REBOOT now. The PCIe endpoint does not re-enumerate without it. Then: sudo make -C src/fpga/driver dkms-install
 LOAD_NOTE_ztex213 := Nothing was programmed and nothing needed to be. See above.
+LOAD_NOTE_storeypeak := Programmed. REBOOT now, warm: a PCIe rescan does not bring the Stratix V link back after a reload. Then: sudo make -C src/fpga/driver dkms-install
 LOAD_NOTE_artyz7  := Nothing was programmed and nothing needed to be. hashcat loads the fabric AND the PS application over JTAG at the start of a run that uses the board, unless the board already runs them.
 
 LOAD_NOTE        = $(if $(LOAD_NOTE_$(BOARD)),$(LOAD_NOTE_$(BOARD)),$(LOAD_NOTE_DEFAULT))
@@ -277,7 +293,7 @@ LOAD_NOTE        = $(if $(LOAD_NOTE_$(BOARD)),$(LOAD_NOTE_$(BOARD)),$(LOAD_NOTE_
 load:
 	cd $(ALGO) && python3 $(notdir $(TARGET)) --load \
 	  --cores $(CORES) $(PARAM_ARGS) $(FEED_ARGS) \
-	  --startup-clk $(STARTUPCLK) $(LANES_ARGS) \
+	  $(STARTUP_ARGS) $(LANES_ARGS) \
 	  $(PLACE_ARGS) \
 	  --sys-clk-freq $(CLK)e6
 	@echo
