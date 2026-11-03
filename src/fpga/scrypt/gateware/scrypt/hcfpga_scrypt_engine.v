@@ -3,8 +3,8 @@
  * License.....: MIT
  */
 
-// scrypt's engine: NUM_CORES LiteX-Scrypt units (scrypt/scrypt_unit.v, full mode, r = 1), a
-// transmitter that hands each H2C record to an idle unit as one unit packet, and the shared JtR
+// scrypt's engine: NUM_CORES LiteX-Scrypt units (scrypt/scrypt_unit.v, full mode, r from 1 to
+// R_MAX at run time, N up to 2^N_LOG2_MAX), a transmitter that hands each H2C record to an idle unit as one unit packet, and the shared JtR
 // result collector (src/fpga/common/rtl/hcfpga_jtr_unit_collect.v), whose read the unit's output
 // matches.
 //
@@ -26,7 +26,7 @@
 //   0..3      log2 (N), little-endian       (iter_count is N, a power of two)
 //   4..7      salt length, little-endian    (salt_len)
 //   8..39     salt, 32 bytes                (salt0..3, then salt4..7, byte 0 in bits 7:0 of salt0)
-//   40..43    r = 1, little-endian
+//   40..43    r, little-endian              (the r register, 1 to R_MAX)
 //   44..107   key, 64 bytes, zero filled    (the unit takes every payload byte before the IDs as key)
 //   108..111  candidate id, little-endian
 //   112..113  generation, little-endian
@@ -43,7 +43,8 @@ module hcfpga_scrypt_engine #(
   parameter PW_MAX       = 64,
   parameter DIGEST_BYTES = 16,
   parameter WITH_CMP     = 1,
-  parameter N_LOG2_MAX   = 15,
+  parameter N_LOG2_MAX   = 15,     // the V table holds 2^N_LOG2_MAX blocks: N up to that
+  parameter R_MAX        = 8,      // the widest r the units compute; r comes at run time
 
   parameter PW_WORDS = (PW_MAX + 3) / 4,
   parameter PW_AW    = (PW_WORDS <= 2) ? 1 : $clog2(PW_WORDS)
@@ -69,6 +70,7 @@ module hcfpga_scrypt_engine #(
   input  wire [31:0] salt5,
   input  wire [31:0] salt6,
   input  wire [31:0] salt7,
+  input  wire [31:0] scrypt_r,
 
   input  wire [127:0] cmp_bitmap,
   input  wire         cmp_load,
@@ -138,12 +140,12 @@ module hcfpga_scrypt_engine #(
     begin : units
       // The external V table ports are unused with V_TABLE_EXTERNAL 0.
       /* verilator lint_off PINCONNECTEMPTY */
-      scrypt_unit #(.R(1), .N_LOG2_MAX(N_LOG2_MAX), .FULL_MODE(1), .V_TABLE_EXTERNAL(0)) unit (
+      scrypt_unit #(.R(R_MAX), .N_LOG2_MAX(N_LOG2_MAX), .FULL_MODE(1), .V_TABLE_EXTERNAL(0)) unit (
         .CLK(CLK),
         .unit_in(unit_in), .unit_in_ctrl(unit_in_ctrl), .unit_in_wr_en(unit_in_wr_en[u]),
         .unit_in_afull(unit_in_afull[u]), .unit_in_ready(unit_in_ready[u]),
         .dout(unit_dout[2*u +: 2]), .rd_en(unit_rd_en[u]), .empty(unit_empty[u]),
-        .vt_we(), .vt_waddr(), .vt_wdata(), .vt_raddr(), .vt_rdata(1024'd0), .vt_rd_req(),
+        .vt_we(), .vt_waddr(), .vt_wdata(), .vt_raddr(), .vt_rdata({1024*R_MAX{1'b0}}), .vt_rd_req(),
         .vt_rd_valid(1'b0), .vt_wr_req(), .vt_wr_done(1'b0)
       );
       /* verilator lint_on PINCONNECTEMPTY */
@@ -175,7 +177,7 @@ module hcfpga_scrypt_engine #(
   assign hold      = (t_state == T_TYPE) | (t_state == T_DATA) | (t_state == T_DONE);
   assign rec_taken = (t_state == T_DONE);
 
-  wire [8*CFG_BYTES-1:0] cfg = { 32'd1, salt7, salt6, salt5, salt4, salt3, salt2, salt1, salt0, salt_len, 27'd0, n_log2 };
+  wire [8*CFG_BYTES-1:0] cfg = { scrypt_r, salt7, salt6, salt5, salt4, salt3, salt2, salt1, salt0, salt_len, 27'd0, n_log2 };
   wire [8*ID_BYTES-1:0]  ids = { 16'd0, gen_r, rec_id };
 
   wire [7:0] key_idx = byte_idx - CFG_BYTES;

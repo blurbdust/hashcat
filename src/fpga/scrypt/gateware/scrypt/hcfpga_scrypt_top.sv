@@ -16,14 +16,20 @@
 // intake's record across a framing reset while it sends (hold).
 //
 // scrypt's own registers, from 0x3c: salt_len, then salt4..7 (salt bytes 16..31; salt0..3 carry
-// bytes 0..15). iter_count is N.
+// bytes 0..15), then r. iter_count is N.
+//
+// Build parameters: N_LOG2_MAX (the V table holds 2^N_LOG2_MAX blocks, N up to that) and R_MAX
+// (the widest r; r comes at run time). A unit's V table is 2^N_LOG2_MAX * 128 * R_MAX bytes.
 
 `timescale 1ns / 1ps
 module hcfpga_scrypt_top #(
   // The identity's cores= (the wrapper's core_count): scrypt units, one candidate in flight each.
   parameter NUM_CORES = 1,
 
-  parameter WITH_CMP = 1
+  parameter WITH_CMP = 1,
+
+  parameter N_LOG2_MAX = 15,
+  parameter R_MAX      = 8
 )(
   input  wire CLK,
   input  wire rst,
@@ -46,6 +52,7 @@ module hcfpga_scrypt_top #(
   input  wire [31:0] salt5,
   input  wire [31:0] salt6,
   input  wire [31:0] salt7,
+  input  wire [31:0] r,
 
   input  wire [127:0] cmp_bitmap,
   input  wire         cmp_load,
@@ -96,12 +103,15 @@ module hcfpga_scrypt_top #(
   wire       r_ready;
   wire       r_last;
 
-  hcfpga_scrypt_engine #(.NUM_CORES(NUM_CORES), .PW_MAX(PW_MAX), .DIGEST_BYTES(DIGEST_BYTES), .WITH_CMP(WITH_CMP)) engine (
+  hcfpga_scrypt_engine #(
+    .NUM_CORES(NUM_CORES), .PW_MAX(PW_MAX), .DIGEST_BYTES(DIGEST_BYTES), .WITH_CMP(WITH_CMP),
+    .N_LOG2_MAX(N_LOG2_MAX), .R_MAX(R_MAX)
+  ) engine (
     .CLK(CLK), .rst(rst),
     .rec_valid(rec_valid), .rec_len(rec_len), .rec_id(rec_id),
     .pw_rd_addr(pw_rd_addr), .pw_rd_data(pw_rd_data), .rec_taken(rec_taken), .hold(send_busy),
     .salt0(salt0), .salt1(salt1), .salt2(salt2), .salt3(salt3), .iter_count(iter_count),
-    .salt_len(salt_len), .salt4(salt4), .salt5(salt5), .salt6(salt6), .salt7(salt7),
+    .salt_len(salt_len), .salt4(salt4), .salt5(salt5), .salt6(salt6), .salt7(salt7), .scrypt_r(r),
     .cmp_bitmap(cmp_bitmap), .cmp_load(cmp_load),
     .batch_target(batch_target), .batch_arm(batch_arm),
     .retire(retire),

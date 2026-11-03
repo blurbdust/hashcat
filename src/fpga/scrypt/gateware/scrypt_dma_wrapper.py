@@ -9,6 +9,13 @@
 #
 # scrypt's use of the shared registers: salt0..3 carry salt bytes 0..15 (hashcat's salt_buf[0..3]),
 # iter_count is N, core_count the number of scrypt units, one candidate in flight each.
+#
+# Build parameters: n_log2_max (a unit's V table holds 2^n_log2_max blocks, so N up to that) and
+# r_max (the widest r a unit computes; r comes at run time). A unit's V table takes
+# 2^n_log2_max * 128 * r_max bytes of block RAM. The simulated board uses the defaults, which are
+# the limits module_98900.c and bridge_fpga_scrypt.c state; a board build with smaller ones needs
+# the module's limits changed to match (the known-answer canary fails a salt the build cannot
+# compute).
 
 import os
 import sys
@@ -38,15 +45,23 @@ class ScryptDmaWrapper(HcfpgaDmaWrapper):
         ("salt5",    32, "Salt bytes 20..23 (hashcat's salt_buf[5])."),
         ("salt6",    32, "Salt bytes 24..27 (hashcat's salt_buf[6])."),
         ("salt7",    32, "Salt bytes 28..31 (hashcat's salt_buf[7])."),
+        # Named r, not scrypt_r: register names that start with the bank's name lose that prefix
+        # in the offset check (and in csr.csv this one is scrypt_r).
+        ("r",        32, "scrypt's r, 1 to the build's r_max."),
     )
+
+    N_LOG2_MAX = 15
+    R_MAX      = 8
 
     # The engine reads the units with the shared JtR collector.
     COMMON_RTL = HcfpgaDmaWrapper.COMMON_RTL + ("hcfpga_jtr_unit_collect.v",)
 
-    def __init__(self, platform, num_cores=1, with_cmp=1):
+    def __init__(self, platform, num_cores=1, with_cmp=1, n_log2_max=N_LOG2_MAX, r_max=R_MAX):
+        self.n_log2_max = n_log2_max
+        self.r_max      = r_max
         HcfpgaDmaWrapper.__init__(self, platform,
             num_cores = num_cores,
-            params    = dict(NUM_CORES=num_cores, WITH_CMP=with_cmp),
+            params    = dict(NUM_CORES=num_cores, WITH_CMP=with_cmp, N_LOG2_MAX=n_log2_max, R_MAX=r_max),
         )
 
     def hdl_sources(self):
