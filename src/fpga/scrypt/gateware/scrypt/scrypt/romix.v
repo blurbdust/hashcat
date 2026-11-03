@@ -64,6 +64,7 @@ module romix #(
 
    // Internal BRAM signals (active when V_TABLE_EXTERNAL=0)
    reg v_we_int;
+   reg v_re_int = 0;
    reg [N_LOG2_MAX-1:0] v_waddr_int;
    reg [N_LOG2_MAX-1:0] v_raddr_int;
    wire [DATA_WIDTH-1:0] v_rdata_int;
@@ -77,6 +78,7 @@ module romix #(
          .we(v_we_int),
          .waddr(v_waddr_int),
          .wdata(X),
+         .re(v_re_int),
          .raddr(v_raddr_int),
          .rdata(v_rdata_int)
       );
@@ -136,6 +138,7 @@ module romix #(
       always @(posedge CLK) begin
          done <= 0;
          v_we_int <= 0;
+         v_re_int <= 0;
          bm_start <= 0;
 
          // Tie off external port signals in BRAM mode
@@ -186,6 +189,7 @@ module romix #(
 
          ST_MIX_ADDR: begin
             v_raddr_int <= integerify_j;
+            v_re_int <= 1;              // the table reads V[j] in ST_MIX_READ
             state <= ST_MIX_READ;
          end
 

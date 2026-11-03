@@ -12,6 +12,9 @@
  * Read latency: 2 cycles (registered output).
  */
 
+// Modified for hashcat from LiteX-Scrypt's original.
+// src/fpga/scrypt/PROVENANCE.md lists every change.
+
 module v_table_bram #(
    parameter N_LOG2_MAX = 15, // Max log2(N), determines BRAM depth
    parameter WIDTH  = 1024    // Data width (128*r bytes in bits)
@@ -23,32 +26,25 @@ module v_table_bram #(
    input [N_LOG2_MAX-1:0] waddr,
    input [WIDTH-1:0] wdata,
 
-   // Read port
+   // Read port: rdata takes mem[raddr] in a cycle with re high, and holds otherwise
+   input re,
    input [N_LOG2_MAX-1:0] raddr,
    output reg [WIDTH-1:0] rdata
 );
 
    localparam DEPTH = 1 << N_LOG2_MAX;
-   localparam NUM_BRAMS = WIDTH / 32;  // 32 BRAMs per 1024-bit width
 
-   // Generate N_BRAMS, each 32-bit wide x DEPTH deep
-   genvar g;
-   generate
-      for (g = 0; g < NUM_BRAMS; g = g + 1) begin : gen_bram
-         (* RAM_STYLE = "BLOCK" *)
-         reg [31:0] mem [0:DEPTH-1];
+   // One memory WIDTH bits wide (vendor tools slice it into block RAMs of their own width; Quartus
+   // merged upstream's 32-bit slices into one such memory anyway). The read enable keeps Verilator
+   // from copying WIDTH bits every cycle, which made up most of a unit's simulation time at R = 8.
+   (* RAM_STYLE = "BLOCK" *)
+   reg [WIDTH-1:0] mem [0:DEPTH-1];
 
-         // Write
-         always @(posedge CLK) begin
-            if (we)
-               mem[waddr] <= wdata[g*32 +: 32];
-         end
-
-         // Read (registered output for timing)
-         always @(posedge CLK) begin
-            rdata[g*32 +: 32] <= mem[raddr];
-         end
-      end
-   endgenerate
+   always @(posedge CLK) begin
+      if (we)
+         mem[waddr] <= wdata;
+      if (re)
+         rdata <= mem[raddr];
+   end
 
 endmodule

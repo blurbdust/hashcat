@@ -33,10 +33,11 @@ All under `gateware/scrypt/`, in upstream's directories (`scrypt/`, `util/`). Th
 
 | File | Change |
 |---|---|
-| `scrypt/v_table_bram.v`, `scrypt/scrypt.vh`, `scrypt/main.vh`, `util/fifo_sync.v`, `util/log2.vh` | none |
+| `scrypt/scrypt.vh`, `scrypt/main.vh`, `util/fifo_sync.v`, `util/log2.vh` | none |
+| `scrypt/v_table_bram.v` | one memory with a read enable (below, the V table) |
 | `scrypt/salsa20_8.v`, `scrypt/hmac_sha256.v` | comments only: em dashes replaced by colons and commas, the project's style |
 | `scrypt/blockmix.v` | the output index without a reversed range at `R` 1 (below, r at run time) |
-| `scrypt/romix.v` | Integerify over the r values the build has (below, r at run time); comment punctuation as above |
+| `scrypt/romix.v` | Integerify over the r values the build has (below, r at run time); the V table's read enable (below, the V table); comment punctuation as above |
 | `scrypt/pbkdf2_sha256.v` | r at run time, its blocks in `romix`'s byte order (below); comment punctuation as above |
 | `scrypt/scrypt_unit.v` | `main.vh` included; full mode: byte order to and from `pbkdf2_sha256`, one start pulse per PBKDF2 call, r handed to `pbkdf2_sha256` (below); comment punctuation as above |
 | `scrypt/sha256_core.v` | the message schedule of rounds 16 to 63 (below); comment punctuation as above |
@@ -69,6 +70,10 @@ Upstream's `romix` and `blockmix` take r at run time up to their `R` parameter, 
 - **`romix.v`.** Integerify picked the word of the last 64-byte block by a case with arms for r = 1 to 8, which select past the end of `X` when `R` is below 8 (never taken, but constant out-of-range selects a synthesis tool may refuse). It is now a loop over the r values 2..`R` the build has, every select inside `X`.
 
 With these the unit agrees with `hashlib.scrypt` for r = 1 to 8 (`tb_datapath.py`'s `rs`, `rcosts` and `example` cases: every r with salts of 4 r bytes, the longest key and the canary; r = 8 at N = 2 and 1024, then r = 1 on the same units; mode 8900's example hash, N = 16384, r = 8).
+
+### The V table
+
+`v_table_bram.v` built the table as `WIDTH / 32` memories of 32 bits, each read every cycle. At `R` 8 that is 256 memories per unit, and Verilator spent most of a unit's simulation time reading them (a profile of the bench showed the 512 read blocks of its two units on top; it ran at about 30 kHz). Quartus merges the 32-bit slices into one `WIDTH`-bit memory anyway, as its RAM summary for `WIDTH` 1024 shows. It is now one memory `WIDTH` bits wide with a read enable, `re`: `rdata` takes `mem[raddr]` in a cycle with `re` high and holds otherwise, which a block RAM's read enable does too. `romix.v` raises `re` for the one cycle in which upstream's table read `V[j]` (the cycle after `ST_MIX_ADDR` registers the address), so `rdata` holds `V[j]` from `ST_MIX_READ2` on as before. The bench runs at 110 to 180 kHz at `R` 8 since.
 
 ### Left as upstream wrote it
 
