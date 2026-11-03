@@ -105,6 +105,6 @@ src/fpga/common/hcfpga_sim.py --algo scrypt --bridge uartbone --no-build --uart-
 HCFPGA_LITEXBONE=tcp:127.0.0.1:2430 ./hashcat -m 98900 hash.txt words.txt
 ```
 
-`--uart-port` moves the UARTBone port when another sim has 2430, `--units` sets the number of scrypt units. Etherbone (`--bridge etherbone`, `HCFPGA_LITEXBONE=udp:192.168.9.50`) needs a tap, so run the sim and hashcat under the LiteX hashcat Guide's `debug/simns.sh`. The simulated board runs at about 1 MHz, so keep N small: the example hash (N = 1024) takes about 0.07 s a candidate there.
+`--uart-port` moves the UARTBone port when another sim has 2430, `--units` sets the number of scrypt units. Etherbone (`--bridge etherbone`, `HCFPGA_LITEXBONE=udp:192.168.9.50`) needs a tap, so run the sim and hashcat under the LiteX hashcat Guide's `debug/simns.sh`. The simulated board declares 1 MHz, and with this design Verilator runs it at about 230 kHz: the example hash (N = 1024, about 66,000 cycles) takes about 0.3 s a candidate there, so keep N small.
 
 The bench, which needs Verilator only: `make -C src/fpga sim ALGO=scrypt`.

@@ -65,6 +65,8 @@ Mode 91800 takes mode 1800's `$6$` hashes and is likewise excluded from automati
 
 Mode 97400 takes mode 7400's `$5$` hashes and is likewise excluded from automatic detection. No sha256crypt bitstream is published: the design has so far run on a simulated LiteX board only, see `src/fpga/sha256crypt/README.md`. It takes passwords up to 32 bytes, salts of 1 to 16 bytes and 1 to 999999999 rounds; mode 7400 also takes an empty salt and salts of up to 20 bytes, which mode 97400 refuses.
 
+Mode 98900 takes mode 8900's `SCRYPT:N:r:p:salt:key` hashes and is likewise excluded from automatic detection. No scrypt bitstream is published: the design has so far run on a simulated LiteX board only, see `src/fpga/scrypt/README.md`. It takes passwords up to 64 bytes, salts of 0 to 32 bytes, r = 1, p = 1 and N from 2 to 32768; mode 8900 also takes a 33-byte salt, other r and p, and larger N, which mode 98900 refuses. Its example hash is an N = 1024, r = 1 hash, because mode 8900's (r = 8) is outside what the device computes.
+
 ## Why board-specific setup is required
 
 An FPGA must be configured with a **bitstream** before its hardware interface exists. The programming method and the component responsible for loading the design vary by board.
