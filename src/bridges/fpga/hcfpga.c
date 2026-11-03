@@ -411,6 +411,7 @@ bool fpga_ident_parse (const char *raw, fpga_ident_t *ident)
     else if ((key_len == 1) && (strncmp (p, "n",     1) == 0)) ident->n       = (u32) strtoul (eq + 1, NULL, 10);
     else if ((key_len == 1) && (strncmp (p, "r",     1) == 0)) ident->r       = (u32) strtoul (eq + 1, NULL, 10);
     else if ((key_len == 3) && (strncmp (p, "abi",   3) == 0)) ident->abi     = (u32) strtoul (eq + 1, NULL, 10);
+    else if ((key_len == 5) && (strncmp (p, "parts", 5) == 0)) ident->parts   = (u32) strtoul (eq + 1, NULL, 10);
 
     p = end;
   }

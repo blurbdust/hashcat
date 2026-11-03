@@ -52,9 +52,13 @@
 
 #define HCFPGA_CSR_EXTRA(n)      (0x3c + (4 * (n)))
 
-// The C2H record has room for 24 digest bytes (bytes 4..27).
+// A C2H record has room for 24 digest bytes (bytes 4..27). A device that returns more sends up to
+// HCFPGA_C2H_PARTS_MAX records per candidate (hcfpga_algo_t.c2h_parts), 24 digest bytes each.
 
-#define HCFPGA_DIGEST_WORDS_MAX  6
+#define HCFPGA_C2H_PART_WORDS    6
+#define HCFPGA_C2H_PARTS_MAX     4
+
+#define HCFPGA_DIGEST_WORDS_MAX  (HCFPGA_C2H_PART_WORDS * HCFPGA_C2H_PARTS_MAX)
 
 // Batch timeout and fixed tuning, per board: cycles = cycles_per_iter * iterations + cycles_per_wave
 // at the identity's clock, launch_usec on top. Rows are measured on hardware with the Guide's
@@ -91,7 +95,8 @@ typedef struct hcfpga_algo
   //
   // The kernel's init copies the candidate in, the bridge fills digest, the kernel's comp compares
   // digest[DGST_R0..3]. M is the number of 32-bit words the device returns from C2H byte 4, at
-  // most HCFPGA_DIGEST_WORDS_MAX, and they are hashcat's digest_buf words 0..M-1.
+  // most HCFPGA_C2H_PART_WORDS per C2H part (c2h_parts below), and they are hashcat's digest_buf
+  // words 0..M-1.
 
   size_t tmp_size;
   size_t tmp_pw_len_off;
@@ -99,6 +104,16 @@ typedef struct hcfpga_algo
   size_t tmp_digest_off;
   u32    tmp_pw_words;
   u32    digest_words;
+
+  // C2H records per candidate. 0 or 1: one record, digest bytes 0..23. P = 2 to
+  // HCFPGA_C2H_PARTS_MAX: P records in a row with the same id, record k carrying digest bytes
+  // 24k..24k+23 at C2H bytes 4..27 and its part index k in flag bits 8..11. The device's
+  // comparator decides on the candidate from the first part; a filtered candidate sends no record,
+  // and the candidate retires once, after its last part, so the end-of-batch count stays a
+  // candidate count. The identity says parts=P when P > 1; a board that disagrees is refused.
+  // A missing, repeated or out-of-order part fails the batch, which is redone.
+
+  u32    c2h_parts;
 
   // The longest password the device takes (the H2C record's len, at most tmp_pw_words * 4), and
   // the module's module_pw_max.
@@ -150,7 +165,8 @@ typedef struct hcfpga_algo
 
   bool (*config_extra) (hcfpga_cfg_t *cfg, const salt_t *salt);
 
-  // hashcat's digest_buf words from the C2H record's words 1..M (little-endian as received).
+  // hashcat's digest_buf words from the C2H record's words 1..M (little-endian as received; with
+  // several parts, part k's words 1..6 follow part k-1's, so c2h[6k + j] is part k's word j + 1).
   // NULL: unchanged. The device's comparator indexes its bitmap with the low 7 bits of the
   // resulting digest[0], so the gateware has to pick the byte that becomes those bits.
 

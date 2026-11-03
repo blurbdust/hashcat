@@ -69,6 +69,8 @@ typedef struct fpga_ident
   u32  n;
   u32  r;
 
+  u32  parts;   // parts=: C2H records per candidate, 0 when the identity does not say (one)
+
   bool asserted;
 
 } fpga_ident_t;

@@ -57,6 +57,13 @@ static const hcfpga_algo_t *ALGO = NULL;
 
 #define C2H_FLAG_EOB      0x8000u
 
+// C2H records per candidate (hcfpga_algo_t.c2h_parts), and a record's part index: flag bits 8..11,
+// bits 24..27 of the record's word 7.
+
+#define C2H_PARTS         ((ALGO->c2h_parts > 1) ? ALGO->c2h_parts : 1u)
+#define C2H_PART_SHIFT    24
+#define C2H_PART_MASK     0xfu
+
 #define CMP_BITS          128
 #define CMP_WORDS         4
 #define CMP_INDEX(d0)     ((d0) & 0x7f)
@@ -162,6 +169,7 @@ typedef enum member_fault_kind
   MEMBER_FAULT_NOCANARY   = 8,
   MEMBER_FAULT_CANARY     = 9,
   MEMBER_FAULT_OVERSIZE   = 10,
+  MEMBER_FAULT_PARTS      = 11,
 
 } member_fault_t;
 
@@ -324,6 +332,7 @@ static const char *fault_name (const int fault)
     case MEMBER_FAULT_NOCANARY:   return "returned no canary";
     case MEMBER_FAULT_CANARY:     return "returned a wrong canary";
     case MEMBER_FAULT_OVERSIZE:   return "was given a range bigger than it can hold";
+    case MEMBER_FAULT_PARTS:      return "returned a result in broken parts";
   }
 
   return "failed";
@@ -639,7 +648,8 @@ static bool algo_valid (hashcat_ctx_t *hashcat_ctx)
   }
 
   if ((ALGO->name == NULL) || (ALGO->core_name == NULL))                    why = "name and core_name are required";
-  else if ((ALGO->digest_words == 0) || (ALGO->digest_words > HCFPGA_DIGEST_WORDS_MAX)) why = "the tmp struct's digest must be 1 to 6 words";
+  else if (ALGO->c2h_parts > HCFPGA_C2H_PARTS_MAX)                         why = "c2h_parts must be 0 to 4";
+  else if ((ALGO->digest_words == 0) || (ALGO->digest_words > (HCFPGA_C2H_PART_WORDS * C2H_PARTS))) why = "the tmp struct's digest must be 1 to 6 words per C2H part";
   else if ((ALGO->pw_max == 0) || (ALGO->pw_max > (ALGO->tmp_pw_words * 4)) || (ALGO->pw_max > 255)) why = "pw_max must fit the tmp struct's pw_buf and the H2C length byte";
   else if (ALGO->grain_per_core == 0)                                       why = "grain_per_core must be at least 1";
   else if (ALGO->iter_min == 0)                                             why = "iter_min must be at least 1: candidates are spread over hashcat's loop calls by the iteration count";
@@ -799,12 +809,40 @@ static void *platform_init (hashcat_ctx_t *hashcat_ctx)
       continue;
     }
 
+    // A board built for another number of C2H records per candidate would have its results read
+    // as the wrong parts. An identity without parts= returns one record per candidate.
+
+    const u32 dev_parts = (dev->ident.parts > 0) ? dev->ident.parts : 1;
+
+    if (dev_parts != C2H_PARTS)
+    {
+      event_log_error (hashcat_ctx, "FPGA bridge: %s returns %u C2H record%s per candidate (parts= in its identity), but the %s bridge reads %u, and it is not used.", member_buf->name, dev_parts, (dev_parts == 1) ? "" : "s", ALGO_NAME, C2H_PARTS);
+      event_log_info (hashcat_ctx, "Its bitstream was built for another version of this algorithm's gateware. Rebuild it from this tree.");
+      event_log_info (hashcat_ctx, NULL);
+
+      dev->transport->session_close (dev);
+
+      ctx->members_cnt--;
+
+      continue;
+    }
+
     member_buf->h2c_rec_bytes = H2C_REC_BYTES_MAX;
     member_buf->c2h_rec_bytes = C2H_REC_WORDS * 4;
 
     member_buf->out_capacity = dev->transport->out_capacity (dev);
 
     member_buf->cands_max = (u32) (member_buf->out_capacity / member_buf->h2c_rec_bytes);
+
+    // The results come back into a buffer of the same capacity: C2H_PARTS records per candidate,
+    // the end-of-batch record and up to a granule of padding. A record longer than the candidate's
+    // H2C record (descrypt's, or several parts) makes that the tighter limit.
+
+    const u64 c2h_cand_bytes = (u64) C2H_PARTS * member_buf->c2h_rec_bytes;
+    const u64 c2h_slack      = (u64) member_buf->c2h_rec_bytes + dev->transport->in_granule;
+    const u64 c2h_cands      = (member_buf->out_capacity > c2h_slack) ? ((member_buf->out_capacity - c2h_slack) / c2h_cand_bytes) : 0;
+
+    if (c2h_cands < member_buf->cands_max) member_buf->cands_max = (u32) c2h_cands;
 
     if (member_buf->cands_max == 0)
     {
@@ -1764,6 +1802,14 @@ typedef struct inject
 #define INJECT_FAULT_SEND   3
 #define INJECT_FAULT_LOSE   4
 
+// Broken C2H parts, on an algorithm with several (hcfpga_algo_t.c2h_parts): the batch's first part 1
+// is dropped, its first part 0 is read twice, or its first part 0 is read after the record that
+// follows it. Each has to fail the batch.
+
+#define INJECT_FAULT_PART_LOSE  5
+#define INJECT_FAULT_PART_DUP   6
+#define INJECT_FAULT_PART_SWAP  7
+
 static u64 inject_u64 (const char *name, const u64 dflt)
 {
   const char *env = getenv (name);
@@ -1793,6 +1839,10 @@ static const inject_t *inject_cfg (void)
   if (strcmp (what, "canary") == 0) cfg.fault = INJECT_FAULT_CANARY;
   if (strcmp (what, "send")   == 0) cfg.fault = INJECT_FAULT_SEND;
   if (strcmp (what, "lose")   == 0) cfg.fault = INJECT_FAULT_LOSE;
+
+  if (strcmp (what, "part_lose") == 0) cfg.fault = INJECT_FAULT_PART_LOSE;
+  if (strcmp (what, "part_dup")  == 0) cfg.fault = INJECT_FAULT_PART_DUP;
+  if (strcmp (what, "part_swap") == 0) cfg.fault = INJECT_FAULT_PART_SWAP;
 
   if (cfg.fault == INJECT_FAULT_NONE)
   {
@@ -1826,6 +1876,115 @@ static bool inject_due (const inject_t *cfg, const int member_idx, const int fau
   const u64 phase = batch_num % cfg->period;
 
   return (phase < cfg->burst) ? true : false;
+}
+
+// A candidate's C2H parts, put back together. Part k must follow part k - 1 with the same id; a
+// record out of that order breaks the batch.
+
+typedef struct c2h_asm
+{
+  u32 id;
+  u32 next;
+  u16 core_id;
+
+  u32 words[DIGEST_WORDS];
+
+} c2h_asm_t;
+
+// -1: the record breaks the order of parts. 0: a part, the candidate is not complete yet. 1: the
+// candidate is complete, its C2H digest words are in a->words.
+
+static int c2h_asm_take (c2h_asm_t *a, const u32 *f)
+{
+  const u32 parts = C2H_PARTS;
+
+  const u32 part = (parts == 1) ? 0 : ((f[7] >> C2H_PART_SHIFT) & C2H_PART_MASK);
+
+  if ((part != a->next) || ((part > 0) && (f[0] != a->id)))
+  {
+    a->next = 0;
+
+    return -1;
+  }
+
+  if (part == 0)
+  {
+    a->id      = f[0];
+    a->core_id = (u16) (f[7] & 0xffff);
+  }
+
+  for (u32 k = 0; k < HCFPGA_C2H_PART_WORDS; k++) a->words[(part * HCFPGA_C2H_PART_WORDS) + k] = f[1 + k];
+
+  a->next++;
+
+  if (a->next < parts) return 0;
+
+  a->next = 0;
+
+  return 1;
+}
+
+// The records the assembler takes for one received record: usually that record; with a part fault
+// injected, none, the same twice, or the next one before a held-back one.
+
+typedef struct c2h_inject
+{
+  int  fault;
+  bool done;
+  bool holding;
+
+  u32  held[C2H_REC_WORDS];
+
+} c2h_inject_t;
+
+static u32 c2h_inject_feed (c2h_inject_t *inj, const u32 *rec, const u32 *feed[2])
+{
+  feed[0] = rec;
+  feed[1] = NULL;
+
+  if ((inj->fault == INJECT_FAULT_NONE) || (inj->done == true)) return 1;
+
+  const bool eob  = ((rec[7] >> 16) == C2H_FLAG_EOB) ? true : false;
+  const u32  part = (rec[7] >> C2H_PART_SHIFT) & C2H_PART_MASK;
+
+  if (inj->holding == true)
+  {
+    feed[1] = inj->held;
+
+    inj->holding = false;
+    inj->done    = true;
+
+    return 2;
+  }
+
+  if (eob == true) return 1;
+
+  if ((inj->fault == INJECT_FAULT_PART_LOSE) && (part == 1))
+  {
+    inj->done = true;
+
+    return 0;
+  }
+
+  if ((inj->fault == INJECT_FAULT_PART_DUP) && (part == 0))
+  {
+    feed[1] = rec;
+
+    inj->done = true;
+
+    return 2;
+  }
+
+  if ((inj->fault == INJECT_FAULT_PART_SWAP) && (part == 0))
+  {
+    memcpy (inj->held, rec, sizeof (inj->held));
+
+    inj->holding = true;
+
+    return 0;
+  }
+
+  return 1;
 }
 
 static fpga_pool_verdict_t member_fault (launch_t *lc, const int member_idx, member_t *member_buf, const member_fault_t fault, const u32 sig)
@@ -2082,7 +2241,9 @@ static fpga_pool_verdict_t run_range (launch_t *lc, const int member_idx, const 
 
   const u64 h2c_bytes = fill_bytes;
 
-  u64 c2h_bytes = recs * member_buf->c2h_rec_bytes;
+  // C2H_PARTS records per candidate when every candidate returns; fewer when the device filters.
+
+  u64 c2h_bytes = recs * C2H_PARTS * member_buf->c2h_rec_bytes;
 
   if ((device_compares == true) && (dev->transport->in_granule > 0))
   {
@@ -2174,6 +2335,26 @@ static fpga_pool_verdict_t run_range (launch_t *lc, const int member_idx, const 
     }
   }
 
+  c2h_asm_t part_asm;
+
+  memset (&part_asm, 0, sizeof (part_asm));
+
+  bool parts_broken = false;
+
+  c2h_inject_t part_inject;
+
+  memset (&part_inject, 0, sizeof (part_inject));
+
+  if (C2H_PARTS > 1)
+  {
+    const int part_faults[3] = { INJECT_FAULT_PART_LOSE, INJECT_FAULT_PART_DUP, INJECT_FAULT_PART_SWAP };
+
+    for (int i = 0; i < 3; i++)
+    {
+      if (inject_due (inject_cfg (), member_idx, part_faults[i], member_buf->batches) == true) part_inject.fault = part_faults[i];
+    }
+  }
+
   u64 quiet_since_ns = fpga_now_ns ();
 
   const u64 t_recv = fpga_now_ns ();
@@ -2250,98 +2431,128 @@ static fpga_pool_verdict_t run_range (launch_t *lc, const int member_idx, const 
 
     for (u64 boff = 0; boff < bytes; boff += member_buf->c2h_rec_bytes)
     {
-      u32 idx = 0;
+      const u32 *feed[2];
 
-      u32 digest[DIGEST_WORDS];
+      const u32 feed_cnt = c2h_inject_feed (&part_inject, &rxbuf[boff / 4], feed);
 
-      u16 core_id = 0;
-
+      for (u32 fi = 0; fi < feed_cnt; fi++)
       {
-        const u32 *f = &rxbuf[boff / 4];
+        const u32 *f = feed[fi];
 
-        if ((f[7] >> 16) == C2H_FLAG_EOB) continue;
+        // An end-of-batch record between the parts of a candidate: its last parts are missing.
+        if ((f[7] >> 16) == C2H_FLAG_EOB)
+        {
+          if (part_asm.next != 0) parts_broken = true;
 
-        idx = f[0];
+          continue;
+        }
 
-        // C2H words 1.. carry the digest; the algorithm says how they become digest_buf words.
+        if (parts_broken == true) continue;
+
+        // C2H words 1..6 of each part carry the digest, a candidate's parts in order.
+        const int took = c2h_asm_take (&part_asm, f);
+
+        if (took < 0) parts_broken = true;
+
+        if (took <= 0) continue;
+
+        const u32 idx = part_asm.id;
+
+        // core_id names what the device can tell apart, ALGO->core_name in messages.
+        const u16 core_id = part_asm.core_id;
+
+        // The algorithm says how the C2H words become digest_buf words.
+        u32 digest[DIGEST_WORDS];
+
         if (ALGO->digest_from_c2h != NULL)
         {
-          ALGO->digest_from_c2h (&f[1], digest);
+          ALGO->digest_from_c2h (part_asm.words, digest);
         }
         else
         {
-          for (u32 k = 0; k < ALGO->digest_words; k++) digest[k] = f[1 + k];
+          for (u32 k = 0; k < ALGO->digest_words; k++) digest[k] = part_asm.words[k];
         }
 
-        // core_id names what the device can tell apart, ALGO->core_name in messages.
-        core_id = (u16) (f[7] & 0xffff);
-      }
+        fpga_timing_first (&member_buf->timing);
 
-      fpga_timing_first (&member_buf->timing);
-
-      if (idx == CANARY_IDX)
-      {
-        if (inject_due (inject_cfg (), member_idx, INJECT_FAULT_LOSE, member_buf->batches) == true) continue;
-
-        if (inject_due (inject_cfg (), member_idx, INJECT_FAULT_CANARY, member_buf->batches) == true)
+        if (idx == CANARY_IDX)
         {
-          digest[0] ^= (inject_cfg ()->sticky == true) ? 0xdeadbeef : (u32) (member_buf->batches | 1);
-        }
+          if (inject_due (inject_cfg (), member_idx, INJECT_FAULT_LOSE, member_buf->batches) == true) continue;
 
-        bool cbad = false;
-
-        for (u32 k = 0; k < ALGO->digest_words; k++)
-        {
-          if (digest[k] != canary_gold[k]) cbad = true;
-        }
-
-        canary_seen++;
-
-        if (cbad == true)
-        {
-          canary_bad++;
-          canary_bad_core = core_id;
-
-          if (canary_bad == 1) canary_bad_sig = digest[0];
-
-          if (dbg)
+          if (inject_due (inject_cfg (), member_idx, INJECT_FAULT_CANARY, member_buf->batches) == true)
           {
-            fprintf (stderr, "[hcfpga] canary bad: got ");
-            for (u32 k = 0; k < ALGO->digest_words; k++) fprintf (stderr, " %08x", digest[k]);
-            fprintf (stderr, "\n[hcfpga] canary bad: want");
-            for (u32 k = 0; k < ALGO->digest_words; k++) fprintf (stderr, " %08x", canary_gold[k]);
-            fprintf (stderr, "\n");
+            digest[0] ^= (inject_cfg ()->sticky == true) ? 0xdeadbeef : (u32) (member_buf->batches | 1);
           }
+
+          bool cbad = false;
+
+          for (u32 k = 0; k < ALGO->digest_words; k++)
+          {
+            if (digest[k] != canary_gold[k]) cbad = true;
+          }
+
+          canary_seen++;
+
+          if (cbad == true)
+          {
+            canary_bad++;
+            canary_bad_core = core_id;
+
+            if (canary_bad == 1) canary_bad_sig = digest[0];
+
+            if (dbg)
+            {
+              fprintf (stderr, "[hcfpga] canary bad: got ");
+              for (u32 k = 0; k < ALGO->digest_words; k++) fprintf (stderr, " %08x", digest[k]);
+              fprintf (stderr, "\n[hcfpga] canary bad: want");
+              for (u32 k = 0; k < ALGO->digest_words; k++) fprintf (stderr, " %08x", canary_gold[k]);
+              fprintf (stderr, "\n");
+            }
+          }
+
+          continue;
         }
 
-        continue;
+        if (idx >= cnt) continue;
+
+        if (got[idx] == true) continue;
+
+        {
+          const u32 bidx = CMP_INDEX (digest[0]);
+
+          if (((member_buf->cmp_bm[bidx / 32] >> (bidx % 32)) & 1) == 0) unfiltered++;
+        }
+
+        u32 *out = tmp_digest (tmps, idx);
+
+        for (u32 k = 0; k < ALGO->digest_words; k++) out[k] = digest[k];
+
+        got[idx] = true;
+
+        recv++;
+
+        if (recv == cnt) fpga_timing_last (&member_buf->timing);
       }
-
-      if (idx >= cnt) continue;
-
-      if (got[idx] == true) continue;
-
-      {
-        const u32 bidx = CMP_INDEX (digest[0]);
-
-        if (((member_buf->cmp_bm[bidx / 32] >> (bidx % 32)) & 1) == 0) unfiltered++;
-      }
-
-      u32 *out = tmp_digest (tmps, idx);
-
-      for (u32 k = 0; k < ALGO->digest_words; k++) out[k] = digest[k];
-
-      got[idx] = true;
-
-      recv++;
-
-      if (recv == cnt) fpga_timing_last (&member_buf->timing);
     }
   }
 
   if (pipe_on == true) g_pipe[global_idx].recv_ns += fpga_now_ns () - t_recv;
 
   dev->transport->batch_end (dev);
+
+  // A part out of order, or a candidate whose last parts never came: the records cannot be trusted
+  // to belong together, so the batch is redone.
+
+  if ((part_asm.next != 0) || (part_inject.holding == true)) parts_broken = true;
+
+  if ((ok == true) && (parts_broken == true))
+  {
+    event_log_error (hashcat_ctx, "FPGA bridge: board %s returned a candidate's result in broken parts (%u C2H records per candidate: one missing, repeated or out of order).", member_buf->name, C2H_PARTS);
+
+    ok = false;
+
+    fault = MEMBER_FAULT_PARTS;
+  }
 
   if (unfiltered > member_buf->grain) member_buf->returns_all = true;
 
