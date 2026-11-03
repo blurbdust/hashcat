@@ -361,6 +361,10 @@ SIM_SCRIPT_md5crypt := md5crypt/gateware/md5crypt/tb_datapath.py
 # The simulator a gate needs, iverilog unless the algorithm names another.
 SIM_TOOL_md5crypt := verilator
 
+SIM_SCRIPT_sha256crypt := sha256crypt/gateware/sha256crypt/tb_datapath.py
+
+SIM_TOOL_sha256crypt := verilator
+
 SIM_SCRIPT      := $(SIM_SCRIPT_$(ALGO))
 
 SIM_TOOL        := $(or $(SIM_TOOL_$(ALGO)),$(IVERILOG))

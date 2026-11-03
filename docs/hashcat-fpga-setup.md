@@ -50,6 +50,7 @@ The host side of the `Speed.#*` line and the 90c watchdog refer to this candidat
 |-------|-----------|-----------------|
 | 75000 | bcrypt    | `fpga_bcrypt`   |
 | 90500 | md5crypt  | `fpga_md5crypt` |
+| 97400 | sha256crypt | `fpga_sha256crypt` |
 
 Mode 75000 is excluded from automatic detection because it shares the `$2*$` hash format with mode 3200. Use mode 3200 for the standard backend, or select mode 75000 explicitly when using an FPGA.
 

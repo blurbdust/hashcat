@@ -779,7 +779,7 @@ def require_device_type(device, ids):
 
 # Modes that need hardware to run at all. Without HCFPGA_TEST=1 they are left out of every run, so a
 # machine without an FPGA does not report them as a fault.
-HARDWARE_MODES = {75000, 90500}
+HARDWARE_MODES = {75000, 90500, 97400}
 
 
 def hardware_ok():
