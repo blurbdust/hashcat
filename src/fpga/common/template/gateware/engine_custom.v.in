@@ -20,6 +20,11 @@
 //   cmp_bitmap, loaded on cmp_load; a clear bit filters the result. WITH_CMP = 0 returns all.
 // - rst is a framing reset: drop what is in flight, or (cores that cannot be reset) keep going
 //   and drop the stale results by generation, see hcfpga_gen.v.
+// - batch_arm pulses when the host arms a batch, with batch_target its record count (0: the
+//   transport sends no count). An engine that groups candidates (descrypt fills a ring of 16)
+//   starts the last, short group when it has taken batch_target records since the arm; with no
+//   count it needs another rule, such as a flush after some idle cycles. A one-at-a-time engine
+//   like this stub ignores both.
 //
 // The stub computes one candidate at a time, DIGEST_BYTES bytes of a toy hash:
 //
@@ -52,6 +57,9 @@ module hcfpga_@@ALGO@@_engine #(
 
   input  wire [127:0] cmp_bitmap,
   input  wire         cmp_load,
+
+  input  wire [31:0]  batch_target,
+  input  wire         batch_arm,
 
   output reg  retire = 0,
 

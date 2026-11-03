@@ -93,6 +93,7 @@ module hcfpga_@@ALGO@@_top #(
     .pw_rd_addr(pw_rd_addr), .pw_rd_data(pw_rd_data), .rec_taken(rec_taken),
     .salt0(salt0), .salt1(salt1), .salt2(salt2), .salt3(salt3), .iter_count(iter_count),
     .cmp_bitmap(cmp_bitmap), .cmp_load(cmp_load),
+    .batch_target(batch_target), .batch_arm(batch_arm),
     .retire(retire),
     .r_data(r_data), .r_valid(r_valid), .r_ready(r_ready), .r_last(r_last)
   );
