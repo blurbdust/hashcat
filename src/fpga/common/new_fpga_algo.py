@@ -398,6 +398,7 @@ def main():
     RESULT_LEN=a.result_len, KEY_ALIGN=a.key_align, GRAIN=a.grain, CORES_PER_UNIT=a.cores_per_unit,
     SALT_MIN=a.salt_min, SALT_MAX=a.salt_max, ITER_MIN=a.iter_min, ITER_MAX=a.iter_max,
     CORE_NAME=("unit" if jtr else "core"), FLAVOUR=a.core,
+    SCAFFOLD_ARGS=" ".join(sys.argv[1:]),
     STUB_SOURCES=("hb.RTL_STUB" if jtr else "the engine stub"),
     RTL_SOURCES=("hb.RTL_JTR + hb.RTL_STUB" if jtr else f"[os.path.join(HERE, \"hcfpga_{a.name}_engine.v\")]"),
     EXTRA_REGS=("[len(salt)]" if jtr else "[]"),
@@ -472,8 +473,15 @@ def main():
     if m is None:
       print(f"  docs/hashcat-fpga-setup.md: no mode table found, add mode {a.fpga_mode} by hand ({TODO})")
       return text
-    row = "| %-5d | %-9s | %-15s |\n" % (a.fpga_mode, a.name, f"`fpga_{a.name}`")
-    return text[:m.end()] + row + text[m.end():]
+    # In mode order: the new row goes before the first row with a higher mode.
+    row  = "| %-5d | %-9s | %-15s |\n" % (a.fpga_mode, a.name, f"`fpga_{a.name}`")
+    rows = list(re.finditer(r"^\| (\d+) +\|.*\n", m.group(1), re.M))
+    at   = m.end()
+    for r in rows:
+      if int(r.group(1)) > a.fpga_mode:
+        at = m.start() + r.start()
+        break
+    return text[:at] + row + text[at:]
   if os.path.isfile(os.path.join(root, "docs/hashcat-fpga-setup.md")):
     w.edit("docs/hashcat-fpga-setup.md", add_doc, f"mode {a.fpga_mode} in the mode table")
 
