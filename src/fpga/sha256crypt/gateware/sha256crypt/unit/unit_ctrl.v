@@ -7,7 +7,10 @@
  * modification, are permitted.
  *
  */
-`include "../sha256.vh"
+
+// Modified for hashcat from John the Ripper's original.
+// src/fpga/sha256crypt/PROVENANCE.md lists every change.
+`include "sha256.vh"
 
 `ifdef SIMULATION
 //

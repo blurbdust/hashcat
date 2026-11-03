@@ -8,6 +8,10 @@
  *
  */
 
+// Modified for hashcat from John the Ripper's original.
+// src/fpga/sha256crypt/PROVENANCE.md lists every change.
+`include "log2.vh"
+
 /*
 INFO:Xst:3229 - The RAM description <Mram_mem> will not be implemented on the device block RAM because actual implementation does not support asymetric block RAM larger than one block.
     -----------------------------------------------------------------------

@@ -8,7 +8,10 @@
  *
  */
 
-`include "../sha256.vh"
+
+// Modified for hashcat from John the Ripper's original.
+// src/fpga/sha256crypt/PROVENANCE.md lists every change.
+`include "sha256.vh"
 
 `define SHA256_R0(x) (`CYCLIC (x, 7) ^ `CYCLIC (x, 18) ^ (x >> 3))
 `define SHA256_R1(x) (`CYCLIC (x, 17) ^ `CYCLIC (x, 19) ^ (x >> 10))
