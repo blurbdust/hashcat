@@ -264,6 +264,13 @@ Same environment as section 7 (`OCL_ICD_VENDORS` to the PoCL 3.0 ICD, `--force`)
 | bcrypt | the Guide's `debug/bcrypt_sim.py --hashcat <this tree>` (Etherbone, `simns.sh`), `./hashcat -m 75000 -a 0 --force --potfile-disable -n 1 -u 32` and `HCFPGA_TEST=1 tools/test.py -S -m 75000 -f -D 1` | `Cracked`; `1/1 hash-modes cracked their own self-test vector` |
 | bcrypt through the generic sim | `hcfpga_sim.py --algo bcrypt --units 4 --bridge uartbone --uart-port 2532`, then `./hashcat -m 75000 -a 0 --force --potfile-disable -n 1 -u 32` | `Cracked` (the CSR map equals `bcrypt_sim.py`'s) |
 
+None of the rows above ran with fewer loops per kernel call than the hash's rounds, so they missed a bug in `hcfpga_bridge.c`: `launch_loop` offset the first candidate of a loop chunk by bytes, not by tmp structs, and every chunk after the first sent the wrong candidates. The sha256crypt port found it (its parser-limit row forced `Loops:1`); `affaa7010` fixes it. After the fix, the bench and every row above except the bcrypt ones passed again, and so did two runs through the fixed path:
+
+| What | Command | Result |
+|---|---|---|
+| Loops below rounds | UARTBone, `-u 100` on mode 500's example hash (1000 rounds), eight words | `Loops:100`, `Cracked` |
+| Three salts, loops below rounds | UARTBone, `-n 1 -u 250`, three hashes with salts of 6, 5 and 1 bytes, their passwords 14th, 20th and 23rd of 24 words | `Loops:250`, `3/3 ... Salts`, `Cracked` |
+
 ### The scaffold, proved on throwaway algorithms
 
 In a copy of this tree (never the one under test):
