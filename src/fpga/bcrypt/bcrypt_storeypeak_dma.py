@@ -90,6 +90,14 @@ class _CRG(LiteXModule):
             "set_false_path -from [get_clocks clk125] -to [get_clocks sys_clk]",
         ]
 
+        # The temperature and chip ID values reach sys through MultiReg. derive_pll_clocks names
+        # the management clock after the PLL output, clk[1], rather than its net, so a cut naming
+        # pcie_mgmt_clk matches nothing and these crossings are timed as synchronous.
+        platform.toolchain.additional_sdc_commands += [
+            "set_false_path -from [get_clocks sys_clk] -to [get_clocks {*|clk[1]}]",
+            "set_false_path -from [get_clocks {*|clk[1]}] -to [get_clocks sys_clk]",
+        ]
+
 class BcryptSoC(SoCMini):
     def __init__(self, sys_clk_freq=150e6, num_cores=1, with_led=True, feed_group=0, feed_shard=0, collect_group=0, init_batch=0, num_cores_dist=0, with_dump=1, with_cmp=1, din_bits=32, abi=1, cslow=1, pcie_connector=0, placement_margin=0.0, as_clock_mhz=100):
         platform = microsoft_storey_peak.Platform()
