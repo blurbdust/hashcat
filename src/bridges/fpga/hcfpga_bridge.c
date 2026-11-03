@@ -1976,6 +1976,14 @@ static fpga_pool_verdict_t run_range (launch_t *lc, const int member_idx, const 
       return verdict;
     }
 
+    // Hold the datapath in its framing reset while the transport empties its rings, and release it
+    // after (reset_framing). A core still computing the failed batch would otherwise put results
+    // into the emptied C2H ring, where the next batch would read them as its own; a fast core does
+    // that within the refresh. The first write is not verified: the link is resynchronised by
+    // session_refresh, and reset_framing verifies the release.
+
+    if (dev->transport->csr_write != NULL) dev->transport->csr_write (dev, CSR_CTRL, CTRL_FRAMING_RESET);
+
     if ((dev->transport->session_refresh (dev) == false) || (reset_framing (dev, member_buf->name) == false))
     {
       event_log_error (hashcat_ctx, "FPGA bridge: board %s could not be restarted after a failure.", member_buf->name);
