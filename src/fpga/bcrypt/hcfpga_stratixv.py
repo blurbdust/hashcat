@@ -203,3 +203,73 @@ class StratixVChipID(LiteXModule):
     self.specials += MultiReg(data_valid, data_valid_sys)
 
     self.comb += If(data_valid_sys, self._id.status.eq(chip_id_sys[:nbits]))
+
+# Configuration flash -----------------------------------------------------------------------------
+
+# The card boots in Active Serial x4 from a 256 Mbit Micron N25Q256A. Quartus' .rbf is the
+# uncompressed passive image and is the wrong thing to write there: quartus_cpf converts the .sof
+# into a compressed AS x4 image instead, which needs no license. The .rpd it writes is LSB first
+# within each byte, the order openFPGALoader expects for .rpd and reverses while writing, so the
+# flash ends up holding the same layout as the factory image (sync word 0x56565656 at 0x80).
+
+SV_FLASH_DEVICE = "EPCQ256"
+SV_FLASH_LOADER = "5SGSMD5K1"
+
+def sv_flash_image(sof, out_dir=None):
+  out_dir  = out_dir or os.path.dirname(os.path.abspath(sof))
+  base     = os.path.splitext(os.path.basename(sof))[0] + "_flash"
+  cof_path = os.path.join(out_dir, base + ".cof")
+
+  cof = f"""<?xml version="1.0" encoding="US-ASCII" standalone="yes"?>
+<cof>
+	<eprom_name>{SV_FLASH_DEVICE}</eprom_name>
+	<flash_loader_device>{SV_FLASH_LOADER}</flash_loader_device>
+	<output_filename>{base}.jic</output_filename>
+	<n_pages>1</n_pages>
+	<width>1</width>
+	<mode>13</mode>
+	<sof_data>
+		<user_name>Page_0</user_name>
+		<page_flags>1</page_flags>
+		<bit0>
+			<sof_filename>{os.path.abspath(sof)}<compress_bitstream>1</compress_bitstream></sof_filename>
+		</bit0>
+	</sof_data>
+	<version>10</version>
+	<create_cvp_file>0</create_cvp_file>
+	<create_hps_iocsr>0</create_hps_iocsr>
+	<auto_create_rpd>1</auto_create_rpd>
+	<rpd_little_endian>1</rpd_little_endian>
+	<options>
+		<map_file>1</map_file>
+	</options>
+</cof>
+"""
+
+  with open(cof_path, "w") as f:
+    f.write(cof)
+
+  if shutil.which("quartus_cpf") is None:
+    raise OSError("quartus_cpf not on PATH; it ships with Quartus and the Quartus Programmer")
+
+  import subprocess
+
+  subprocess.check_call(["quartus_cpf", "-c", os.path.basename(cof_path)], cwd=out_dir)
+
+  rpd = os.path.join(out_dir, base + "_auto.rpd")
+
+  with open(rpd, "rb") as f:
+    head = f.read(0x84)
+
+  if head[0x80:0x84] != b"\x6a\x6a\x6a\x6a":
+    raise ValueError(f"{rpd} has no AS sync word at 0x80, refusing to hand it to a flash writer")
+
+  return rpd
+
+# openFPGALoader (v1.0.0) addresses the flash with 3-byte opcodes below 16 MiB. After the FPGA has
+# booted from it, this flash is in 4-byte address mode, so those reads and writes land at the
+# wrong addresses, silently. OFL_SPI_4BYTE is a local openFPGALoader patch that uses the 4-byte
+# opcodes (0x13, 0x12, 0x21, 0xdc) everywhere, which the N25Q256A accepts in either mode.
+
+def sv_flash_command(rpd, cable="ft232"):
+  return ["openFPGALoader", "-c", cable, "--fpga-part", "5sgsd5", "-f", "--verify", rpd]

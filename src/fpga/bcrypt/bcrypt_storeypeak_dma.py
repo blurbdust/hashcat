@@ -30,7 +30,7 @@ from gateware.bcrypt_dma_wrapper import BcryptDmaWrapper
 
 from hcfpga_abi import fpga_abi_current
 from hcfpga_litepcie import PCIE_CLASS_CODE, clock_mhz
-from hcfpga_stratixv import StratixVTemperature, StratixVChipID, sv_pcie_endpoint_params
+from hcfpga_stratixv import StratixVTemperature, StratixVChipID, sv_pcie_endpoint_params, sv_flash_image, sv_flash_command
 
 BOARD = "storeypeak"
 
@@ -203,6 +203,8 @@ def main():
     parser = argparse.ArgumentParser(description="hcfpga bcrypt on a Microsoft Storey Peak (Stratix V).")
     parser.add_argument("--build", action="store_true", help="Build the bitstream.")
     parser.add_argument("--load",  action="store_true", help="Load the bitstream over the card's own JTAG.")
+    parser.add_argument("--rpd",   action="store_true", help="Convert the built .sof into a compressed AS x4 flash image (.rpd). Needs quartus_cpf, no license.")
+    parser.add_argument("--flash", action="store_true", help="Write the flash image over the card's own JTAG. Implies --rpd. Needs an openFPGALoader that honours OFL_SPI_4BYTE.")
     parser.add_argument("--cores",        type=int,   default=1,     help="Number of bcrypt cores.")
     parser.add_argument("--no-dump",      action="store_true",       help="Omit the unfinished S state dump logic, whose muxes affect the Feistel critical path.")
     parser.add_argument("--no-cmp",       action="store_true",       help="Omit the per-core comparator. Every candidate then returns to the host.")
@@ -281,6 +283,15 @@ def main():
     if args.load:
         prog = soc.platform.create_programmer()
         prog.load_bitstream(builder.get_bitstream_filename(mode="sram"))
+
+    if args.rpd or args.flash:
+        sof = os.path.join(builder.gateware_dir, name + ".sof")
+        rpd = sv_flash_image(sof)
+        print(f"  flash image: {rpd}")
+        cmd = sv_flash_command(rpd)
+        print(f"  write it with: OFL_SPI_4BYTE=1 {' '.join(cmd)}")
+        if args.flash:
+            subprocess.check_call(cmd, env=dict(os.environ, OFL_SPI_4BYTE="1"))
 
 if __name__ == "__main__":
     main()

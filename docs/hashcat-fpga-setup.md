@@ -61,6 +61,7 @@ An FPGA must be configured with a **bitstream** before its hardware interface ex
 | Xilinx ZC706 | PCIe | you, out of band | [ZC706](#zc706) |
 | YPCB-00338-1P1 | PCIe | you, out of band | [YPCB-00338-1P1](#ypcb-00338-1p1) |
 | Enigma X1 | PCIe | you, out of band | [Enigma X1](#enigma-x1) |
+| Microsoft Storey Peak | PCIe | you, out of band | [Microsoft Storey Peak](#microsoft-storey-peak) |
 | Alveo U50 | PCIe | **hashcat, every run** | [Alveo U50](#alveo-u50) |
 | ZTEX USB-FPGA 1.15y | USB | **hashcat, when not configured** | [ZTEX 1.15y](#ztex-115y) |
 | ZTEX USB-FPGA 2.13 | USB | **hashcat, when not configured** | [ZTEX 2.13](#ztex-213) |
@@ -76,13 +77,13 @@ The bridge distinguishes these failure modes and directs the user to the applica
 
 ## PCIe host requirements
 
-The ZC706, YPCB-00338-1P1 and Enigma X1 require a **Gen2 x1 link and a 1 MB memory window**. The following sections explain the host requirements for these three boards.
+The ZC706, YPCB-00338-1P1, Enigma X1 and Microsoft Storey Peak require a **Gen2 x1 link and a 1 MB memory window**. The following sections explain the host requirements for these four boards.
 
 **The Alveo U50 has different host requirements.** Its PCIe endpoint belongs to AMD's Alveo shell, which controls the link width, BARs and DMA engine. hashcat supplies the kernel inside the shell. The U50 is a Gen3 x16 card with a much larger memory footprint. It requires Above 4G Decoding and cannot run on an x1 riser. Follow AMD's host requirements for this board.
 
 ### Link width
 
-The published bitstreams for these three boards train at x1. A bcrypt record is 8 to 80 bytes in, depending on the password length, and 32 bytes out, so 100k H/s is at most about 11 MB/s against roughly 400 MB/s for Gen2 x1. Width has never been the constraint.
+The published bitstreams for the first three train at x1, and the Storey Peak's x8 hard IP trains down to whatever the slot or riser provides. A bcrypt record is 8 to 80 bytes in, depending on the password length, and 32 bytes out, so 100k H/s is at most about 11 MB/s against roughly 400 MB/s for Gen2 x1. Width has never been the constraint.
 
 **Any slot works.** A slot wider than x1 trains the link down to x1 by itself. The PCIe specification requires every link to support x1, so an x1 card in an x4, x8 or x16 slot is a supported and ordinary configuration. Check the negotiated width with `lspci`:
 
@@ -101,7 +102,7 @@ The width is a build choice, not a wire format. The `PCIE_LANES` build variable 
 
 ### Memory window, and what breaks when it runs out
 
-Each of the three exposes one 1 MB BAR, 32-bit and non-prefetchable, so it has to live in the host's memory window below 4 GB. That window is shared with every other device, and the things that fill it are a modern GPU and an Alveo card: an Intel Arc A770 asks for a 256 MB window, or 16 GB with Resizable BAR enabled.
+Each of them exposes one 1 MB non-prefetchable BAR, so it has to live in the host's memory window below 4 GB. The Storey Peak's BAR is 64-bit, but a non-prefetchable BAR goes in that window regardless. That window is shared with every other device, and the things that fill it are a modern GPU and an Alveo card: an Intel Arc A770 asks for a 256 MB window, or 16 GB with Resizable BAR enabled.
 
 When the window cannot hold everything, the firmware does not report an error. It drops a device. The symptom is **an unrelated device disappearing when a card is added or moved**, and an onboard network adapter going missing is the common case. The FPGA is not at fault and neither is its driver.
 
@@ -199,6 +200,53 @@ This PCILeech DMA card retains its factory firmware in SPI flash. Load the hashc
 3. Reboot, then [build the driver](#4-build-and-load-the-kernel-driver) and [set permissions](#5-device-permissions).
 
 If hashcat does not report the card, it may still be running its PCILeech firmware. In that state, `lspci` identifies it as Ethernet controller `10ee:0666`, which hashcat ignores because it is not running a supported design.
+
+## Microsoft Storey Peak
+
+Stratix V `5SGSMD5K1F40C1`, PCIe Gen2 x8 hard IP on an x16 edge connector. **Program this board manually.**
+
+No bitstream is published for this board. Build one from source with Quartus Prime Standard and a license that covers Stratix V:
+
+```
+cd src/fpga/bcrypt
+python3 bcrypt_storeypeak_dma.py --cores <n> --sys-clk-freq <hz> --build
+```
+
+The card carries its own FT232H JTAG adapter, reached through its USB port. Load the design into configuration SRAM:
+
+1. If `lspci` lists the card, unload the driver and remove the device first: `echo 1 > /sys/bus/pci/devices/<address>/remove`.
+2. `openFPGALoader -c ft232 <build>.rbf`
+3. Reboot. A PCIe rescan does not bring the Stratix V link back after a reload, but the reset a warm reboot sends does, and the design survives it.
+4. [Build the driver](#4-build-and-load-the-kernel-driver) and [set permissions](#5-device-permissions). The driver recognises the card as `1172:e001`, so `lspci -nn -d 1172:` should show `Processor [0b80]: Altera Corporation Device [1172:e001]`.
+
+hashcat reports the die temperature from the FPGA's own sensor, and the FPGA's chip ID as the board serial. The FPGA has no voltage sensors, so none are reported.
+
+If a reboot leaves the card listed but unusable, with the bridge reading an identity of `0xff` bytes, the host has left its memory decoding off. Remove and rescan it, then turn decoding and bus mastering back on:
+
+```
+echo 1 > /sys/bus/pci/devices/<address>/remove
+echo 1 > /sys/bus/pci/rescan
+setpci -s <address> COMMAND=0x0006
+```
+
+### Writing the configuration flash
+
+The card configures itself at power-on from a 256 Mbit Micron N25Q256A in Active Serial x4 mode. **Back up the flash before writing it,** because the factory image is in it and nothing else restores it.
+
+**This flash is in 4-byte address mode, and openFPGALoader up to v1.0.0 sends 3-byte commands below 16 MB.** In that combination every read and write below 16 MB goes to the wrong address, and nothing reports an error. A dump made that way looks plausible: only its lower half is wrong. Use an openFPGALoader that issues the 4-byte commands at every address. A good dump has the sync word `56565656` at offset `0x80`, and two dumps compare identical:
+
+```
+openFPGALoader -c ft232 --fpga-part 5sgsd5 --dump-flash --file-size 33554432 backup.bin
+```
+
+Do not write the `.rbf`. It is the uncompressed passive-serial image and is the wrong format for this flash. `--rpd` converts the build's `.sof` into a compressed AS x4 image with `quartus_cpf`, which needs no license:
+
+```
+python3 bcrypt_storeypeak_dma.py --cores <n> --sys-clk-freq <hz> --rpd
+openFPGALoader -c ft232 --fpga-part 5sgsd5 -f --verify <build>_flash_auto.rpd
+```
+
+openFPGALoader reconfigures the FPGA from flash when the write completes. Reboot, as after a JTAG load, and the card comes up running the flashed design.
 
 ## Alveo U50
 
