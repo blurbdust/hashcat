@@ -2578,7 +2578,7 @@ static bool launch_loop (MAYBE_UNUSED hashcat_ctx_t *hashcat_ctx, MAYBE_UNUSED v
   lc.ctx         = ctx;
   lc.unit_buf    = unit_buf;
   lc.unit_idx    = unit_idx;
-  lc.tmps        = tmps + pw_from;
+  lc.tmps        = tmp_at (tmps, pw_from);
   lc.salt        = salt;
   lc.hashes      = hashes;
   lc.hashconfig  = hashconfig;
