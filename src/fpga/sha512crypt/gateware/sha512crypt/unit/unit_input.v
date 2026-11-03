@@ -7,7 +7,10 @@
  * modification, are permitted.
  *
  */
-`include "../sha512.vh"
+
+// Modified for hashcat from John the Ripper's original.
+// src/fpga/sha512crypt/PROVENANCE.md lists every change.
+`include "sha512.vh"
 
 // Unit input is designed to minimize unit space,
 // at possible expense in arbiter

@@ -8,6 +8,9 @@
  *
  */
 
+// Modified for hashcat from John the Ripper's original.
+// src/fpga/sha512crypt/PROVENANCE.md lists every change.
+
 module shreg #(
 	parameter WIDTH = 64,
 	parameter DEPTH = 1 // 1+
@@ -18,27 +21,23 @@ module shreg #(
 	output [WIDTH-1:0] o
 	);
 
-	genvar j;
+	// hashcat: behavioural form of upstream's per-bit SRL16E with the address fixed at DEPTH-1, so
+	// that no vendor primitive is needed. o is i delayed by DEPTH enabled clock edges, from an all
+	// zero start, as SRL16E with INIT 0 gives. Synthesis infers shift register LUTs from it.
+	reg [WIDTH-1:0] r [0:DEPTH-1];
 
-	wire [3:0] A = DEPTH - 1;
+	integer k;
+	initial
+		for (k=0; k < DEPTH; k=k+1)
+			r[k] = {WIDTH{1'b0}};
 
-	generate
-	for (j=0; j < WIDTH; j=j+1) begin:shreg
+	always @(posedge CLK)
+		if (en) begin
+			r[0] <= i;
+			for (k=1; k < DEPTH; k=k+1)
+				r[k] <= r[k-1];
+		end
 
-		SRL16E #(
-			.INIT(16'h0000) // Initial Value of Shift Register
-		) SRL16E_inst (
-			.Q(o[j]),       // SRL data output
-			.A0(A[0]),     // Select[0] input
-			.A1(A[1]),     // Select[1] input
-			.A2(A[2]),     // Select[2] input
-			.A3(A[3]),     // Select[3] input
-			.CE(en),     // Clock enable input
-			.CLK(CLK),   // Clock input
-			.D(i[j])        // SRL data input
-		);
-
-	end
-	endgenerate
+	assign o = r[DEPTH-1];
 
 endmodule
