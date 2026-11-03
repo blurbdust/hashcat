@@ -113,6 +113,53 @@ The shared block (`src/fpga/common/hcfpga_dma_wrapper.py`), plus:
 - r from 1 to 8 and p = 1; anything else is a `Salt-value exception`. N from 2 to 32768, a power of two; above 32768 is a `Salt-iteration count exception`, and N below 2 or not a power of two is mode 8900's own `Salt-value exception`.
 - Digests of 16 bytes or more (mode 8900 takes 31 to 64): hashcat compares the first 16.
 
+## Block RAM on a real board
+
+A unit's block RAM is its V table, 2^`N_LOG2_MAX` / G entries of 1024 `R_MAX` bits, plus one M20K for its input FIFO; the rest of the unit is registers and logic. A board build picks `N_LOG2_MAX`, `R_MAX` and G for the hashes it is for: `R_MAX` 8 makes every entry 8 times wider whatever r a hash has, so a build for r = 1 hashes uses `R_MAX` 1.
+
+Quartus maps the table to M20K blocks (20 Kbit, simple dual port as 512 x 40, 1K x 20, 2K x 10, 4K x 5, 8K x 2 or 16K x 1) in the shallowest shape at least as deep as the table. The 8K x 2 and 16K x 1 shapes use 16 of the 20 Kbit, so `v_table_bram.v` caps the shape at 4K deep (`max_depth`), which packs a deeper table into cascaded 4K x 5 blocks. Fits of `v_table_bram` alone on the 5SGSMD5 (Quartus Standard 25.1): 1024 x 1024 bits, 52 blocks; 128 x 8192, 205; 16384 x 1024, 1,024 without the cap and 820 with it. Fits of one unit alone at `N_LOG2_MAX` 10, G 1: `R_MAX` 1, 53 M20K, 10,444 ALMs and 20,509 registers; `R_MAX` 8, 411 M20K, 46,519 ALMs and 85,154 registers.
+
+Microsoft Storey Peak's Stratix V 5SGSMD5 has 2,014 M20K and 172,600 ALMs; its PCIe DMA shell takes 71 M20K and 4,275 ALMs (a 4-core bcrypt build on the template 79 M20K), so about 1,934 M20K and 167,000 ALMs are left for units: about 15 units at `R_MAX` 1 and 3 at `R_MAX` 8 by ALMs, whatever the table (from the unit fits at `N_LOG2_MAX` 10; a full device that full may not route). The fits had no clock constraint: 200 MHz below is an assumption, not a timing result. Units that fit by each, the cycles of one candidate (bench, `--case cycles --gap G`) and the hashes per second at 200 MHz with the smaller count:
+
+| N | r | build: N_LOG2_MAX, R_MAX, G | V table, bits | M20K shape | M20K per unit | units by M20K | units by ALMs | cycles per hash | H/s at 200 MHz |
+|---|---|---|---|---|---|---|---|---|---|
+| 1,024 | 1 | 10, 1, 1 | 1,024 x 1,024 | 1K x 20 | 53 | 36 | 15 | 66,589 | 45,052 |
+| 1,024 | 1 | 10, 1, 2 | 512 x 1,024 | 512 x 40 | 27 | 71 | 15 | 81,669 | 36,734 |
+| 1,024 | 1 | 10, 1, 4 | 256 x 1,024 | 512 x 40 | 27 | 71 | 15 | 110,843 | 27,065 |
+| 1,024 | 1 | 10, 1, 8 | 128 x 1,024 | 512 x 40 | 27 | 71 | 15 | 169,771 | 17,671 |
+| 1,024 | 8 | 10, 8, 1 | 1,024 x 8,192 | 1K x 20 | 411 | 4 | 3 | 447,935 | 1,339 |
+| 1,024 | 8 | 10, 8, 2 | 512 x 8,192 | 512 x 40 | 206 | 9 | 3 | 550,271 | 1,090 |
+| 1,024 | 8 | 10, 8, 4 | 256 x 8,192 | 512 x 40 | 206 | 9 | 3 | 768,445 | 781 |
+| 1,024 | 8 | 10, 8, 8 | 128 x 8,192 | 512 x 40 | 206 | 9 | 3 | 1,207,325 | 497 |
+| 16,384 | 1 | 14, 1, 1 | 16,384 x 1,024 | 4K x 5 | 821 | 2 | 15 | 1,034,269 | 387 |
+| 16,384 | 1 | 14, 1, 2 | 8,192 x 1,024 | 4K x 5 | 411 | 4 | 15 | 1,272,157 | 629 |
+| 16,384 | 1 | 14, 1, 4 | 4,096 x 1,024 | 4K x 5 | 206 | 9 | 15 | 1,750,715 | 1,028 |
+| 16,384 | 1 | 14, 1, 8 | 2,048 x 1,024 | 2K x 10 | 104 | 18 | 15 | 2,702,379 | 1,110 |
+| 16,384 | 8 | 14, 8, 1 | 16,384 x 8,192 | 4K x 5 | 6,557 | 0 | 3 | 7,006,655 | 0 |
+| 16,384 | 8 | 14, 8, 2 | 8,192 x 8,192 | 4K x 5 | 3,279 | 0 | 3 | 8,744,451 | 0 |
+| 16,384 | 8 | 14, 8, 4 | 4,096 x 8,192 | 4K x 5 | 1,640 | 1 | 3 | 12,200,209 | 16 |
+| 16,384 | 8 | 14, 8, 8 | 2,048 x 8,192 | 2K x 10 | 821 | 2 | 3 | 19,175,025 | 21 |
+
+What the table says:
+
+- **At N = 1024 logic limits, not block RAM.** r = 1: 36 units fit by M20K and 15 by ALMs, 45,052 H/s at G = 1. r = 8: 4 by M20K and 3 by ALMs, 1,339 H/s. A lookup gap only costs time there.
+- **Below 512 entries a table stops shrinking.** No M20K shape is shallower than 512, so G = 4 and 8 save nothing at N = 1024 (r = 1: 27 blocks a unit for G = 2, 4 and 8; r = 8: 206). Storing a V entry over several narrower rows (BlockMix uses one 64-byte block at a time) would let a shallow table keep shrinking; the unit does not do that.
+- **At N = 16384, r = 1 the gap pays.** 2 units fit at G = 1 (387 H/s), 9 at G = 4 (1,028 H/s) and 15 at G = 8 (logic's limit; 1,110 H/s).
+- **r = 8 at N = 16384 does not belong in block RAM.** One table is 16 MiB against the device's 4.9 MiB; with G = 8 two units fit, 21 H/s. That is the external V table's case (below).
+- **The unit is register-heavy.** Most of its ALMs hold copies of a 128 `R_MAX`-byte block (`romix`'s X, its BlockMix input and output, BlockMix's B and Y, PBKDF2's result, the unit's ROMix input): 85,154 registers at `R_MAX` 8. Fewer copies would raise the logic limits above; nothing here has done that.
+
+## The external V table (not wired)
+
+`scrypt_unit` has a second V table path, `V_TABLE_EXTERNAL` 1 (LiteX-Scrypt's DDR3 option), which this port does not wire: LiteDRAM has no Stratix V PHY, so Storey Peak's DDR3L would need Intel's UniPHY controller (`altera_mem_if_ddr3_emif`, DDR3-1600, quarter rate: a 200 MHz Avalon-MM port of 512 data bits) behind an arbiter. What a controller has to give each unit, from `romix.v`'s external state machine:
+
+- **Width.** One V entry per access, `1024 R_MAX` bits (128 `R_MAX` bytes; 1 KiB at `R_MAX` 8, 16 beats of a 512-bit port). At run time only the low 128 r bytes matter; the unit does not export r, so a controller that moves only those bytes needs it added as a port.
+- **Addresses.** `vt_waddr` and `vt_raddr` are entry indices, 0 to N - 1, `N_LOG2_MAX` bits, the same for every unit: the arbiter adds a base per unit (16 MiB per unit at N = 16384, r = 8; 4 GiB holds 256 such tables, so capacity is not the limit, bandwidth is).
+- **Write.** The unit raises `vt_wr_req` and `vt_we` with `vt_waddr` and `vt_wdata` (= X) and holds all of them until it sees `vt_wr_done`, which must be one cycle long: a done held high or left over from an earlier write is taken as this write's (the request rises one cycle after the state is entered, and the state takes `vt_wr_done` in any cycle). The fill writes entries 0, 1, ..., N - 1 in order, one per BlockMix call; a controller may post the write and pulse done at once if it keeps the order of later reads behind it.
+- **Read.** `vt_rd_req` is a one-cycle pulse with `vt_raddr` valid (the address then holds until the next request). The unit waits for `vt_rd_valid`, one cycle long, and reads `vt_rdata` in the cycle after it, so `vt_rdata` has to hold for at least that cycle (a register, not a streaming bus). The mix reads N entries at random, one per BlockMix call.
+- **Latency and ordering.** One access outstanding per unit, strictly in program order (all N writes, then N reads), no timeout: any latency is tolerated, but every cycle of it adds to the candidate (N writes and N reads each wait in full; a posted write hides the write side). With several units an arbiter interleaves them; no ordering is needed between units.
+- **Traffic.** 128 r bytes per BlockMix call of 26 r + 5 cycles: about 0.96 GB/s per unit at 200 MHz and r = 8, half writes in order and half random 1 KiB reads, against DDR3-1600's 12.8 GB/s peak on 64 data bits.
+- **Not supported there:** the lookup gap (the external path stores every entry) and the read enable; the unit's clock is the controller port's clock unless a clock-crossing FIFO is added.
+
 ## Running it in simulation
 
 ```
