@@ -33,13 +33,23 @@ import hcfpga_bench as hb
 
 from sha256crypt_ref import sha256crypt_digest, PW_MAX, DIGEST_BYTES, SALT, ROUNDS, CANARY_PW, extra_regs
 
-# HCFPGA-TODO: the core's files instead of the stub's (hb.RTL_STUB).
+# The top, John the Ripper's sha256crypt unit (see PROVENANCE.md) and the shared JtR adapter.
 SOURCES = [os.path.join(HERE, f) for f in [
   "hcfpga_sha256crypt_top.sv",
-]] + hb.RTL_TAIL + hb.RTL_JTR + hb.RTL_STUB
+  "unit/sha256unit.v", "unit/unit_ctrl.v", "unit/core_ctrl.v", "unit/unit_input.v", "unit/uob.v",
+  "cpu/cpu.v", "cpu/cpu_flags.v", "cpu/cpu_state.v", "cpu/instruction.v", "cpu/integer_ops.v",
+  "cpu/registers_bram.v", "cpu/thread_number.v",
+  "sha256core/add3.v", "sha256core/add3_unreg.v", "sha256core/ff16.v", "sha256core/ff32.v",
+  "sha256core/sha256block.v", "sha256core/sha256core.v", "sha256core/sha256ctx.v",
+  "sha256core/sha256_Kt_bram.v", "sha256core/shreg.v",
+  "sha256engine/core_input.v", "sha256engine/create_blk.v", "sha256engine/engine.v", "sha256engine/memory.v",
+  "sha256engine/next_thread_num.v", "sha256engine/procb_buf.v", "sha256engine/procb_saved_state.v",
+  "sha256engine/process_bytes.v", "sha256engine/realign4_pad.v", "sha256engine/thread_state.v",
+  "util/sync.v", "util/delay.v", "util/asymm_bram.v",
+]] + hb.RTL_TAIL + hb.RTL_JTR
 
-# HCFPGA-TODO: the core's include directories.
-INCLUDES = [HERE]
+# sha256.vh and log2.vh, and cpu/program.vh, which cpu/instruction.v includes.
+INCLUDES = [HERE, os.path.join(HERE, "util"), os.path.join(HERE, "cpu")]
 
 def run_batch(exe, work, salt, rounds, cands, bitmap, gaps=1, pad_recs=1):
   return hb.run_batch(exe, work, hb.salt_words(salt), rounds, cands, bitmap, gaps=gaps, pad_recs=pad_recs,
@@ -73,12 +83,35 @@ def main():
 
   results = []
 
-  # HCFPGA-TODO: every length class the core branches on (block boundaries of its hash), and PW_MAX.
+  # Every key length the unit takes, 0 to PW_MAX (32). The program branches on the key length's
+  # bits (alternate sum or key), builds the P sequence from key_len copies of the key, and a round
+  # is one SHA-256 block up to 55 bytes and two beyond (32 + salt + 2 * key_len bytes or so), so
+  # every length covers each block boundary with this salt. Two waves of 24 threads.
   if args.case in ("all", "lengths"):
-    lens = sorted({0, 1, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, PW_MAX - 1, PW_MAX} & set(range(PW_MAX + 1)))
+    lens = list(range(PW_MAX + 1))
     cands = [(i, rnd(n)) for i, n in enumerate(lens)] + [(len(lens), b"hashcat"), (hb.CANARY_ID, CANARY_PW)]
     recs, done, errs, pad = run_batch(exe, work, salt, R, cands, [0xffffffff] * 4)
     results.append(check("lengths", salt, R, cands, None, recs, done, errs, pad))
+
+  # Every salt length the unit takes, 1 to 16, each with short, middle and longest keys: the S
+  # sequence is 16 + alt_result[0] copies of the salt, and the salt length moves the round's
+  # block boundary.
+  if args.case in ("all", "salts"):
+    ok = True
+    for n in range(1, 17):
+      s = rnd(n)
+      cands = [(0, rnd(0)), (1, rnd(7)), (2, rnd(19)), (3, rnd(PW_MAX))]
+      recs, done, errs, pad = run_batch(exe, work, s, R, cands, [0xffffffff] * 4)
+      ok &= check("salt%d" % n, s, R, cands, None, recs, done, errs, pad)
+    results.append(ok)
+
+  # Round counts: 1 (the least the program takes), and 65537, whose count needs the upper of the
+  # two 16-bit count registers (the program borrows from it when the lower one runs out).
+  if args.case in ("all", "rounds"):
+    for rounds in (1, 65537):
+      cands = [(0, b"hashcat"), (1, rnd(PW_MAX))]
+      recs, done, errs, pad = run_batch(exe, work, salt, rounds, cands, [0xffffffff] * 4)
+      results.append(check("rounds%d" % rounds, salt, rounds, cands, None, recs, done, errs, pad))
 
   # Several wrong candidates and one right one, the bitmap holding only the target's index:
   # the comparator has to pass the target and drop (but retire) everything that misses.
