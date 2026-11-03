@@ -9,7 +9,10 @@
 //
 // - A record is ready while rec_valid is high: rec_len, rec_id, and the password through
 //   pw_rd_addr/pw_rd_data (word k = bytes 4k..4k+3, big-endian). Pulse rec_taken for one cycle
-//   when done with it; the intake then takes the next one.
+//   when done with it; the intake then takes the next one. Drive hold high while a record is being
+//   sent into a core that cannot take half of one: the intake then keeps it across a framing reset
+//   so the send finishes (scrypt's engine does, as hcfpga_jtr_unit_feed.v does). An engine that
+//   can drop a half-read record, like this stub, ties hold low.
 // - For each candidate, either send one 32-byte C2H record on r_* (byte 0 first, r_last on byte
 //   31) and pulse retire after its last byte, or, when the comparator filters it, pulse retire
 //   without a record. Exactly one retire per candidate, canaries (id 0xfffffffe) included.
@@ -48,6 +51,7 @@ module hcfpga_@@ALGO@@_engine #(
   output wire [PW_AW-1:0]  pw_rd_addr,
   input  wire [31:0]       pw_rd_data,
   output wire              rec_taken,
+  output wire              hold,
 
   input  wire [31:0] salt0,
   input  wire [31:0] salt1,
@@ -96,6 +100,7 @@ module hcfpga_@@ALGO@@_engine #(
   wire cmp_hit = (WITH_CMP == 0) | bitmap[dig[6:0]];
 
   assign rec_taken = (state == E_DONE);
+  assign hold      = 1'b0;
 
   assign r_data  = frame[7:0];
   assign r_valid = (state == E_EMIT);

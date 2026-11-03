@@ -70,6 +70,7 @@ module hcfpga_@@ALGO@@_top #(
   wire [PW_AW-1:0] pw_rd_addr;
   wire [31:0]      pw_rd_data;
   wire             rec_taken;
+  wire             rec_hold;
 
   hcfpga_h2c_intake #(.PW_MAX(PW_MAX)) intake (
     .CLK(CLK), .rst(rst),
@@ -77,7 +78,7 @@ module hcfpga_@@ALGO@@_top #(
     .frame_status(intake_status),
     .rec_valid(rec_valid), .rec_len(rec_len), .rec_id(rec_id),
     .pw_rd_addr(pw_rd_addr), .pw_rd_data(pw_rd_data),
-    .rec_taken(rec_taken), .hold(1'b0)
+    .rec_taken(rec_taken), .hold(rec_hold)
   );
 
   wire       retire;
@@ -90,7 +91,7 @@ module hcfpga_@@ALGO@@_top #(
   hcfpga_@@ALGO@@_engine #(.PW_MAX(PW_MAX), .DIGEST_BYTES(DIGEST_BYTES), .WITH_CMP(WITH_CMP)) engine (
     .CLK(CLK), .rst(rst),
     .rec_valid(rec_valid), .rec_len(rec_len), .rec_id(rec_id),
-    .pw_rd_addr(pw_rd_addr), .pw_rd_data(pw_rd_data), .rec_taken(rec_taken),
+    .pw_rd_addr(pw_rd_addr), .pw_rd_data(pw_rd_data), .rec_taken(rec_taken), .hold(rec_hold),
     .salt0(salt0), .salt1(salt1), .salt2(salt2), .salt3(salt3), .iter_count(iter_count),
     .cmp_bitmap(cmp_bitmap), .cmp_load(cmp_load),
     .batch_target(batch_target), .batch_arm(batch_arm),
