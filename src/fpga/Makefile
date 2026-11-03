@@ -356,11 +356,18 @@ IVERILOG        ?= iverilog
 
 SIM_SCRIPT_bcrypt := bcrypt/gateware/bcrypt/run_iverilog_sim.sh bcrypt/gateware/ztex_fx2/run_iverilog_sim.sh
 
+SIM_SCRIPT_md5crypt := md5crypt/gateware/md5crypt/tb_datapath.py
+
+# The simulator a gate needs, iverilog unless the algorithm names another.
+SIM_TOOL_md5crypt := verilator
+
 SIM_SCRIPT      := $(SIM_SCRIPT_$(ALGO))
+
+SIM_TOOL        := $(or $(SIM_TOOL_$(ALGO)),$(IVERILOG))
 
 sim: check-headers
 	@test -n "$(SIM_SCRIPT)" || { echo "  no simulation gate for ALGO=$(ALGO), add SIM_SCRIPT_$(ALGO) in $(firstword $(MAKEFILE_LIST))"; exit 1; }
-	@command -v $(IVERILOG) >/dev/null 2>&1 || { echo "  $(IVERILOG) not on PATH. Debian and Ubuntu: apt install iverilog"; exit 1; }
+	@command -v $(SIM_TOOL) >/dev/null 2>&1 || { echo "  $(SIM_TOOL) not on PATH. Debian and Ubuntu: apt install $(SIM_TOOL)"; exit 1; }
 	@rc=0; for s in $(SIM_SCRIPT); do ./$$s || rc=1; done; \
 	 if [ $$rc -ne 0 ]; then echo; echo "  SIM *** FAIL ***  at least one gate failed, see above"; fi; \
 	 exit $$rc
