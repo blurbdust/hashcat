@@ -42,7 +42,7 @@ A synthesis attribute takes a literal, and passing a parameter to one relies on 
 
 ### Quartus
 
-Each memory carries Quartus's `ramstyle` beside Vivado's `RAM_STYLE`. Each tool ignores the other's. The S banks take `M20K` or `MLAB` with `S_STYLE`. Vivado's netlist does not change.
+Under Quartus, which defines `ALTERA_RESERVED_QIS`, each memory also carries Quartus's `ramstyle` beside Vivado's `RAM_STYLE`. Other tools never see it. The S banks take `M20K` or `MLAB` with `S_STYLE`. Vivado's netlist does not change.
 
 PD in `P_2x32.v` takes `MLAB, no_rw_check`. Its read is asynchronous at the address it is written at, and Quartus otherwise builds it from 1024 flops, because an MLAB cannot promise what such a read returns while that word is written. The answer is never used: of the 96 microcode words only MC[5] writes PD, and it enables none of PD's consumers, which are Ltmp, L and the S read address. Each cycle's controls come from one microcode word, and the reset clears them all. PN keeps no attribute. MC[40] reads and writes the same PN word in one cycle and uses what it read, so PN must keep its exact semantics, and Quartus gives it a block RAM with pass-through logic.
 
