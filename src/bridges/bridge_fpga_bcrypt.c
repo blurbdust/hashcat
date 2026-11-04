@@ -2616,34 +2616,15 @@ static void report_dropped (hashcat_ctx_t *hashcat_ctx, bridge_fpga_bcrypt_t *ct
   }
 }
 
-bool launch_loop (MAYBE_UNUSED hashcat_ctx_t *hashcat_ctx, MAYBE_UNUSED void *platform_context, MAYBE_UNUSED hc_device_param_t *device_param, MAYBE_UNUSED hashconfig_t *hashconfig, MAYBE_UNUSED hashes_t *hashes, MAYBE_UNUSED const u32 salt_pos, MAYBE_UNUSED const u64 pws_cnt)
-{
-  bridge_fpga_bcrypt_t *ctx = platform_context;
+// One run of candidates that share one salt. The device takes one salt per batch.
 
+static bool launch_run (hashcat_ctx_t *hashcat_ctx, bridge_fpga_bcrypt_t *ctx, hc_device_param_t *device_param, hashconfig_t *hashconfig, hashes_t *hashes, const u32 salt_pos, bcrypt_bridge_tmp_t *run_tmps, const u64 pw_cnt)
+{
   const int unit_idx = device_param->bridge_link_device;
 
   unit_t *unit_buf = &ctx->units_buf[unit_idx];
 
-  bcrypt_bridge_tmp_t *tmps = (bcrypt_bridge_tmp_t *) device_param->h_tmps;
-
   const salt_t *salt = &hashes->salts_buf[salt_pos];
-
-  const u64 loop_end = MIN ((u64) device_param->kernel_param.loop_pos + device_param->kernel_param.loop_cnt, (u64) salt->salt_iter);
-  const u64 loop_pos = MIN ((u64) device_param->kernel_param.loop_pos, loop_end);
-
-  const u64 pw_from = (pws_cnt * loop_pos) / salt->salt_iter;
-  const u64 pw_to   = (pws_cnt * loop_end) / salt->salt_iter;
-
-  const u64 pw_cnt = pw_to - pw_from;
-
-  if (pw_cnt == 0) return true;
-
-  if (hashconfig->pw_max > FPGA_PW_MAX)
-  {
-    event_log_error (hashcat_ctx, "FPGA bridge: this mode accepts passwords up to %u bytes, but the device supports up to %u.", hashconfig->pw_max, (u32) FPGA_PW_MAX);
-
-    return false;
-  }
 
   canary_prepare (ctx, unit_buf, hashes, salt_pos, salt);
 
@@ -2653,7 +2634,7 @@ bool launch_loop (MAYBE_UNUSED hashcat_ctx_t *hashcat_ctx, MAYBE_UNUSED void *pl
   lc.ctx         = ctx;
   lc.unit_buf    = unit_buf;
   lc.unit_idx    = unit_idx;
-  lc.tmps        = tmps + pw_from;
+  lc.tmps        = run_tmps;
   lc.salt        = salt;
   lc.hashes      = hashes;
   lc.hashconfig  = hashconfig;
@@ -2720,6 +2701,65 @@ bool launch_loop (MAYBE_UNUSED hashcat_ctx_t *hashcat_ctx, MAYBE_UNUSED void *pl
   }
 
   return ok;
+}
+
+// Attack mode 9 pairs every candidate with its own hash, so candidate i of the launch takes
+// salts_buf[pws_pos + i] (bridge_salt_pos), while hashcat hands salt_pos 0. The device takes one salt
+// per batch, so the range is cut into runs of candidates on one salt, one batch each. In any other mode
+// bridge_salt_pos returns salt_pos for every candidate and the range is one run.
+
+bool launch_loop (MAYBE_UNUSED hashcat_ctx_t *hashcat_ctx, MAYBE_UNUSED void *platform_context, MAYBE_UNUSED hc_device_param_t *device_param, MAYBE_UNUSED hashconfig_t *hashconfig, MAYBE_UNUSED hashes_t *hashes, MAYBE_UNUSED const u32 salt_pos, MAYBE_UNUSED const u64 pws_cnt)
+{
+  bridge_fpga_bcrypt_t *ctx = platform_context;
+
+  bcrypt_bridge_tmp_t *tmps = (bcrypt_bridge_tmp_t *) device_param->h_tmps;
+
+  const salt_t *salt = &hashes->salts_buf[salt_pos];
+
+  const u64 loop_end = MIN ((u64) device_param->kernel_param.loop_pos + device_param->kernel_param.loop_cnt, (u64) salt->salt_iter);
+  const u64 loop_pos = MIN ((u64) device_param->kernel_param.loop_pos, loop_end);
+
+  const u64 pw_from = (pws_cnt * loop_pos) / salt->salt_iter;
+  const u64 pw_to   = (pws_cnt * loop_end) / salt->salt_iter;
+
+  if (pw_to == pw_from) return true;
+
+  if (hashconfig->pw_max > FPGA_PW_MAX)
+  {
+    event_log_error (hashcat_ctx, "FPGA bridge: this mode accepts passwords up to %u bytes, but the device supports up to %u.", hashconfig->pw_max, (u32) FPGA_PW_MAX);
+
+    return false;
+  }
+
+  u64 run_from = pw_from;
+
+  while (run_from < pw_to)
+  {
+    const u32 run_salt_pos = bridge_salt_pos (hashcat_ctx, device_param, hashes, salt_pos, run_from);
+
+    u64 run_to = run_from + 1;
+
+    while ((run_to < pw_to) && (bridge_salt_pos (hashcat_ctx, device_param, hashes, salt_pos, run_to) == run_salt_pos))
+    {
+      run_to++;
+    }
+
+    // The range above was cut by salt_pos's cost. Attack mode 9 refuses mixed costs (hashes.c), so
+    // every run's salt has the same one, and anything else is refused here too.
+
+    if (hashes->salts_buf[run_salt_pos].salt_iter != salt->salt_iter)
+    {
+      event_log_error (hashcat_ctx, "FPGA bridge: candidates of one launch need salts of one iteration count.");
+
+      return false;
+    }
+
+    if (launch_run (hashcat_ctx, ctx, device_param, hashconfig, hashes, run_salt_pos, &tmps[run_from], run_to - run_from) == false) return false;
+
+    run_from = run_to;
+  }
+
+  return true;
 }
 
 void bridge_init (bridge_ctx_t *bridge_ctx)
