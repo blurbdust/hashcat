@@ -40,7 +40,7 @@ bool fpga_transport_litexbone_tried (void)
 
 // A LiteX board without PCIe: hashcat's bcrypt wrapper sits behind HcfpgaMemStream, two rings in CSR
 // space, and every access goes over a LiteX bus bridge. Etherbone over UDP, or UARTBone over a
-// serial port or a TCP connection to one. Boards are listed in HCFPGA_LITEXBONE, as
+// serial port or a TCP connection to one. Boards are listed in --bridge-parameter1, as
 // udp:HOST[:PORT], uart:DEVICE[:BAUD] or tcp:HOST:PORT[:BAUD], separated by commas or spaces.
 
 #define LXB_SEPARATORS      ", \t\r\n"
@@ -1003,11 +1003,15 @@ static int lxb_enumerate (hashcat_ctx_t *hashcat_ctx, fpga_dev_t *devs, const in
 {
   *status = FPGA_STATUS_NO_PCI_DEVICE;
 
-  const char *env = getenv (FPGA_LITEXBONE_ENV);
+  const user_options_t *user_options = hashcat_ctx->user_options;
 
-  if (env == NULL) return 0;
+  // the bench tools enumerate with a context that has no user options
 
-  char *list = hcstrdup (env);
+  if (user_options == NULL) return 0;
+
+  if (user_options->bridge_parameter1 == NULL) return 0;
+
+  char *list = hcstrdup (user_options->bridge_parameter1);
 
   if (list == NULL) return 0;
 
@@ -1042,7 +1046,7 @@ static int lxb_enumerate (hashcat_ctx_t *hashcat_ctx, fpga_dev_t *devs, const in
 
     if (lxb_parse (spec, priv) == false)
     {
-      event_log_warning (hashcat_ctx, "FPGA bridge: %s entry '%s' is not udp:HOST[:PORT], uart:DEVICE[:BAUD] or tcp:HOST:PORT[:BAUD] with a supported baud rate, and is ignored.", FPGA_LITEXBONE_ENV, spec);
+      event_log_warning (hashcat_ctx, "FPGA bridge: --bridge-parameter1 entry '%s' is not udp:HOST[:PORT], uart:DEVICE[:BAUD] or tcp:HOST:PORT[:BAUD] with a supported baud rate, and is ignored.", spec);
 
       lxb_free (priv);
 
@@ -1062,7 +1066,7 @@ static int lxb_enumerate (hashcat_ctx_t *hashcat_ctx, fpga_dev_t *devs, const in
 
     if (dup == true)
     {
-      event_log_warning (hashcat_ctx, "FPGA bridge: %s lists %s twice. The second entry is ignored.", FPGA_LITEXBONE_ENV, path);
+      event_log_warning (hashcat_ctx, "FPGA bridge: --bridge-parameter1 lists %s twice. The second entry is ignored.", path);
 
       lxb_free (priv);
 

@@ -516,11 +516,11 @@ A LiteX board without PCIe can run the same bcrypt design as the PCIe cards. The
 
 No bitstream is published for these boards. Build one for your board and program it with the board's usual tool before starting hashcat.
 
-hashcat does not search for these boards. Probing every serial port would send bytes to devices that are not FPGAs, and scanning a network is slow and intrusive. List the boards in `HCFPGA_LITEXBONE` instead, separated by commas or spaces:
+hashcat does not search for these boards. Probing every serial port would send bytes to devices that are not FPGAs, and scanning a network is slow and intrusive. List the boards in `--bridge-parameter1` instead, separated by commas:
 
 ```
-HCFPGA_LITEXBONE=udp:192.168.1.50 hashcat -m 75000 hash.txt wordlist.txt
-HCFPGA_LITEXBONE=uart:/dev/ttyUSB0:1000000,udp:192.168.1.51 hashcat -m 75000 hash.txt wordlist.txt
+hashcat -m 75000 --bridge-parameter1 udp:192.168.1.50 hash.txt wordlist.txt
+hashcat -m 75000 --bridge-parameter1 uart:/dev/ttyUSB0:1000000,udp:192.168.1.51 hash.txt wordlist.txt
 ```
 
 | Entry | Bridge | Default |

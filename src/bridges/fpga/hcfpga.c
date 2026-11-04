@@ -778,7 +778,7 @@ void fpga_status_report (hashcat_ctx_t *hashcat_ctx, const fpga_status_t status,
 
       if (fpga_transport_litexbone_tried () == true)
       {
-        event_log_error (hashcat_ctx, "FPGA bridge: no board listed in %s answered, and no other FPGA was found.", FPGA_LITEXBONE_ENV);
+        event_log_error (hashcat_ctx, "FPGA bridge: no board listed in --bridge-parameter1 answered, and no other FPGA was found.");
         break;
       }
 
