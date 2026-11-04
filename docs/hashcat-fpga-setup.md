@@ -516,7 +516,7 @@ A LiteX board without PCIe can run the same bcrypt design as the PCIe cards. The
 
 No bitstream is published for these boards. Build one for your board and program it with the board's usual tool before starting hashcat.
 
-hashcat does not search for these boards. Probing every serial port would send bytes to devices that are not FPGAs, and scanning a network is slow and intrusive. List the boards in `--bridge-parameter1` instead, separated by commas:
+hashcat finds a Radiona ULX3S on its USB serial port by itself, at 1000000 baud. Whenever it runs an FPGA mode, hashcat checks the serial port of a connected ULX3S, and a ULX3S that does not answer is left out without a message. It knows the board by the USB IDs and the product string of its FT231X, and it opens no serial port that does not carry them, because probing every serial port would send bytes to devices that are not FPGAs. Scanning a network is slow and intrusive, so every other board is listed in `--bridge-parameter1`, separated by commas. A ULX3S built for another baud rate is listed with that rate. A port that is both found and listed is used once, at the rate the entry gives, or at the board's own rate when the entry gives none:
 
 ```
 hashcat -m 75000 --bridge-parameter1 udp:192.168.1.50 hash.txt wordlist.txt
@@ -526,7 +526,7 @@ hashcat -m 75000 --bridge-parameter1 uart:/dev/ttyUSB0:1000000,udp:192.168.1.51 
 | Entry | Bridge | Default |
 |---|---|---|
 | `udp:HOST[:PORT]` | Etherbone | port 1234 |
-| `uart:DEVICE[:BAUD]` | UARTBone | 115200 baud |
+| `uart:DEVICE[:BAUD]` | UARTBone | 115200 baud, or the rate of a board hashcat finds by itself |
 | `tcp:HOST:PORT[:BAUD]` | UARTBone carried over TCP, for example by `ser2net` or the LiteX simulator | no default port, bursts sized for 9600 baud |
 
 The baud rate of a `uart:` entry has to be the one the board was built with. A `tcp:` entry cannot see the rate of the port behind it, so give that rate as its third field: without it hashcat sends short bursts that fit 9600 baud, which works at any rate but slowly. Opening a serial port needs read and write access to it, usually through the `dialout` group. hashcat locks the port while it runs, and a port another hashcat process holds is reported as in use. Each board is shown after `Path:` in the `Assimilation Bridge` block at startup, and an entry that does not answer is named and left out.
