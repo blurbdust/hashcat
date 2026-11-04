@@ -1156,7 +1156,7 @@ A bitstream is valid only after the heterogeneous stress test streams distinct i
 make -C src/fpga verify ALGO=<algo> BOARD=<board> NODE=/dev/litepcieN
 ```
 
-`NODE` names the card on a host with more than one, and the test refuses a card whose identity names a different board. This target drives PCIe cards only. The ZTEX boards and the Arty Z7 are tested with hashcat itself, by running `tools/test.py` with `HCFPGA_TEST=1`.
+`NODE` names the card on a host with more than one, and the test refuses a card whose identity names a different board. This target drives PCIe cards only. The ZTEX boards, the Arty Z7 and the LiteX boards are tested with hashcat itself, by running `tools/test.py` with `HCFPGA_TEST=1`. A LiteX board that hashcat does not find by itself is given to `tools/test.py` with `--bridge-parameter1`, as to hashcat.
 
 ## Why each algorithm has a `software/` directory
 
