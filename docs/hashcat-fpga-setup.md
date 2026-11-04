@@ -211,6 +211,8 @@ No bitstream is published for this board. Build one from source with Quartus Pri
 make -C src/fpga bcrypt BOARD=storeypeak
 ```
 
+The default build is 384 cores at 190 MHz, close to what the part reaches, so whether a build meets timing depends on its placement. Every build places differently, because the identity string carries the build time. If the Timing Analyzer reports negative setup slack for `sys_clk`, rebuild with another fitter seed, for example `EXTRA_ARGS="--fitter-seed 3"`, and keep a build that meets timing.
+
 Edge lanes 0-7 are the only ones connected in a slot or riser narrower than x16. They reach a PCIe hard IP block that Quartus reports as disabled for this part. LiteX-Boards' `microsoft_storey_peak` platform makes Quartus place it when a design uses those lanes.
 
 The card carries its own FT232H JTAG adapter, reached through its USB port. Load the design into configuration SRAM:

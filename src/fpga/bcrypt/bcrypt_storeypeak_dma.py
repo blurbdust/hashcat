@@ -53,6 +53,9 @@ BOARD_SHAPE = {
     "cslow":          1,
 }
 
+# Extra setup uncertainty, in ns, that the fitter places 384 cores at 190 MHz against.
+PLACEMENT_MARGIN = 0.5
+
 # The Storey Peak is a Microsoft Catapult v2 card, X930613-001, Stratix V GS 5SGSMD5. Edge lanes 0-7
 # reach pcie_x8 connector 0, whose hard IP block Quartus reports as disabled for this part. The
 # LiteX-Boards platform makes Quartus place it when a design uses that connector.
@@ -154,11 +157,13 @@ class BcryptSoC(SoCMini):
             f"set_global_assignment -name ACTIVE_SERIAL_CLOCK {AS_CLOCKS[as_clock_mhz]}",
         ]
 
-        # Extra setup uncertainty squeezes placement. Quartus places and routes in one run and the PLL
-        # output is the real clock, so this cannot be removed before routing as on Vivado.
+        # Extra setup uncertainty squeezes placement. Only the fitter sees it, so the Timing Analyzer
+        # reports the design's real slack.
         if placement_margin:
             platform.toolchain.additional_sdc_commands += [
-                f"set_clock_uncertainty -add -setup -from [get_clocks sys_clk] -to [get_clocks sys_clk] {placement_margin:.3f}",
+                "if {$::TimeQuestInfo(nameofexecutable) eq \"quartus_fit\"} {",
+                f"    set_clock_uncertainty -add -setup -from [get_clocks sys_clk] -to [get_clocks sys_clk] {placement_margin:.3f}",
+                "}",
             ]
 
         if with_led:
@@ -207,7 +212,7 @@ def main():
     parser.add_argument("--abi",          type=int,   default=fpga_abi_current(), help="Wire ABI version, stamped into the bitstream identity and refused by the bridge when it does not match.")
     parser.add_argument("--cslow",        type=int,   default=BOARD_SHAPE["cslow"], choices=[1, 2], help="2 builds the array from two hash cores on a second clock at twice --sys-clk-freq. --cores then counts virtual cores.")
     parser.add_argument("--pcie-connector", type=int, default=0, choices=[0, 1], help="Which x8 half of the edge connector. 0 carries edge lanes 0-7.")
-    parser.add_argument("--placement-margin", type=float, default=0.0, help="Extra ns of setup clock uncertainty on sys_clk to over-constrain placement.")
+    parser.add_argument("--placement-margin", type=float, default=PLACEMENT_MARGIN, help="Extra ns of setup clock uncertainty on sys_clk to over-constrain placement.")
     parser.add_argument("--fitter-seed",  type=int, default=None, help="Quartus fitter seed. Different seeds give different placements and a spread of Fmax.")
     parser.add_argument("--as-clock",     type=float, default=100, choices=[12.5, 25, 50, 100], help="Active Serial clock in MHz for booting from flash. The factory image uses 25.")
     parser.add_argument("--threads",      type=int,   default=None, help="Same as --num-processors, the name src/fpga/Makefile passes.")

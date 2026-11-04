@@ -28,8 +28,8 @@ CLK_ztex213     := 105
 CORES_artyz7    := 68
 CLK_artyz7      := 91
 
-CORES_storeypeak := 4
-CLK_storeypeak   := 150
+CORES_storeypeak := 384
+CLK_storeypeak   := 190
 
 # Quartus board: no Xilinx startup clock, a .rbf, and no published bitstream to check against.
 TOOL_storeypeak          := quartus_sh
