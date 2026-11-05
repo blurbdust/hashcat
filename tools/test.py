@@ -120,6 +120,10 @@ FAIL_VERDICTS = ("Fault", "Error", "Compare Error")
 # pins the virtual host for a bridged mode (see bridge_opts).
 CPU_BACKEND_ID = -1
 
+# hashcat --bridge-parameter1 for every bridged mode, from test.py's own --bridge-parameter1. The FPGA
+# modes take the LiteX boards they cannot find by themselves there, a simulated one among them.
+BRIDGE_PARAMETER1 = None
+
 # A -j worker that skips on 252 (memory hit limit) only because its share of the card was too small
 # exits with MEMSKIP_RC, so run_parallel re-runs that mode with the caps removed and the coverage
 # survives. A 252 with no cap in the environment is a genuine skip and does not set this.
@@ -669,15 +673,21 @@ def child_flags(args, devices=True):
   if args.compute_sanitizer:
     flags += ["--compute-sanitizer", args.compute_sanitizer]
 
+  if args.bridge_parameter1 is not None:
+    flags += ["--bridge-parameter1", args.bridge_parameter1]
+
   return flags
 
 
 def apply_run_options(args):
-  # Puts --keep-tmp and --runtime into the module state that work_dir and the opts builders read.
+  # Puts --keep-tmp, --runtime and --bridge-parameter1 into the module state that work_dir and the
+  # opts builders read.
 
-  global KEEP_TMP, RUNTIME, SELFTEST_RUNTIME, EDGE_RUNTIME
+  global KEEP_TMP, RUNTIME, SELFTEST_RUNTIME, EDGE_RUNTIME, BRIDGE_PARAMETER1
 
   KEEP_TMP = args.keep_tmp
+
+  BRIDGE_PARAMETER1 = args.bridge_parameter1
 
   for name, seconds in (("--runtime", args.runtime),
                         ("--metal-compiler-runtime", args.metal_compiler_runtime)):
@@ -934,17 +944,25 @@ def bridge_opts(mode):
   return ["-D", "1", "--backend-devices-virthost", str(cid)]
 
 
+def bridge_parameter_opts(mode):
+  # --bridge-parameter1 for a bridged mode only, since a mode without a bridge has no use for it.
+  if BRIDGE_PARAMETER1 is None or not is_bridged(mode):
+    return []
+
+  return ["--bridge-parameter1", BRIDGE_PARAMETER1]
+
+
 def with_bridge_opts(opts, mode):
-  # The run's options followed by bridge_opts. A bridged mode is hosted on the CPU bridge_opts picks,
-  # so a -d naming the run's GPUs would leave it no device: it is dropped there, as the depth split
-  # does not pin a bridged mode either.
+  # The run's options followed by bridge_opts and bridge_parameter_opts. A bridged mode is hosted on
+  # the CPU bridge_opts picks, so a -d naming the run's GPUs would leave it no device: it is dropped
+  # there, as the depth split does not pin a bridged mode either.
   extra = bridge_opts(mode)
 
   if extra and "--backend-devices" in opts:
     i    = opts.index("--backend-devices")
     opts = opts[:i] + opts[i + 2:]
 
-  return list(opts) + extra
+  return list(opts) + extra + bridge_parameter_opts(mode)
 
 
 def device_for(args, mode):
@@ -6518,6 +6536,9 @@ def main():
   ap.add_argument("-P", dest="pure", action="store_true", help="pure kernels")
   ap.add_argument("--bridge", dest="bridge", action="store_true",
                   help="crack each mode's own test oracle through the Python bridge (-m 73000), no mode kernel")
+  ap.add_argument("--bridge-parameter1", dest="bridge_parameter1", default=None,
+                  help="hashcat --bridge-parameter1 for every bridged mode, such as the LiteX boards of an "
+                       "FPGA mode")
   ap.add_argument("-f", dest="force", action="store_true", help="pass --force to hashcat")
   ap.add_argument("-V", dest="vector", default="default", help="1 | 4 | default (both)")
   ap.add_argument("-S", dest="selftest_all", action="store_true",

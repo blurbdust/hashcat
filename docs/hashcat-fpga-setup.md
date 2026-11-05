@@ -519,17 +519,17 @@ A LiteX board without PCIe can run the same bcrypt design as the PCIe cards. The
 
 No bitstream is published for these boards. Build one for your board and program it with the board's usual tool before starting hashcat.
 
-hashcat does not search for these boards. Probing every serial port would send bytes to devices that are not FPGAs, and scanning a network is slow and intrusive. List the boards in `HCFPGA_LITEXBONE` instead, separated by commas or spaces:
+hashcat finds a Radiona ULX3S on its USB serial port by itself, at 1000000 baud. Whenever it runs an FPGA mode, hashcat checks the serial port of a connected ULX3S, and a ULX3S that does not answer is left out without a message. It knows the board by the USB IDs and the product string of its FT231X, and it opens no serial port that does not carry them, because probing every serial port would send bytes to devices that are not FPGAs. Scanning a network is slow and intrusive, so every other board is listed in `--bridge-parameter1`, separated by commas. A ULX3S built for another baud rate is listed with that rate. A port that is both found and listed is used once, at the rate the entry gives, or at the board's own rate when the entry gives none:
 
 ```
-HCFPGA_LITEXBONE=udp:192.168.1.50 hashcat -m 75000 hash.txt wordlist.txt
-HCFPGA_LITEXBONE=uart:/dev/ttyUSB0:1000000,udp:192.168.1.51 hashcat -m 75000 hash.txt wordlist.txt
+hashcat -m 75000 --bridge-parameter1 udp:192.168.1.50 hash.txt wordlist.txt
+hashcat -m 75000 --bridge-parameter1 uart:/dev/ttyUSB0:1000000,udp:192.168.1.51 hash.txt wordlist.txt
 ```
 
 | Entry | Bridge | Default |
 |---|---|---|
 | `udp:HOST[:PORT]` | Etherbone | port 1234 |
-| `uart:DEVICE[:BAUD]` | UARTBone | 115200 baud |
+| `uart:DEVICE[:BAUD]` | UARTBone | 115200 baud, or the rate of a board hashcat finds by itself |
 | `tcp:HOST:PORT[:BAUD]` | UARTBone carried over TCP, for example by `ser2net` or the LiteX simulator | no default port, bursts sized for 9600 baud |
 
 The baud rate of a `uart:` entry has to be the one the board was built with. A `tcp:` entry cannot see the rate of the port behind it, so give that rate as its third field: without it hashcat sends short bursts that fit 9600 baud, which works at any rate but slowly. Opening a serial port needs read and write access to it, usually through the `dialout` group. hashcat locks the port while it runs, and a port another hashcat process holds is reported as in use. Each board is shown after `Path:` in the `Assimilation Bridge` block at startup, and an entry that does not answer is named and left out.
@@ -1160,7 +1160,7 @@ A bitstream is valid only after the heterogeneous stress test streams distinct i
 make -C src/fpga verify ALGO=<algo> BOARD=<board> NODE=/dev/litepcieN
 ```
 
-`NODE` names the card on a host with more than one, and the test refuses a card whose identity names a different board. This target drives PCIe cards only. The ZTEX boards and the Arty Z7 are tested with hashcat itself, by running `tools/test.py` with `HCFPGA_TEST=1`.
+`NODE` names the card on a host with more than one, and the test refuses a card whose identity names a different board. This target drives PCIe cards only. The ZTEX boards, the Arty Z7 and the LiteX boards are tested with hashcat itself, by running `tools/test.py` with `HCFPGA_TEST=1`. A LiteX board that hashcat does not find by itself is given to `tools/test.py` with `--bridge-parameter1`, as to hashcat.
 
 ## Why each algorithm has a `software/` directory
 

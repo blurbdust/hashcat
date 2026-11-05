@@ -254,8 +254,6 @@ bool        fpga_shipped_file  (const folder_config_t *folder_config, const char
 
 #define FPGA_DOC_RELPATH "docs/hashcat-fpga-setup.md"
 
-#define FPGA_LITEXBONE_ENV "HCFPGA_LITEXBONE"
-
 const char *fpga_support_file  (const hashcat_ctx_t *hashcat_ctx, const char *name, char *out, const size_t out_sz);
 
 const char *fpga_doc_path      (const hashcat_ctx_t *hashcat_ctx, char *out, const size_t out_sz);

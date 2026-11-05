@@ -24,6 +24,7 @@ bool fpga_transport_litexbone_tried (void)
 
 #if defined (__linux__)
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -37,11 +38,13 @@ bool fpga_transport_litexbone_tried (void)
 #include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 
 // A LiteX board without PCIe: hashcat's bcrypt wrapper sits behind HcfpgaMemStream, two rings in CSR
 // space, and every access goes over a LiteX bus bridge. Etherbone over UDP, or UARTBone over a
-// serial port or a TCP connection to one. Boards are listed in HCFPGA_LITEXBONE, as
-// udp:HOST[:PORT], uart:DEVICE[:BAUD] or tcp:HOST:PORT[:BAUD], separated by commas or spaces.
+// serial port or a TCP connection to one. Boards are listed in --bridge-parameter1, as
+// udp:HOST[:PORT], uart:DEVICE[:BAUD] or tcp:HOST:PORT[:BAUD], separated by commas or spaces, and
+// the USB serial boards in LXB_KNOWN are found without being listed.
 
 #define LXB_SEPARATORS      ", \t\r\n"
 
@@ -108,6 +111,7 @@ bool fpga_transport_litexbone_tried (void)
 
 #define LXB_HOST_MAX        1024
 #define LXB_PATH_MAX        (LXB_HOST_MAX + 64)
+#define LXB_USB_LEVELS      3
 #define LXB_IDENT_CHUNK     16
 
 typedef enum lxb_link
@@ -137,6 +141,14 @@ typedef struct lxb_priv
   u32   port;
   u32   baud;
   bool  baud_given;
+
+  char  path[LXB_PATH_MAX];
+
+  dev_t rdev;
+  bool  have_rdev;
+
+  const char *board;
+  bool  found;
 
   int   fd;
   bool  busy;
@@ -943,6 +955,8 @@ static bool lxb_parse (const char *spec, lxb_priv_t *priv)
   {
     if (nums_cnt == 1) priv->baud = nums[0];
 
+    priv->baud_given = (nums_cnt == 1);
+
     speed_t speed = B115200;
 
     if (lxb_speed_find (priv->baud, &speed) == false) return false;
@@ -997,79 +1011,308 @@ static void lxb_free (lxb_priv_t *priv)
   hcfree (priv);
 }
 
+// Entries
+
+static lxb_priv_t *lxb_new (void)
+{
+  lxb_priv_t *priv = (lxb_priv_t *) hccalloc (1, sizeof (lxb_priv_t));
+
+  if (priv == NULL) return NULL;
+
+  priv->fd = -1;
+
+  hc_thread_mutex_init (priv->mux);
+
+  return priv;
+}
+
+// The name an entry is shown and compared by, and for a tty the device it opens, so that a
+// /dev/serial/by-id link and the node it points to are one board.
+
+static void lxb_name (lxb_priv_t *priv)
+{
+  lxb_describe (priv, priv->path, sizeof (priv->path));
+
+  priv->have_rdev = false;
+
+  if (priv->link != LXB_LINK_UART) return;
+
+  struct stat st;
+
+  if (stat (priv->host, &st) != 0) return;
+
+  if (S_ISCHR (st.st_mode) == 0) return;
+
+  priv->rdev      = st.st_rdev;
+  priv->have_rdev = true;
+}
+
+static lxb_priv_t *lxb_find (const lxb_priv_t *priv, lxb_priv_t **list, const int list_cnt)
+{
+  for (int i = 0; i < list_cnt; i++)
+  {
+    lxb_priv_t *other = list[i];
+
+    if (strcmp (other->path, priv->path) == 0) return other;
+
+    if ((other->have_rdev == true) && (priv->have_rdev == true) && (other->rdev == priv->rdev)) return other;
+  }
+
+  return NULL;
+}
+
+// The boards --bridge-parameter1 lists, in its order
+
+static void lxb_add_listed (hashcat_ctx_t *hashcat_ctx, lxb_priv_t **list, int *list_cnt)
+{
+  const user_options_t *user_options = hashcat_ctx->user_options;
+
+  // the bench tools enumerate with a context that has no user options
+
+  if (user_options == NULL) return;
+
+  if (user_options->bridge_parameter1 == NULL) return;
+
+  char *param = hcstrdup (user_options->bridge_parameter1);
+
+  if (param == NULL) return;
+
+  char *saveptr = NULL;
+
+  for (char *spec = strtok_r (param, LXB_SEPARATORS, &saveptr); spec != NULL; spec = strtok_r (NULL, LXB_SEPARATORS, &saveptr))
+  {
+    if (*list_cnt >= FPGA_MAX_DEVICES) break;
+
+    lxb_priv_t *priv = lxb_new ();
+
+    if (priv == NULL) break;
+
+    if (lxb_parse (spec, priv) == false)
+    {
+      event_log_warning (hashcat_ctx, "FPGA bridge: --bridge-parameter1 entry '%s' is not udp:HOST[:PORT], uart:DEVICE[:BAUD] or tcp:HOST:PORT[:BAUD] with a supported baud rate, and is ignored.", spec);
+
+      lxb_free (priv);
+
+      continue;
+    }
+
+    lxb_name (priv);
+
+    if (lxb_find (priv, list, *list_cnt) != NULL)
+    {
+      event_log_warning (hashcat_ctx, "FPGA bridge: --bridge-parameter1 entry '%s' names a board listed before it, and is ignored.", spec);
+
+      lxb_free (priv);
+
+      continue;
+    }
+
+    list[*list_cnt] = priv;
+
+    (*list_cnt)++;
+  }
+
+  hcfree (param);
+}
+
+// USB serial boards found without being listed. FTDI's IDs are on many devices that are not FPGA
+// boards, so an entry also has to match the adapter's product string, and a port that matches no
+// entry is never opened. baud is the rate the board's UARTBone is built for.
+
+typedef struct lxb_known
+{
+  u16         vendor;
+  u16         product;
+  const char *name;
+  u32         baud;
+
+} lxb_known_t;
+
+static const lxb_known_t LXB_KNOWN[] =
+{
+  // Radiona ULX3S, an FT231X whose product string names the board
+
+  { 0x0403, 0x6015, "ULX3S", 1000000 },
+};
+
+static bool lxb_sysfs_read (const char *dir, const char *name, char *out, const size_t out_size)
+{
+  char path[FPGA_PATH_MAX];
+
+  snprintf (path, sizeof (path), "%s/%s", dir, name);
+
+  const int fd = open (path, O_RDONLY);
+
+  if (fd < 0) return false;
+
+  const ssize_t got = read (fd, out, out_size - 1);
+
+  close (fd);
+
+  if (got <= 0) return false;
+
+  out[got] = 0;
+
+  for (ssize_t i = got - 1; i >= 0; i--)
+  {
+    if (out[i] != '\n') break;
+
+    out[i] = 0;
+  }
+
+  return true;
+}
+
+// The USB device of a tty is the nearest directory with an idVendor above the tty's device: one
+// level up for ttyACM, whose device is the interface, and two for ttyUSB, which has a port below it.
+
+static const lxb_known_t *lxb_known_find (const char *tty)
+{
+  char dir[FPGA_PATH_MAX];
+
+  snprintf (dir, sizeof (dir), "/sys/class/tty/%s/device", tty);
+
+  char vendor[16];
+
+  bool usb = false;
+
+  for (u32 level = 0; level < LXB_USB_LEVELS; level++)
+  {
+    if (lxb_sysfs_read (dir, "idVendor", vendor, sizeof (vendor)) == true)
+    {
+      usb = true;
+
+      break;
+    }
+
+    const size_t len = strlen (dir);
+
+    snprintf (&dir[len], sizeof (dir) - len, "/..");
+  }
+
+  if (usb == false) return NULL;
+
+  char product[16];
+
+  if (lxb_sysfs_read (dir, "idProduct", product, sizeof (product)) == false) return NULL;
+
+  char name[256];
+
+  if (lxb_sysfs_read (dir, "product", name, sizeof (name)) == false) return NULL;
+
+  const u16 vid = (u16) strtoul (vendor,  NULL, 16);
+  const u16 pid = (u16) strtoul (product, NULL, 16);
+
+  const size_t cnt = sizeof (LXB_KNOWN) / sizeof (LXB_KNOWN[0]);
+
+  for (size_t i = 0; i < cnt; i++)
+  {
+    if (LXB_KNOWN[i].vendor  != vid) continue;
+    if (LXB_KNOWN[i].product != pid) continue;
+
+    if (strstr (name, LXB_KNOWN[i].name) == NULL) continue;
+
+    return &LXB_KNOWN[i];
+  }
+
+  return NULL;
+}
+
+// The known boards on USB serial ports
+
+static void lxb_add_found (lxb_priv_t **list, int *list_cnt)
+{
+  DIR *d = opendir ("/sys/class/tty");
+
+  if (d == NULL) return;
+
+  struct dirent *e = NULL;
+
+  while ((e = readdir (d)) != NULL)
+  {
+    if (*list_cnt >= FPGA_MAX_DEVICES) break;
+
+    const bool usb = (strncmp (e->d_name, "ttyUSB", 6) == 0) || (strncmp (e->d_name, "ttyACM", 6) == 0);
+
+    if (usb == false) continue;
+
+    const lxb_known_t *known = lxb_known_find (e->d_name);
+
+    if (known == NULL) continue;
+
+    lxb_priv_t *priv = lxb_new ();
+
+    if (priv == NULL) break;
+
+    snprintf (priv->host, sizeof (priv->host), "/dev/%s", e->d_name);
+
+    priv->link  = LXB_LINK_UART;
+    priv->baud  = known->baud;
+    priv->board = known->name;
+    priv->found = true;
+
+    lxb_name (priv);
+
+    // a port --bridge-parameter1 lists is opened once, at the rate given there, or at the board's
+    // own rate when the entry gives none
+
+    lxb_priv_t *listed = lxb_find (priv, list, *list_cnt);
+
+    if (listed != NULL)
+    {
+      if (listed->baud_given == false)
+      {
+        listed->baud  = known->baud;
+        listed->board = known->name;
+
+        lxb_name (listed);
+      }
+
+      lxb_free (priv);
+
+      continue;
+    }
+
+    list[*list_cnt] = priv;
+
+    (*list_cnt)++;
+  }
+
+  closedir (d);
+}
+
 // Transport
 
 static int lxb_enumerate (hashcat_ctx_t *hashcat_ctx, fpga_dev_t *devs, const int max, fpga_status_t *status)
 {
   *status = FPGA_STATUS_NO_PCI_DEVICE;
 
-  const char *env = getenv (FPGA_LITEXBONE_ENV);
-
-  if (env == NULL) return 0;
-
-  char *list = hcstrdup (env);
+  lxb_priv_t **list = (lxb_priv_t **) hccalloc (FPGA_MAX_DEVICES, sizeof (lxb_priv_t *));
 
   if (list == NULL) return 0;
 
-  char *seen = (char *) hccalloc (FPGA_MAX_DEVICES, LXB_PATH_MAX);
+  int list_cnt = 0;
 
-  if (seen == NULL)
-  {
-    hcfree (list);
+  lxb_add_listed (hashcat_ctx, list, &list_cnt);
 
-    return 0;
-  }
-
-  int seen_cnt = 0;
+  lxb_add_found (list, &list_cnt);
 
   int cnt = 0;
 
-  char *saveptr = NULL;
+  bool told_denied = false;
 
-  for (char *spec = strtok_r (list, LXB_SEPARATORS, &saveptr); spec != NULL; spec = strtok_r (NULL, LXB_SEPARATORS, &saveptr))
+  for (int i = 0; i < list_cnt; i++)
   {
-    if (cnt >= max) break;
+    lxb_priv_t *priv = list[i];
 
-    if (seen_cnt >= FPGA_MAX_DEVICES) break;
-
-    lxb_priv_t *priv = (lxb_priv_t *) hccalloc (1, sizeof (lxb_priv_t));
-
-    if (priv == NULL) break;
-
-    priv->fd = -1;
-
-    hc_thread_mutex_init (priv->mux);
-
-    if (lxb_parse (spec, priv) == false)
+    if (cnt >= max)
     {
-      event_log_warning (hashcat_ctx, "FPGA bridge: %s entry '%s' is not udp:HOST[:PORT], uart:DEVICE[:BAUD] or tcp:HOST:PORT[:BAUD] with a supported baud rate, and is ignored.", FPGA_LITEXBONE_ENV, spec);
-
       lxb_free (priv);
 
       continue;
     }
 
-    char *path = &seen[seen_cnt * LXB_PATH_MAX];
-
-    lxb_describe (priv, path, LXB_PATH_MAX);
-
-    bool dup = false;
-
-    for (int i = 0; i < seen_cnt; i++)
-    {
-      if (strcmp (&seen[i * LXB_PATH_MAX], path) == 0) dup = true;
-    }
-
-    if (dup == true)
-    {
-      event_log_warning (hashcat_ctx, "FPGA bridge: %s lists %s twice. The second entry is ignored.", FPGA_LITEXBONE_ENV, path);
-
-      lxb_free (priv);
-
-      continue;
-    }
-
-    seen_cnt++;
+    const char *path = priv->path;
 
     LXB_TRIED = true;
 
@@ -1077,9 +1320,27 @@ static int lxb_enumerate (hashcat_ctx_t *hashcat_ctx, fpga_dev_t *devs, const in
 
     if ((opened == false) && (priv->busy == false))
     {
+      const bool denied = ((priv->link == LXB_LINK_UART) && (access (priv->host, R_OK | W_OK) != 0) && (errno == EACCES));
+
+      // nobody listed the port of a found board, so it is named only when this account may not open it
+
+      if (priv->found == true)
+      {
+        if ((denied == true) && (told_denied == false))
+        {
+          event_log_warning (hashcat_ctx, "FPGA bridge: cannot open the %s at %s: %s. Add this account to the group that owns it, usually dialout, then log in again.", priv->board, priv->host, priv->why);
+
+          told_denied = true;
+        }
+
+        lxb_free (priv);
+
+        continue;
+      }
+
       event_log_error (hashcat_ctx, "FPGA bridge: cannot open %s: %s.", path, priv->why);
 
-      if ((priv->link == LXB_LINK_UART) && (access (priv->host, R_OK | W_OK) != 0) && (errno == EACCES))
+      if (denied == true)
       {
         event_log_info (hashcat_ctx, "Add this account to the group that owns %s, usually dialout, then log in again.", priv->host);
         event_log_info (hashcat_ctx, NULL);
@@ -1098,11 +1359,24 @@ static int lxb_enumerate (hashcat_ctx_t *hashcat_ctx, fpga_dev_t *devs, const in
 
       if (lxb_read1 (priv, fpga_csr_map_no_cpu.base + fpga_csr_map_no_cpu.scratch, &scratch) == false)
       {
+        // a found board that does not answer runs no hashcat design, and nobody listed its port
+
+        if (priv->found == true)
+        {
+          lxb_free (priv);
+
+          continue;
+        }
+
         event_log_error (hashcat_ctx, "FPGA bridge: nothing answered at %s.", path);
 
         if (priv->link == LXB_LINK_UDP)
         {
           event_log_info (hashcat_ctx, "Check the address and port, that this host routes to it, and that the board is programmed.");
+        }
+        else if (priv->board != NULL)
+        {
+          event_log_info (hashcat_ctx, "It was found as a %s. Check that the board is programmed, or list it in --bridge-parameter1 with the baud rate it was built with.", priv->board);
         }
         else
         {
@@ -1153,7 +1427,6 @@ static int lxb_enumerate (hashcat_ctx_t *hashcat_ctx, fpga_dev_t *devs, const in
     cnt++;
   }
 
-  hcfree (seen);
   hcfree (list);
 
   if (cnt > 0) *status = FPGA_STATUS_OK;

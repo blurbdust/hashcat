@@ -11,17 +11,17 @@
 # The algorithm's wrapper sits behind HcfpgaMemStream, two rings in CSR space that stand in for
 # LitePCIe's DMA, and the host reaches everything over Etherbone (UDP on a tap interface) or
 # UARTBone (TCP to LiteX's serial2tcp sim module). The identity names board "sim", so hashcat
-# drives it like any LiteX board listed in HCFPGA_LITEXBONE.
+# drives it like any LiteX board listed in --bridge-parameter1.
 #
 # The wrapper is gateware/<algo>_dma_wrapper.py, an HcfpgaDmaWrapper subclass whose for_sim()
 # builds it.
 #
 #   src/fpga/md5crypt/hcfpga_sim.py --bridge uartbone --build-only
 #   src/fpga/md5crypt/hcfpga_sim.py --bridge uartbone --no-build &
-#   HCFPGA_LITEXBONE=tcp:127.0.0.1:2430 ./hashcat -m 75500 hash.txt words.txt
+#   ./hashcat -m 75500 --bridge-parameter1 tcp:127.0.0.1:2430 hash.txt words.txt
 #
 # Etherbone needs a tap interface the user may open (--tap) and hashcat able to reach the board
-# at its address: HCFPGA_LITEXBONE=udp:192.168.9.50.
+# at its address: --bridge-parameter1 udp:192.168.9.50.
 #
 # The simulator is built with run=False and exec'd here: LiteX would wrap the run in sudo whenever
 # the ethernet module is present, which a user namespace neither needs nor allows. Two UARTBone sims
@@ -198,8 +198,8 @@ def patch_sim_config(gateware, args):
 def main():
     parser = argparse.ArgumentParser(description=f"{ALGO} on a simulated LiteX board, for hashcat's litexbone transport.")
     parser.add_argument("--bridge",     default="uartbone", choices=["etherbone", "uartbone"],
-        help="Host bridge. uartbone: HCFPGA_LITEXBONE=tcp:127.0.0.1:<uart-port> (no privileges). "
-             f"etherbone: HCFPGA_LITEXBONE=udp:<ip> (needs a tap interface).")
+        help="Host bridge. uartbone: --bridge-parameter1 tcp:127.0.0.1:<uart-port> (no privileges). "
+             f"etherbone: --bridge-parameter1 udp:<ip> (needs a tap interface).")
     parser.add_argument("--units",      type=int, default=1,   help="Computing units (see the algorithm's SIM_UNITS_HELP).")
     parser.add_argument("--no-cmp",     action="store_true",   help="Build without the comparator: every result returns.")
     parser.add_argument("--h2c-depth",  type=int, default=512, help="H2C ring size in 32-bit words.")
@@ -273,9 +273,9 @@ def main():
         return
 
     if args.bridge == "etherbone":
-        print(f"[> Simulator up next. hashcat: HCFPGA_LITEXBONE=udp:{args.ip}")
+        print(f"[> Simulator up next. hashcat: --bridge-parameter1 udp:{args.ip}")
     else:
-        print(f"[> Simulator up next. hashcat: HCFPGA_LITEXBONE=tcp:127.0.0.1:{port}")
+        print(f"[> Simulator up next. hashcat: --bridge-parameter1 tcp:127.0.0.1:{port}")
     print(f"[> CSR map: {os.path.join(output_dir, 'csr.csv')}")
     sys.stdout.flush()
 
