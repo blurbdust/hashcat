@@ -142,12 +142,14 @@ module hcfpga_cores #(
     reg t_d   = 1'b0;
     reg phase = 1'b0;
 
+    wire phase_next = (t != t_d);
+
     reg rst_c = 1'b1;
 
     always @(posedge CLK_CORE)
     begin
       t_d   <= t;
-      phase <= (t != t_d);
+      phase <= phase_next;
       rst_c <= rst;
     end
 
@@ -158,7 +160,7 @@ module hcfpga_cores #(
     wire [1:0] c_crypt_ready;
 
     bcrypt_core_c2 #(.DIN_BITS(DIN_BITS)) core (
-      .CLK(CLK_CORE), .rst(rst_c), .phase(phase),
+      .CLK(CLK_CORE), .rst(rst_c), .phase(phase), .phase_next(phase_next),
       .din(g_din[GI]), .byte_wr_en(g_bwe[GI]), .start(g_start[GI]),
       .wr_sel({g_wr_en[GI][V1], g_wr_en[GI][V0]}),
       .rd_en_vc(core_rd_en),

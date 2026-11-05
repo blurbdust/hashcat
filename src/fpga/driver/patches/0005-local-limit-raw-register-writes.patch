@@ -1,4 +1,4 @@
-Subject: [PATCH 5/5] LOCAL ONLY: refuse raw register writes outside the algorithm block
+Subject: [PATCH 5/6] LOCAL ONLY: refuse raw register writes outside the algorithm block
 
 NOT for upstream as written, because it assumes the hcfpga register layout. LITEPCIE_IOCTL_REG checks
 only that an address lies inside BAR0, and BAR0 also holds the SoC reset and the DMA descriptor

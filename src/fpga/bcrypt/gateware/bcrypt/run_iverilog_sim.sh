@@ -80,6 +80,12 @@ for style in block distributed; do
   done
 done
 
+# The S read register as Quartus builds it, see S.v.
+for style in block distributed; do
+  run_one "tb_core.$style.din32.read_flag" g2005 "$CORE/tb_core.v" "$CORE_SRC" \
+    -Ptb_core.S_STYLE=\"$style\" -Ptb_core.DIN_BITS=32 -DHC_S_READ_FLAG
+done
+
 echo
 echo "=== datapath: framing, ekid echo, core_id, digest ==="
 
@@ -135,6 +141,12 @@ run_one "tb_datapath.ypcb_shape_mixed" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" 
   -Ptb_datapath.NUM_CORES=7 -Ptb_datapath.NCAND=14 -Ptb_datapath.CHECK_ALL_CORES=1 \
   -Ptb_datapath.FEED_SHARD=4 -Ptb_datapath.FEED_GROUP=2 -Ptb_datapath.COLLECT_GROUP=3 \
   -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 -Ptb_datapath.NUM_CORES_DIST=2
+
+run_one "tb_datapath.mixed_read_flag" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" \
+  -Ptb_datapath.NUM_CORES=7 -Ptb_datapath.NCAND=14 -Ptb_datapath.CHECK_ALL_CORES=1 \
+  -Ptb_datapath.FEED_SHARD=4 -Ptb_datapath.FEED_GROUP=2 -Ptb_datapath.COLLECT_GROUP=3 \
+  -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 -Ptb_datapath.NUM_CORES_DIST=2 \
+  -DHC_S_READ_FLAG
 
 echo
 echo "=== expander: the device builds the bcrypt key from the password it was sent ==="
@@ -226,6 +238,9 @@ echo "=== two hash core: two virtual cores per physical core, on a clock twice t
 
 run_one "tb_core_c2" g2005 "$CORE/tb_core_c2.v" "$CORE_SRC"
 
+# The PN read as Quartus builds it, see P_c2.
+run_one "tb_core_c2.read_reg" g2005 "$CORE/tb_core_c2.v" "$CORE_SRC" -DHC_PN_READ_REG
+
 run_one "tb_datapath.c2" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" \
   -Ptb_datapath.CSLOW=2 -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 -Ptb_datapath.CHECK_ALL_CORES=1
 
@@ -233,6 +248,11 @@ run_one "tb_datapath.c2_shape" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" \
   -Ptb_datapath.CSLOW=2 -Ptb_datapath.NUM_CORES=8 -Ptb_datapath.NCAND=16 -Ptb_datapath.CHECK_ALL_CORES=1 \
   -Ptb_datapath.FEED_SHARD=4 -Ptb_datapath.FEED_GROUP=2 -Ptb_datapath.COLLECT_GROUP=2 \
   -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0
+
+run_one "tb_datapath.c2_shape_read_reg" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" \
+  -Ptb_datapath.CSLOW=2 -Ptb_datapath.NUM_CORES=8 -Ptb_datapath.NCAND=16 -Ptb_datapath.CHECK_ALL_CORES=1 \
+  -Ptb_datapath.FEED_SHARD=4 -Ptb_datapath.FEED_GROUP=2 -Ptb_datapath.COLLECT_GROUP=2 \
+  -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 -DHC_PN_READ_REG
 
 run_one "tb_datapath.one_wave_ragged" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" \
   -Ptb_datapath.NUM_CORES=7 -Ptb_datapath.NCAND=7 -Ptb_datapath.CHECK_ALL_CORES=1 \

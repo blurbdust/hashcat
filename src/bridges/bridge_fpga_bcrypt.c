@@ -787,7 +787,7 @@ void *platform_init (hashcat_ctx_t *hashcat_ctx)
 
     member_buf->dev = dev;
 
-    member_buf->returns_all = (strcmp (dev->ident.board, "ypcb") == 0) ? true : false;
+    member_buf->returns_all = ((strcmp (dev->ident.board, "ypcb") == 0) || (strcmp (dev->ident.board, "storeypeak") == 0)) ? true : false;
 
     member_name (member_buf, dev);
 
@@ -1195,13 +1195,14 @@ typedef struct wave_model
 
 static const wave_model_t WAVE_MODELS[] =
 {
-  { "ypcb",     760, 18847, 55118, 2160 },
-  { "ztex115y", 496, 18595, 30574, 1880 },
-  { "ztex213",   24, 18842, 20699, 1910 },
-  { "artyz7",    68, 17149, 24443, 2010 },
-  { "u50",      544, 18914, 92401, 2200 },
-  { "enigmax1",  32, 18844, 26325, 2120 },
-  { NULL,         0,     0,     0,    0 },
+  { "ypcb",       760, 18847, 55118, 2160 },
+  { "ztex115y",   496, 18595, 30574, 1880 },
+  { "ztex213",     24, 18842, 20699, 1910 },
+  { "artyz7",      68, 17149, 24443, 2010 },
+  { "u50",        544, 18914, 92401, 2200 },
+  { "enigmax1",    32, 18844, 26325, 2120 },
+  { "storeypeak", 384, 18844, 40078, 2100 },
+  { NULL,           0,     0,     0,    0 },
 };
 
 #define TUNE_SPEED_SHARE      0.99

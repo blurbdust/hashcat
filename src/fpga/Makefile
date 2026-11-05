@@ -28,8 +28,8 @@ CLK_ztex213     := 105
 CORES_artyz7    := 68
 CLK_artyz7      := 91
 
-CORES_storeypeak := 4
-CLK_storeypeak   := 150
+CORES_storeypeak := 384
+CLK_storeypeak   := 190
 
 # Quartus board: no Xilinx startup clock, a .rbf, and no published bitstream to check against.
 TOOL_storeypeak          := quartus_sh
@@ -138,7 +138,7 @@ check:
 	 echo "  all offline checks pass"; \
 	 echo; \
 	 echo "  not run here, and each needs something this target deliberately does not assume:"; \
-	 echo "    make sim               the merge gate, 55 testbench configurations, needs iverilog"; \
+	 echo "    make sim               the merge gate, 60 testbench configurations, needs iverilog"; \
 	 echo "    make check-published   fetches every declared release, needs the network"; \
 	 echo "    make check-release     answers for one ALGO and BOARD, so build already runs it"
 
@@ -285,7 +285,7 @@ build: $(if $(NO_RELEASE_$(BOARD)),,check-release)
 
 LOAD_NOTE_DEFAULT := Programmed. REBOOT now. The PCIe endpoint does not re-enumerate without it. Then: sudo make -C src/fpga/driver dkms-install
 LOAD_NOTE_ztex213 := Nothing was programmed and nothing needed to be. See above.
-LOAD_NOTE_storeypeak := Programmed. REBOOT now, warm: a PCIe rescan does not bring the Stratix V link back after a reload. Then: sudo make -C src/fpga/driver dkms-install
+LOAD_NOTE_storeypeak := Programmed. Unload the driver, remove the card's PCIe device, then rescan until lspci lists 1172:e001: echo 1 | sudo tee /sys/bus/pci/rescan. Then: sudo make -C src/fpga/driver dkms-install
 LOAD_NOTE_artyz7  := Nothing was programmed and nothing needed to be. hashcat loads the fabric AND the PS application over JTAG at the start of a run that uses the board, unless the board already runs them.
 
 LOAD_NOTE        = $(if $(LOAD_NOTE_$(BOARD)),$(LOAD_NOTE_$(BOARD)),$(LOAD_NOTE_DEFAULT))

@@ -27,21 +27,43 @@
 // elaborates on every build.
 //
 // S_body.vh holds the one and only copy of the logic. It is included twice, once per style, and the
-// two modules that result differ in nothing but the attribute string. On Vivado they elaborate to
-// the same netlist the parameter form did.
+// two modules that result differ in nothing but the attribute strings. On Vivado they elaborate to
+// the same netlist the parameter form did. Quartus reads its own attribute, ramstyle, and ignores
+// RAM_STYLE, as Vivado ignores ramstyle.
 //
+// The read register is the one place the two tools need different logic. Quartus defines
+// ALTERA_RESERVED_QIS while it synthesises, and that selects the HC_S_READ_FLAG form, without which
+// no bank becomes an M20K. S_body.vh explains it. A simulation can define HC_S_READ_FLAG itself to
+// run what Quartus builds.
+//
+
+`ifdef ALTERA_RESERVED_QIS
+`define HC_S_READ_FLAG
+`endif
 
 `define HC_S_MODULE    S_block
 `define HC_S_RAM_STYLE "block"
+`ifdef ALTERA_RESERVED_QIS
+`define HC_S_RAMSTYLE  , ramstyle = "M20K"
+`else
+`define HC_S_RAMSTYLE
+`endif
 `include "S_body.vh"
 `undef HC_S_MODULE
 `undef HC_S_RAM_STYLE
+`undef HC_S_RAMSTYLE
 
 `define HC_S_MODULE    S_dist
 `define HC_S_RAM_STYLE "distributed"
+`ifdef ALTERA_RESERVED_QIS
+`define HC_S_RAMSTYLE  , ramstyle = "MLAB"
+`else
+`define HC_S_RAMSTYLE
+`endif
 `include "S_body.vh"
 `undef HC_S_MODULE
 `undef HC_S_RAM_STYLE
+`undef HC_S_RAMSTYLE
 
 module S #(
 	parameter MSB = 31,

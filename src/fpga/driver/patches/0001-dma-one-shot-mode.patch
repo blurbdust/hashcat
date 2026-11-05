@@ -1,4 +1,4 @@
-Subject: [PATCH 1/5] dma: one-shot (Prog mode) descriptor arming
+Subject: [PATCH 1/6] dma: one-shot (Prog mode) descriptor arming
 
 Prog mode is already in the gateware: LitePCIeDMAScatterGather documents it and loop_prog_n = 0
 selects it. Only the driver lacked a way to use it. This adds the ioctls to arm N descriptors for a

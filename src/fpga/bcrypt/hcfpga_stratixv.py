@@ -7,6 +7,7 @@
 
 import os
 import shutil
+import subprocess
 
 from migen import *
 from migen.genlib.cdc import MultiReg
@@ -22,13 +23,12 @@ from litex.soc.interconnect.csr import CSRStatus, CSRConstant
 
 # PCIe hard IP ------------------------------------------------------------------------------------
 
-def sv_pcie_endpoint_params(speed="gen2", nlanes=8, data_width=128):
+def sv_pcie_endpoint_params (speed="gen2", nlanes=8, data_width=128):
   # Receive credits and timers as Intel's generator derives them for an endpoint with the default
-  # "balanced" allocation. LitePCIe releases before the fix leave the hard IP at its Verilog
-  # defaults, which advertise finite completion credits; the hard IP then occasionally drops the
-  # second completion of a split read without reporting an error, and DMA stalls for good. Setting
-  # them here keeps the board working on those releases too.
-  return dict(
+  # "balanced" allocation. LitePCIe's SVPCIEPHY leaves the hard IP at its Verilog defaults, which
+  # advertise finite completion credits. With those, the hard IP occasionally drops the second
+  # completion of a split read without reporting an error, and DMA stalls for good.
+  return dict (
     p_vc0_rx_flow_ctrl_posted_header_hwtcl    = 50,
     p_vc0_rx_flow_ctrl_posted_data_hwtcl      = 333,
     p_vc0_rx_flow_ctrl_nonposted_header_hwtcl = 56,
@@ -48,7 +48,7 @@ XADC_TEMP_OFFSET     = 273150
 XADC_VOLTAGE_SCALE   = 3000
 XADC_VOLTAGE_DIVISOR = 4096
 
-def xadc_temperature_code(celsius):
+def xadc_temperature_code (celsius):
   # The host converts with code * 503.975 / 4096 - 273.15 and truncates, so aim at the middle of the
   # degree to land on it from either side.
   target = celsius + (0.5 if celsius >= 0 else -0.5)
@@ -57,40 +57,40 @@ def xadc_temperature_code(celsius):
 
   return max (0, min (code, 4095))
 
-def tsd_celsius(tsdcalo):
+def tsd_celsius (tsdcalo):
   # Stratix V temperature sensing diode: the 8-bit result is linear, 0x80 is 0 C and one step is one
   # degree, so 0xe4 is 100 C and 0xff is 127 C (Intel knowledge base, ALTTEMP_SENSE on Stratix V).
   return tsdcalo - 128
 
-class StratixVTemperature(LiteXModule):
+class StratixVTemperature (LiteXModule):
   """Die temperature from the internal temperature sensing diode, in XADC registers and encoding.
 
   The diode's ADC wants a clock between 1 and 80 MHz, divided by 40 or 80 down to roughly 1 MHz. The
   PCIe transceiver management clock is free running and in range, so it drives it. Supply rails are
   not measured on this part and read 0.
   """
-  def __init__(self, platform, cd="pcie_mgmt", clk_freq=50e6, period_ms=50):
+  def __init__ (self, platform, cd="pcie_mgmt", clk_freq=50e6, period_ms=50):
     assert 1e6 <= clk_freq <= 80e6
 
-    self.expose_hwmon()
+    self.expose_hwmon ()
 
-    self.temperature = CSRStatus(12, name="temperature", description="Die temperature, XADC encoding: code * 503.975 / 4096 - 273.15 C.")
-    self.vccint      = CSRStatus(12, name="vccint",      description="Not measured, reads 0.")
-    self.vccaux      = CSRStatus(12, name="vccaux",      description="Not measured, reads 0.")
-    self.vccbram     = CSRStatus(12, name="vccbram",     description="Not measured, reads 0.")
+    self.temperature = CSRStatus (12, name="temperature", description="Die temperature, XADC encoding: code * 503.975 / 4096 - 273.15 C.")
+    self.vccint      = CSRStatus (12, name="vccint",      description="Not measured, reads 0.")
+    self.vccaux      = CSRStatus (12, name="vccaux",      description="Not measured, reads 0.")
+    self.vccbram     = CSRStatus (12, name="vccbram",     description="Not measured, reads 0.")
 
-    self.eoc = CSRStatus(description="End of Conversion Status, ``1``: Conversion Done.")
-    self.eos = CSRStatus(description="End of Sequence Status,   ``1``: Sequence Done.")
+    self.eoc = CSRStatus (description="End of Conversion Status, ``1``: Conversion Done.")
+    self.eos = CSRStatus (description="End of Sequence Status,   ``1``: Sequence Done.")
 
     # # #
 
-    tsdcalo    = Signal(8)
-    tsdcaldone = Signal()
-    clr        = Signal(reset=1)
+    tsdcalo    = Signal (8)
+    tsdcaldone = Signal ()
+    clr        = Signal (reset=1)
 
-    self.specials += Instance("hcfpga_sv_tsd",
+    self.specials += Instance ("hcfpga_sv_tsd",
       p_CLOCK_DIVIDER_VALUE = 80 if clk_freq > 40e6 else 40,
-      i_clk                 = ClockSignal(cd),
+      i_clk                 = ClockSignal (cd),
       i_clr                 = clr,
       o_tsdcalo             = tsdcalo,
       o_tsdcaldone          = tsdcaldone,
@@ -102,64 +102,64 @@ class StratixVTemperature(LiteXModule):
     # a millisecond, so the period only bounds how stale a reading can get.
     wait_max = int (clk_freq * period_ms / 1000)
 
-    code  = Signal(8)
-    done  = Signal()
-    wait  = Signal(max=wait_max + 1)
+    code  = Signal (8)
+    done  = Signal ()
+    wait  = Signal (max=wait_max + 1)
 
-    fsm = FSM(reset_state="CLEAR")
-    fsm = ClockDomainsRenamer(cd)(fsm)
+    fsm = FSM (reset_state="CLEAR")
+    fsm = ClockDomainsRenamer (cd) (fsm)
 
     self.fsm = fsm
 
-    fsm.act("CLEAR",
-      clr.eq(1),
-      NextValue(wait, wait + 1),
-      If(wait == 15,
-        NextValue(wait, 0),
-        NextState("CONVERT"),
+    fsm.act ("CLEAR",
+      clr.eq (1),
+      NextValue (wait, wait + 1),
+      If (wait == 15,
+        NextValue (wait, 0),
+        NextState ("CONVERT"),
       )
     )
-    fsm.act("CONVERT",
-      clr.eq(0),
-      If(tsdcaldone,
-        NextValue(code, tsdcalo),
-        NextValue(done, 1),
-        NextState("HOLD"),
+    fsm.act ("CONVERT",
+      clr.eq (0),
+      If (tsdcaldone,
+        NextValue (code, tsdcalo),
+        NextValue (done, 1),
+        NextState ("HOLD"),
       )
     )
-    fsm.act("HOLD",
-      clr.eq(0),
-      NextValue(wait, wait + 1),
-      If(wait == wait_max,
-        NextValue(wait, 0),
-        NextState("CLEAR"),
+    fsm.act ("HOLD",
+      clr.eq (0),
+      NextValue (wait, wait + 1),
+      If (wait == wait_max,
+        NextValue (wait, 0),
+        NextState ("CLEAR"),
       )
     )
 
-    code_sys = Signal(8)
-    done_sys = Signal()
+    code_sys = Signal (8)
+    done_sys = Signal ()
 
-    self.specials += MultiReg(code, code_sys)
-    self.specials += MultiReg(done, done_sys)
+    self.specials += MultiReg (code, code_sys)
+    self.specials += MultiReg (done, done_sys)
 
-    table = Array([Constant(xadc_temperature_code(tsd_celsius(c)), 12) for c in range(256)])
+    table = Array ([Constant (xadc_temperature_code (tsd_celsius (c)), 12) for c in range (256)])
 
     self.comb += [
-      self.temperature.status.eq(Mux(done_sys, table[code_sys], 0)),
-      self.eoc.status.eq(done_sys),
-      self.eos.status.eq(done_sys),
+      self.temperature.status.eq (Mux (done_sys, table[code_sys], 0)),
+      self.eoc.status.eq (done_sys),
+      self.eos.status.eq (done_sys),
     ]
 
-  def expose_hwmon(self):
-    self.hwmon_temp_scale      = CSRConstant(XADC_TEMP_SCALE,      name="hwmon_temp_scale")
-    self.hwmon_temp_divisor    = CSRConstant(XADC_TEMP_DIVISOR,    name="hwmon_temp_divisor")
-    self.hwmon_temp_offset     = CSRConstant(XADC_TEMP_OFFSET,     name="hwmon_temp_offset")
-    self.hwmon_voltage_scale   = CSRConstant(XADC_VOLTAGE_SCALE,   name="hwmon_voltage_scale")
-    self.hwmon_voltage_divisor = CSRConstant(XADC_VOLTAGE_DIVISOR, name="hwmon_voltage_divisor")
+  def expose_hwmon (self):
+    self.hwmon_temp_scale      = CSRConstant (XADC_TEMP_SCALE,      name="hwmon_temp_scale")
+    self.hwmon_temp_divisor    = CSRConstant (XADC_TEMP_DIVISOR,    name="hwmon_temp_divisor")
+    self.hwmon_temp_offset     = CSRConstant (XADC_TEMP_OFFSET,     name="hwmon_temp_offset")
+    self.hwmon_voltage_scale   = CSRConstant (XADC_VOLTAGE_SCALE,   name="hwmon_voltage_scale")
+    self.hwmon_voltage_divisor = CSRConstant (XADC_VOLTAGE_DIVISOR, name="hwmon_voltage_divisor")
 
 # Chip ID ------------------------------------------------------------------------------------------
 
-def altchip_id_source():
+def altchip_id_source ():
   quartus_sh = shutil.which ("quartus_sh")
 
   if quartus_sh is None:
@@ -172,37 +172,37 @@ def altchip_id_source():
 
   return path
 
-class StratixVChipID(LiteXModule):
+class StratixVChipID (LiteXModule):
   """The 64-bit chip ID, exposed like LiteX's XilinxDNA: one 57-bit register named id.
 
   The bridge reads exactly 57 bits and prints them as the board's serial, so the low 57 bits of the
   ID are kept. Intel's own altchip_id does the load and shift sequence.
   """
-  def __init__(self, platform, cd="pcie_mgmt", nbits=57):
-    self._id = CSRStatus(nbits, description="Stratix V chip ID, low 57 bits.")
+  def __init__ (self, platform, cd="pcie_mgmt", nbits=57):
+    self._id = CSRStatus (nbits, description="Stratix V chip ID, low 57 bits.")
 
     # # #
 
-    chip_id    = Signal(64)
-    data_valid = Signal()
+    chip_id    = Signal (64)
+    data_valid = Signal ()
 
-    self.specials += Instance("altchip_id",
+    self.specials += Instance ("altchip_id",
       p_DEVICE_FAMILY = "Stratix V",
-      i_clkin         = ClockSignal(cd),
-      i_reset         = ResetSignal(cd),
+      i_clkin         = ClockSignal (cd),
+      i_reset         = ResetSignal (cd),
       o_chip_id       = chip_id,
       o_data_valid    = data_valid,
     )
 
     platform.add_source (altchip_id_source ())
 
-    chip_id_sys    = Signal(64)
-    data_valid_sys = Signal()
+    chip_id_sys    = Signal (64)
+    data_valid_sys = Signal ()
 
-    self.specials += MultiReg(chip_id,    chip_id_sys)
-    self.specials += MultiReg(data_valid, data_valid_sys)
+    self.specials += MultiReg (chip_id,    chip_id_sys)
+    self.specials += MultiReg (data_valid, data_valid_sys)
 
-    self.comb += If(data_valid_sys, self._id.status.eq(chip_id_sys[:nbits]))
+    self.comb += If (data_valid_sys, self._id.status.eq (chip_id_sys[:nbits]))
 
 # Configuration flash -----------------------------------------------------------------------------
 
@@ -215,10 +215,10 @@ class StratixVChipID(LiteXModule):
 SV_FLASH_DEVICE = "EPCQ256"
 SV_FLASH_LOADER = "5SGSMD5K1"
 
-def sv_flash_image(sof, out_dir=None):
-  out_dir  = out_dir or os.path.dirname(os.path.abspath(sof))
-  base     = os.path.splitext(os.path.basename(sof))[0] + "_flash"
-  cof_path = os.path.join(out_dir, base + ".cof")
+def sv_flash_image (sof, out_dir=None):
+  out_dir  = out_dir or os.path.dirname (os.path.abspath (sof))
+  base     = os.path.splitext (os.path.basename (sof))[0] + "_flash"
+  cof_path = os.path.join (out_dir, base + ".cof")
 
   cof = f"""<?xml version="1.0" encoding="US-ASCII" standalone="yes"?>
 <cof>
@@ -232,7 +232,7 @@ def sv_flash_image(sof, out_dir=None):
 		<user_name>Page_0</user_name>
 		<page_flags>1</page_flags>
 		<bit0>
-			<sof_filename>{os.path.abspath(sof)}<compress_bitstream>1</compress_bitstream></sof_filename>
+			<sof_filename>{os.path.abspath (sof)}<compress_bitstream>1</compress_bitstream></sof_filename>
 		</bit0>
 	</sof_data>
 	<version>10</version>
@@ -246,30 +246,28 @@ def sv_flash_image(sof, out_dir=None):
 </cof>
 """
 
-  with open(cof_path, "w") as f:
-    f.write(cof)
+  with open (cof_path, "w") as f:
+    f.write (cof)
 
-  if shutil.which("quartus_cpf") is None:
-    raise OSError("quartus_cpf not on PATH; it ships with Quartus and the Quartus Programmer")
+  if shutil.which ("quartus_cpf") is None:
+    raise OSError ("quartus_cpf not on PATH. It ships with Quartus and the Quartus Programmer.")
 
-  import subprocess
+  subprocess.check_call (["quartus_cpf", "-c", os.path.basename (cof_path)], cwd=out_dir)
 
-  subprocess.check_call(["quartus_cpf", "-c", os.path.basename(cof_path)], cwd=out_dir)
+  rpd = os.path.join (out_dir, base + "_auto.rpd")
 
-  rpd = os.path.join(out_dir, base + "_auto.rpd")
-
-  with open(rpd, "rb") as f:
-    head = f.read(0x84)
+  with open (rpd, "rb") as f:
+    head = f.read (0x84)
 
   if head[0x80:0x84] != b"\x6a\x6a\x6a\x6a":
-    raise ValueError(f"{rpd} has no AS sync word at 0x80, refusing to hand it to a flash writer")
+    raise ValueError (f"{rpd} has no AS sync word at 0x80, refusing to hand it to a flash writer")
 
   return rpd
 
-# openFPGALoader (v1.0.0) addresses the flash with 3-byte opcodes below 16 MiB. After the FPGA has
-# booted from it, this flash is in 4-byte address mode, so those reads and writes land at the
-# wrong addresses, silently. OFL_SPI_4BYTE is a local openFPGALoader patch that uses the 4-byte
-# opcodes (0x13, 0x12, 0x21, 0xdc) everywhere, which the N25Q256A accepts in either mode.
+# The flash's nonvolatile configuration register selects 4-byte address mode at power-up, which AS
+# x4 boot needs. openFPGALoader through v1.2.0 addresses it with 3-byte opcodes below 16 MiB, so
+# those reads and writes land at the wrong addresses without an error. OFL_SPI_4BYTE is honoured by
+# a patched openFPGALoader that uses the 4-byte opcodes everywhere. Released versions ignore it.
 
-def sv_flash_command(rpd, cable="ft232"):
+def sv_flash_command (rpd, cable="ft232"):
   return ["openFPGALoader", "-c", cable, "--fpga-part", "5sgsd5", "-f", "--verify", rpd]

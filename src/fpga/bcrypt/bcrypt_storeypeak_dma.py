@@ -5,7 +5,6 @@
 #
 
 import os
-import shutil
 import argparse
 import datetime
 import subprocess
@@ -54,9 +53,12 @@ BOARD_SHAPE = {
     "cslow":          1,
 }
 
+# Extra setup uncertainty, in ns, that the fitter places 384 cores at 190 MHz against.
+PLACEMENT_MARGIN = 0.5
+
 # The Storey Peak is a Microsoft Catapult v2 card, X930613-001, Stratix V GS 5SGSMD5. Edge lanes 0-7
-# reach pcie_x8 connector 0, whose hard IP block Quartus reports as disabled for this part and
-# refuses to place, so the build preloads sv_pcie_hip_enable.c to answer "enabled" for that block.
+# reach pcie_x8 connector 0, whose hard IP block Quartus reports as disabled for this part. The
+# LiteX-Boards platform makes Quartus place it when a design uses that connector.
 
 PCIE_MGMT_FREQ = 50e6
 
@@ -89,6 +91,14 @@ class _CRG(LiteXModule):
         platform.toolchain.additional_sdc_commands += [
             "set_false_path -from [get_clocks sys_clk] -to [get_clocks clk125]",
             "set_false_path -from [get_clocks clk125] -to [get_clocks sys_clk]",
+        ]
+
+        # The temperature and chip ID values reach sys through MultiReg. derive_pll_clocks names
+        # the management clock after the PLL output, clk[1], rather than its net, so a cut naming
+        # pcie_mgmt_clk matches nothing and these crossings are timed as synchronous.
+        platform.toolchain.additional_sdc_commands += [
+            "set_false_path -from [get_clocks sys_clk] -to [get_clocks {*|clk[1]}]",
+            "set_false_path -from [get_clocks {*|clk[1]}] -to [get_clocks sys_clk]",
         ]
 
 class BcryptSoC(SoCMini):
@@ -147,11 +157,13 @@ class BcryptSoC(SoCMini):
             f"set_global_assignment -name ACTIVE_SERIAL_CLOCK {AS_CLOCKS[as_clock_mhz]}",
         ]
 
-        # Extra setup uncertainty squeezes placement. Quartus places and routes in one run and the PLL
-        # output is the real clock, so this cannot be removed before routing as on Vivado.
+        # Extra setup uncertainty squeezes placement. Only the fitter sees it, so the Timing Analyzer
+        # reports the design's real slack.
         if placement_margin:
             platform.toolchain.additional_sdc_commands += [
-                f"set_clock_uncertainty -add -setup -from [get_clocks sys_clk] -to [get_clocks sys_clk] {placement_margin:.3f}",
+                "if {$::TimeQuestInfo(nameofexecutable) eq \"quartus_fit\"} {",
+                f"    set_clock_uncertainty -add -setup -from [get_clocks sys_clk] -to [get_clocks sys_clk] {placement_margin:.3f}",
+                "}",
             ]
 
         if with_led:
@@ -181,37 +193,6 @@ class BcryptSoC(SoCMini):
             self.dma_up.source.connect(self.pcie_dma0.sink),
         ]
 
-def build_pcie_hip_shim(output_dir):
-    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quartus", "sv_pcie_hip_enable.c")
-
-    # Absolute, because LiteX's build script changes into the gateware directory before it starts
-    # Quartus, and ld.so resolves LD_PRELOAD against the working directory.
-    so = os.path.abspath(os.path.join(output_dir, "sv_pcie_hip_enable.so"))
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    if os.path.exists(so) and os.path.getmtime(so) >= os.path.getmtime(src):
-        return so
-
-    cc = os.environ.get("CC", "gcc")
-
-    if shutil.which(cc) is None:
-        raise SystemExit(f"Connector 0 needs the PCIe hard IP interposer, which needs {cc} to build.")
-
-    cmd = [cc, "-shared", "-fPIC", "-O2", "-o", so, src, "-ldl"]
-
-    if subprocess.call(cmd) != 0:
-        raise SystemExit("Failed to build the PCIe hard IP interposer: " + " ".join(cmd))
-
-    return so
-
-def preload_pcie_hip_shim(so):
-    # LiteX's Quartus backend starts the tools without its own env=, so they inherit this one.
-    quartus_lib = os.path.join(os.path.dirname(os.path.dirname(shutil.which("quartus_sh") or "")), "linux64")
-
-    os.environ["LD_PRELOAD"]      = so
-    os.environ["LD_LIBRARY_PATH"] = os.pathsep.join([p for p in [quartus_lib, os.environ.get("LD_LIBRARY_PATH", "")] if p])
-
 def main():
     parser = argparse.ArgumentParser(description="hcfpga bcrypt on a Microsoft Storey Peak (Stratix V).")
     parser.add_argument("--build", action="store_true", help="Build the bitstream.")
@@ -231,8 +212,7 @@ def main():
     parser.add_argument("--abi",          type=int,   default=fpga_abi_current(), help="Wire ABI version, stamped into the bitstream identity and refused by the bridge when it does not match.")
     parser.add_argument("--cslow",        type=int,   default=BOARD_SHAPE["cslow"], choices=[1, 2], help="2 builds the array from two hash cores on a second clock at twice --sys-clk-freq. --cores then counts virtual cores.")
     parser.add_argument("--pcie-connector", type=int, default=0, choices=[0, 1], help="Which x8 half of the edge connector. 0 carries edge lanes 0-7.")
-    parser.add_argument("--placement-margin", type=float, default=0.0, help="Extra ns of setup clock uncertainty on sys_clk to over-constrain placement.")
-    parser.add_argument("--pcie-shim",    default=None, help="Prebuilt sv_pcie_hip_enable.so, otherwise built from source.")
+    parser.add_argument("--placement-margin", type=float, default=PLACEMENT_MARGIN, help="Extra ns of setup clock uncertainty on sys_clk to over-constrain placement.")
     parser.add_argument("--fitter-seed",  type=int, default=None, help="Quartus fitter seed. Different seeds give different placements and a spread of Fmax.")
     parser.add_argument("--as-clock",     type=float, default=100, choices=[12.5, 25, 50, 100], help="Active Serial clock in MHz for booting from flash. The factory image uses 25.")
     parser.add_argument("--threads",      type=int,   default=None, help="Same as --num-processors, the name src/fpga/Makefile passes.")
@@ -286,9 +266,6 @@ def main():
         soc.platform.toolchain.additional_qsf_commands += [f"set_global_assignment -name NUM_PARALLEL_PROCESSORS {args.num_processors}"]
 
     output_dir = os.path.join("build", name)
-
-    if args.build and args.pcie_connector == 0:
-        preload_pcie_hip_shim(args.pcie_shim or build_pcie_hip_shim(output_dir))
 
     builder = Builder(soc, output_dir=output_dir)
 

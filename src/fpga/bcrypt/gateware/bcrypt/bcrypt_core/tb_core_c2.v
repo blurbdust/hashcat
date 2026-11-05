@@ -12,7 +12,8 @@ module tb_core_c2;
   reg rst = 1;
 
   reg phase = 0;
-  always @(posedge CLK) phase <= rst ? 1'b0 : ~phase;
+  wire phase_next = rst ? 1'b0 : ~phase;
+  always @(posedge CLK) phase <= phase_next;
 
   reg  [31:0] din = 0;
   reg  [3:0]  byte_wr_en = 0;
@@ -23,7 +24,7 @@ module tb_core_c2;
   wire [1:0] init_ready_vc, crypt_ready_vc, empty_vc, dout_vc;
 
   bcrypt_core_c2 #(.DIN_BITS(32)) core (
-    .CLK(CLK), .rst(rst), .phase(phase),
+    .CLK(CLK), .rst(rst), .phase(phase), .phase_next(phase_next),
     .din(din), .byte_wr_en(byte_wr_en), .start(start), .wr_sel(wr_sel),
     .rd_en_vc(rd_en_vc),
     .init_ready_vc(init_ready_vc), .crypt_ready_vc(crypt_ready_vc),
