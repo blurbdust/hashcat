@@ -25,7 +25,7 @@ module sha256core #(
 	input start, // asserts on cycle 0 of each sequence
 	input ctx_num,
 	input seq_num,
-	output reg [3:0] ready = 4'b1111, // input buffer is ready for data
+	output reg [3:0] ready, // input buffer is ready for data
 
 	input wr_en,
 	input [31:0] din,
@@ -38,6 +38,9 @@ module sha256core #(
 	output dout_seq_num, dout_ctx_num,
 	output reg dout_en = 0
 	);
+
+	// hashcat: set here, not in the port list, whose initial values Quartus ignores
+	initial ready = 4'b1111;
 
 	reg seq_num_r = 0, start_r = 0;
 	always @(posedge CLK) begin

@@ -151,6 +151,7 @@ module memory #(
 	reg [`MEM_TOTAL_MSB :0] ext_wr_addr_r;
 	reg wr_en_r = 0, ext_wr_en_r = 0;
 
+	generate
 	if (N_CORES == 3) begin
 
 		// Optimization for N_CORES=3 (saves 15 LUT)
@@ -182,6 +183,7 @@ module memory #(
 				wr_en_r <= 0;
 
 	end // N_CORES
+	endgenerate
 
 
 	always @(posedge CLK) begin

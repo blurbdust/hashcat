@@ -105,6 +105,7 @@ module sha256unit #(
 	//
 	// **********************************************************
 	
+	generate
 	if (~UNIT_IS_DUMMY) begin
 	
 		(* KEEP_HIERARCHY="true" *)
@@ -158,5 +159,6 @@ module sha256unit #(
 		);
 
 	end
+	endgenerate
 
 endmodule

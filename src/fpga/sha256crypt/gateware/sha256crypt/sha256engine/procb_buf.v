@@ -38,9 +38,12 @@ module procb_buf #(
 	input [N_THREADS_MSB :0] rd_thread_num,
 	input rd_en, rd_rst, lookup_en,
 	output aempty,// lookup_empty,
-	output reg lookup_empty = 1,
+	output reg lookup_empty,
 	output [`PROCB_D_WIDTH-1 :0] dout
 	);
+
+	// hashcat: set here, not in the port list, whose initial values Quartus ignores
+	initial lookup_empty = 1;
 
 	(* RAM_STYLE="DISTRIBUTED" *)
 	reg [`PROCB_D_WIDTH-1 :0] mem [0: `PROCB_N_RECORDS*N_THREADS-1];

@@ -38,12 +38,12 @@ module unit_input #(
 
 	input [INPUT_WIDTH-1:0] in,
 	input wr_en, ctrl,
-	output reg afull = 0, ready = 1,
+	output reg afull = 0, ready,
 
 	output reg [31:0] out,
 	output [`MEM_TOTAL_MSB :0] mem_addr,
 	input rd_en,
-	output reg empty = 1,
+	output reg empty,
 
 	// thread_state (ts)
 	output [N_THREADS_MSB :0] ts_num, // Thread #
@@ -53,6 +53,12 @@ module unit_input #(
 
 	output reg [`ENTRY_PT_MSB:0] entry_pt_curr = 0
 	);
+
+	// hashcat: set here, not in the port list, whose initial values Quartus ignores
+	initial begin
+		ready = 1;
+		empty = 1;
+	end
 
 	assign ts_wr = `THREAD_STATE_WR_RDY;
 
