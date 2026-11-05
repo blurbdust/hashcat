@@ -150,9 +150,13 @@ class StoreyPeakSoC(SoCMini):
             "set_global_assignment -name STRATIX_CONFIGURATION_DEVICE EPCQ256",
         ]
 
+        # Extra setup uncertainty squeezes placement. Only the fitter sees it, so the Timing Analyzer
+        # reports the design's real slack.
         if placement_margin:
             platform.toolchain.additional_sdc_commands += [
-                f"set_clock_uncertainty -add -setup -from [get_clocks sys_clk] -to [get_clocks sys_clk] {placement_margin:.3f}",
+                "if {$::TimeQuestInfo(nameofexecutable) eq \"quartus_fit\"} {",
+                f"    set_clock_uncertainty -add -setup -from [get_clocks sys_clk] -to [get_clocks sys_clk] {placement_margin:.3f}",
+                "}",
             ]
 
         self.leds = LedChaser(pads=platform.request_all("user_led"), sys_clk_freq=sys_clk_freq)
