@@ -7,6 +7,9 @@
  * modification, are permitted.
  *
  */
+
+// Modified for hashcat from John the Ripper's original.
+// src/fpga/md5crypt/PROVENANCE.md lists every change.
 `include "md5.vh"
 
 
@@ -132,6 +135,7 @@ module md5unit #(
 	//
 	// **********************************************************
 
+	generate
 	if (~UNIT_IS_DUMMY) begin
 
 		(* KEEP_HIERARCHY="true" *)
@@ -182,5 +186,6 @@ module md5unit #(
 		);
 
 	end
+	endgenerate
 
 endmodule

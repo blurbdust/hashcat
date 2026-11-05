@@ -7,6 +7,9 @@
  * modification, are permitted.
  *
  */
+
+// Modified for hashcat from John the Ripper's original.
+// src/fpga/md5crypt/PROVENANCE.md lists every change.
 `include "md5.vh"
 
 //
@@ -33,13 +36,13 @@ module unit_input_async #(
 	input [INPUT_WIDTH-1:0] in,
 	input ctrl,
 	input wr_en,
-	output reg afull = 0, ready = 1,
+	output reg afull = 0, ready,
 
 	input RD_CLK,
 	output reg [31:0] out,
 	output [`MEM_TOTAL_MSB :0] mem_addr,
 	input rd_en,
-	output reg empty = 1,
+	output reg empty,
 
 	// thread_state (ts)
 	//output reg [N_THREADS_MSB :0] ts_num = 0, // Thread #
@@ -50,6 +53,12 @@ module unit_input_async #(
 
 	output reg [`ENTRY_PT_MSB:0] entry_pt_curr = 0
 	);
+
+	// hashcat: set here, not in the port list, whose initial values Quartus ignores
+	initial begin
+		ready = 1;
+		empty = 1;
+	end
 /*
 	reg ts_wr_en_r = 0;
 	(* SHREG_EXTRACT="no" *) reg [`THREAD_STATE_MSB :0] ts_rd_r;

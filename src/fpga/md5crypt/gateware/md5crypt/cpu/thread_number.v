@@ -27,9 +27,15 @@ module thread_number #(
 	input NEXT_THREAD,
 	output RELOAD,
 
-	output reg [`MSB(N_THREADS-1) :0] thread_num = 0, thread_num_ahead = 1,
-	output reg thread_init = 1
+	output reg [`MSB(N_THREADS-1) :0] thread_num = 0, thread_num_ahead,
+	output reg thread_init
 	);
+
+	// hashcat: set here, not in the port list, whose initial values Quartus ignores
+	initial begin
+		thread_num_ahead = 1;
+		thread_init = 1;
+	end
 
 	reg suspended_r = 1;
 

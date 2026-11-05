@@ -7,6 +7,9 @@
  * modification, are permitted.
  *
  */
+
+// Modified for hashcat from John the Ripper's original.
+// src/fpga/md5crypt/PROVENANCE.md lists every change.
 `include "md5.vh"
 
 //
@@ -43,7 +46,7 @@ module uob16pq #(
 	input [IN_WIDTH-1:0] din,
 	input wr_en, set_input_complete,
 	input [`UOB_ADDR_MSB :0] wr_addr,
-	output reg ready = 1, // buffer is empty, ready for write
+	output reg ready, // buffer is empty, ready for write
 	output reg full = 0, // buffer can't accept data
 	// Briefly:
 	// ready=1: any thread can start write
@@ -52,8 +55,14 @@ module uob16pq #(
 	input clk_rd,
 	output reg [OUT_WIDTH-1 :0] dout = 0,
 	input rd_en,
-	output reg empty = 1
+	output reg empty
 	);
+
+	// hashcat: set here, not in the port list, whose initial values Quartus ignores
+	initial begin
+		ready = 1;
+		empty = 1;
+	end
 
 
 	// ***********************************

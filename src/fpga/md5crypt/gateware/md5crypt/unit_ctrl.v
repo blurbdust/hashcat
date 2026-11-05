@@ -7,6 +7,9 @@
  * modification, are permitted.
  *
  */
+
+// Modified for hashcat from John the Ripper's original.
+// src/fpga/md5crypt/PROVENANCE.md lists every change.
 `include "md5.vh"
 
 `ifdef SIMULATION
@@ -264,8 +267,6 @@ module unit_ctrl_dummy #(
 	(* KEEP="true" *) assign dout = 0;
 	(* KEEP="true" *) assign empty = 1;
 	(* KEEP="true" *) assign core_wr_en = 0;
-	(* KEEP="true" *) assign core_dout_en = 0;
-	(* KEEP="true" *) assign core_dout_seq = 0;
 	(* KEEP="true" *) assign core_din = 0;
 	(* KEEP="true" *) assign core_wr_addr = 0;
 	(* KEEP="true" *) assign core_blk_op = 0;

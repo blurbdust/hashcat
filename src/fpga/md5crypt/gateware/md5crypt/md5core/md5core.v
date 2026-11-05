@@ -19,7 +19,7 @@ module md5core(
 	input start, // asserts on cycle 0 of each sequence
 	input ctx_num,
 	input seq_num,
-	output reg [3:0] ready = 4'b1111, // input buffer is ready for data
+	output reg [3:0] ready, // input buffer is ready for data
 
 	input wr_en,
 	input [31:0] din,
@@ -32,6 +32,9 @@ module md5core(
 	output dout_seq_num, dout_ctx_num,
 	output reg dout_en = 0
 	);
+
+	// hashcat: set here, not in the port list, whose initial values Quartus ignores
+	initial ready = 4'b1111;
 
 
 	reg seq_num_r = 0, start_r = 0;
@@ -446,8 +449,11 @@ endmodule
 module cnto2rotate_opt(
 	input CLK,
 	input [6:0] cnto,
-	output reg [3:0] rotate_opt = 4'b1010 // s=16
+	output reg [3:0] rotate_opt // s=16
 	);
+
+	// hashcat: set here, not in the port list, whose initial values Quartus ignores
+	initial rotate_opt = 4'b1010;
 
 	localparam [73*8-1 :0] S = {
 		8'd16, 8'd16, 8'd16, 8'd16, 8'd16,

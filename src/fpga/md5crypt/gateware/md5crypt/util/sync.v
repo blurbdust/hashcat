@@ -7,6 +7,9 @@
  * modification, are permitted.
  *
  */
+
+// Modified for hashcat from John the Ripper's original.
+// src/fpga/md5crypt/PROVENANCE.md lists every change.
  
 
 // 2-stage FF synchronizer
@@ -28,6 +31,7 @@ module sync_sig #(
 	reg [1:0] ff = {2{INIT[0]}};
 	assign out = ff[1];
 	
+	generate
 	if (CLK1) begin
 	
 		always @(posedge clk)
@@ -42,6 +46,7 @@ module sync_sig #(
 			ff[1:0] <= { ff[0], sig };
 
 	end
+	endgenerate
 
 endmodule
 
