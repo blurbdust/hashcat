@@ -18,8 +18,12 @@ All under `gateware/sha512crypt/`, in upstream's directories. The set is the uni
 |---|---|
 | `cpu/program.vh`, `sha512core/sha512_Kt_bram.v`, `sha512engine/next_thread_num.v`, `util/log2.vh` | none |
 | `sha512.vh` | `log2.vh` included; `SIMULATION` defined |
-| `util/asymm_bram.v` | `log2.vh` included |
-| the 27 other files in `unit/`, `cpu/`, `sha512core/` and `sha512engine/` | the include path |
+| `util/asymm_bram.v` | `log2.vh` included; `asymm_bram_min_rd` keeps wide words written by one process (Quartus) |
+| `unit/sha512unit.v` | the include path; `generate` around a module-level `if` block (Quartus) |
+| `unit/uob.v` | the include path; `generate` around module-level `if` blocks; output ports' nonzero initial values set in the body (Quartus) |
+| `cpu/thread_number.v`, `sha512core/core.v`, `sha512engine/create_blk.v`, `sha512engine/procb_buf.v`, `sha512engine/process_bytes.v`, `unit/core_ctrl.v`, `unit/unit_input.v` | the include path; output ports' nonzero initial values set in the body (Quartus) |
+| `unit/unit_ctrl.v` | the include path; `unit_ctrl_dummy` no longer drives its input `core_dout_en` (Quartus) |
+| the 17 other files in `unit/`, `cpu/`, `sha512core/` and `sha512engine/` | the include path |
 | `sha512core/shreg.v` | behavioural shift register instead of `SRL16E` (it includes nothing, so the include path does not apply) |
 
 Not taken: upstream's packet layer (`pkt_comm/`), its arbiters (`arbiter_tx.v`, `arbiter_rx.v`), comparator (`comparator.v`, `xcrypt_cmp_config.v`), broadcast network (`bcast_net.v`), top (`sha512crypt.v`), the ZTEX shell (`ztex_inouttraffic/`), `main.vh`, `sha512core/ff32.v`, `util/sync.v`, `util/delay.v`, `util/fifo_sync.v` and `util/regs2d.v` (the unit does not instantiate them: `uob.v` uses `sync_pulse` only when `ASYNC` is set, and the unit leaves it clear), the constraint and partition files, and the test benches (`sha512crypt_test.v`, `unit/sha512unit_test.v`, `sha512core/core_test.v`). hashcat's feeder and collector replace the arbiters and the comparator.
@@ -39,6 +43,17 @@ Upstream's `sha512.vh` leaves `` `define SIMULATION`` commented out. Without it,
 ### The shift register
 
 Upstream's `shreg.v` instantiates the Xilinx `SRL16E` primitive once per bit, with the address fixed at `DEPTH-1`. That ties the cores to Xilinx and leaves Verilator without a model. It now holds the same delay line as a behavioural register array, zero at start as `SRL16E` with `INIT` 0 is, which Vivado and Quartus infer as shift register LUTs or registers. The ports and the delay are unchanged. This is md5crypt's and sha256crypt's `shreg.v` change, made the same way; only the default `WIDTH` (64) differs, as upstream's does.
+
+### Quartus
+
+Quartus Prime Standard rejects three things in upstream's files that Vivado and Verilator accept, and silently drops a fourth. The changes leave the logic as it was; the datapath bench gives the same results in the same number of cycles before and after them.
+
+- **Module-level `if` without `generate`.** Verilog-2005 allows a conditional generate block straight in a module body, but Quartus Standard stops with error 10170 ("expecting endmodule") unless it sits between `generate` and `endgenerate`. `unit/sha512unit.v` (the unit controls) and `unit/uob.v` (both `ASYNC` selections) now have the keywords around those blocks. Nothing inside them changed.
+- **A memory written from several processes.** Upstream's `asymm_bram_min_rd` follows Xilinx's asymmetric block RAM template: a narrow memory, read one entry at a time, and written by one `always` block per narrow entry of the wide input. Quartus reports every entry as having multiple constant drivers (error 10028). The memory now holds one wide word per write address, written by one `always` block; narrow entry `{a, i}` of upstream's layout is slice `i` of word `a`. The read registers the word and the slice number when `rd_en` is high and selects the slice after the registers, so `dout` changes on the same edges with the same values as upstream's registered `dout`, and the power-up value is still `INIT`. Only `uob.v` uses it (512 words of 16 bits). `asymm_bram_min_wr`, unused here, is unchanged.
+- **A dummy that drives an input.** `unit_ctrl_dummy`, the stand-in upstream uses for a unit marked dummy in `UNIT_CONF`, assigns 0 to its input port `core_dout_en`. Quartus stops on it with error 10231 although no unit here is a dummy (`UNIT_CONF` is 0). That one assignment is gone; the rest of the dummy, including its implicit nets, is upstream's.
+- **Initial values in port declarations.** The unit has no reset; it starts from its registers' initial values. Many are written in the port list, as in `output reg thread_init = 1`. Quartus Standard ignores an initial value there, without a message, while it honours the same value on a register declared in the module body or set by an `initial` statement (found on sha256crypt's unit, which returned nothing on the card; its `thread_init` was reported "Stuck at GND"). Every output port of a module the unit uses that starts at a value other than 0 now has its value set by an `initial` statement right after the port list, and its port declaration no longer carries it: `thread_init` and `thread_num_ahead` (`cpu/thread_number.v`), `ready` (`sha512core/core.v`, the real core), `save_wr_en` and `len` (`sha512engine/create_blk.v`), `lookup_empty` (`sha512engine/procb_buf.v`), `ts_wr_en` (`sha512engine/process_bytes.v`, the real module), `ctx_num` and `seq_num` (`unit/core_ctrl.v`), `ready` (`unit_input`) and `empty` (`unit_input_fifo`, `regNxW`) in `unit/unit_input.v`, and `ready` and `empty` (`unit/uob.v`). Port initial values of 0 (among them `process_bytes`'s `ts_wr`, `` `THREAD_STATE_NONE ``, and `add3`'s `o`, whose `IV` no instance sets), and registers upstream leaves without one (which Xilinx starts at 0), are left alone: by default Quartus may give such a register either power-up level (Power-Up Don't Care; the first build made `cpu.v`'s `comp_dout[9]`, only ever written with 1, a constant 1), so the Storey Peak target turns that off (`ALLOW_POWER_UP_DONT_CARE OFF`), and every register without a value Quartus reads starts at 0, as on Xilinx. The stand-ins compiled only without `SIMULATION` (`core`'s and `process_bytes`'s), `core_dummy` and `asymm_bram_min_wr`, none of which a unit here uses, are unchanged.
+
+Quartus warns about the Xilinx attributes (`RAM_STYLE`, `KEEP_HIERARCHY`, `FSM_EXTRACT` and the like) and ignores them; they are left in place.
 
 ### Left as upstream wrote it
 
@@ -75,4 +90,4 @@ Shared with every algorithm after bcrypt, identical in each: `hcfpga_*.py` and `
 
 ## Toolchain
 
-LiteX and Verilator for the simulated board, Verilator for the bench. No board has been built yet.
+LiteX and Verilator for the simulated board, Verilator for the bench. Quartus Prime Standard 25.1std for the Microsoft Storey Peak (Stratix V), `sha512crypt_storeypeak_dma.py`.

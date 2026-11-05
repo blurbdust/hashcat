@@ -102,6 +102,7 @@ module sha512unit #(
 	//
 	// **********************************************************
 
+	generate
 	if (~UNIT_IS_DUMMY) begin
 
 		(* KEEP_HIERARCHY="true" *)
@@ -153,5 +154,6 @@ module sha512unit #(
 		);
 
 	end
+	endgenerate
 
 endmodule

@@ -26,9 +26,15 @@ module core_ctrl #(
 	)(
 	input CLK,
 	output reg [N_CORES-1:0] core_start = 0,
-	output reg ctx_num = 1,// seq_num = 1
-	output reg [N_CORES-1:0] seq_num = {N_CORES{1'b1}}
+	output reg ctx_num,// seq_num = 1
+	output reg [N_CORES-1:0] seq_num
 	);
+
+	// hashcat: set here, not in the port list, whose initial values Quartus ignores
+	initial begin
+		ctx_num = 1;
+		seq_num = {N_CORES{1'b1}};
+	end
 
 	// 1. Traverse cores, ctx 0, seq0
 	// 2. ctx1, seq0

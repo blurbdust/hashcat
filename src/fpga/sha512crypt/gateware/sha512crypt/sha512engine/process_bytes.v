@@ -31,7 +31,7 @@ module process_bytes #(
 
 	// thread_state (ts)
 	output [N_THREADS_MSB :0] ts_wr_num, ts_rd_num, // Thread #
-	output reg ts_wr_en = 1,
+	output reg ts_wr_en,
 	output reg [`THREAD_STATE_MSB :0] ts_wr = `THREAD_STATE_NONE,
 	input [`THREAD_STATE_MSB :0] ts_rd,
 
@@ -65,6 +65,10 @@ module process_bytes #(
 
 	output err
 	);
+
+	// hashcat: set here, not in the port list, whose initial values Quartus ignores
+	initial
+		ts_wr_en = 1;
 
 	genvar i;
 	integer k;

@@ -100,7 +100,7 @@ module asymm_bram_min_rd #(
 	input [`MSB(maxDEPTH-1) :0] wr_addr,
 
 	input rd_clk,
-	output reg [minWIDTH-1:0] dout = INIT,
+	output [minWIDTH-1:0] dout,
 	input rd_en,
 	input [`MSB(maxDEPTH*RATIO-1) :0] rd_addr
 	);
@@ -108,31 +108,33 @@ module asymm_bram_min_rd #(
 	localparam log2RATIO = `MSB(RATIO);
 
 	integer k;
-	
+
+	// hashcat: one memory of wide words, written whole. Narrow word {a, i} is
+	// slice i of wide word a, as upstream's {wr_addr, lsbaddr} wrote it. The read
+	// registers the wide word and the slice number on rd_en and selects after,
+	// so dout changes on the same edges and holds the same values as upstream's
+	// registered dout. Upstream wrote the narrow memory from RATIO always blocks,
+	// which Quartus rejects as multiple drivers.
 	(* RAM_STYLE="BLOCK" *)
-	reg [minWIDTH-1:0] mem [0:RATIO*maxDEPTH-1];
+	reg [minWIDTH*RATIO-1:0] mem [0:maxDEPTH-1];
 	initial
-		for (k=0; k < RATIO*maxDEPTH; k=k+1)
+		for (k=0; k < maxDEPTH; k=k+1)
 			mem[k] = 0;
 
-	genvar i;
+	always @(posedge wr_clk)
+		if (wr_en)
+			mem[wr_addr] <= din;
 
-	// Describe the port with the smaller data width exactly as you are used to
-	// for symmetric block RAMs
+	reg [minWIDTH*RATIO-1:0] rd_word = INIT;
+	reg [log2RATIO-1:0] rd_lsb = 0;
+
 	always @(posedge rd_clk)
-		if (rd_en)
-			dout <= mem[rd_addr];
-
-	// A generate-for is used to describe the port with the larger data width in a
-	// generic and compact way
-	generate for (i = 0; i < RATIO; i = i+1)
-		begin: portB
-			localparam [log2RATIO-1:0] lsbaddr = i;
-			always @(posedge wr_clk)
-				if (wr_en)
-					mem[{wr_addr, lsbaddr}] <= din[(i+1)*minWIDTH-1:i*minWIDTH];
+		if (rd_en) begin
+			rd_word <= mem[rd_addr[`MSB(maxDEPTH*RATIO-1) :log2RATIO]];
+			rd_lsb <= rd_addr[log2RATIO-1:0];
 		end
-	endgenerate
+
+	assign dout = rd_word[rd_lsb*minWIDTH +: minWIDTH];
 
 endmodule
 

@@ -45,14 +45,14 @@ module create_blk #(
 	output reg full = 0, // busy with padding
 	output reg blk_end = 0, // asserts for 1 cycle at the end of the block
 
-	output reg save_wr_en = 1, // initialize procb_saved_state on startup
+	output reg save_wr_en, // initialize procb_saved_state on startup
 	output [N_THREADS_MSB :0] save_thread_num,
 	output [`PROCB_SAVE_WIDTH-1 :0] save_data,
 
 	output reg mem_rd_en = 0,
 	output reg [N_THREADS_MSB :0] thread_num = 0,
 	output reg [`MEM_ADDR_MSB :0] mem_rd_addr,
-	output reg [3:0] len = 4,
+	output reg [3:0] len,
 	output reg [2:0] off = 0,
 	output reg add0x80pad = 0, add0pad = 0, add_total = 0,
 	output reg [`PROCB_TOTAL_MSB :0] total = 0,
@@ -60,6 +60,12 @@ module create_blk #(
 
 	output reg err = 0
 	);
+
+	// hashcat: set here, not in the port list, whose initial values Quartus ignores
+	initial begin
+		save_wr_en = 1;
+		len = 4;
+	end
 
 	localparam BLK_SIZE = 128;
 

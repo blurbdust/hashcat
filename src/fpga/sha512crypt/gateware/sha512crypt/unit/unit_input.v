@@ -40,7 +40,7 @@ module unit_input #(
 	input [INPUT_WIDTH-1:0] in,
 	input wr_en, ctrl,
 	output afull,
-	output reg ready = 1,
+	output reg ready,
 
 	output [MEM_WIDTH-1 :0] out,
 	output [`MEM_TOTAL_MSB :0] mem_addr,
@@ -55,6 +55,10 @@ module unit_input #(
 
 	output reg [`ENTRY_PT_MSB:0] entry_pt_curr = 0
 	);
+
+	// hashcat: set here, not in the port list, whose initial values Quartus ignores
+	initial
+		ready = 1;
 
 	assign ts_wr = `THREAD_STATE_WR_RDY;
 
@@ -216,9 +220,13 @@ module unit_input_fifo #(
 	output reg afull = 0,
 
 	input rd_en,
-	output reg empty = 1,
+	output reg empty,
 	output [WIDTH-1:0] dout
 	);
+
+	// hashcat: set here, not in the port list, whose initial values Quartus ignores
+	initial
+		empty = 1;
 
 	(* RAM_STYLE="DISTRIBUTED" *)
 	reg [WIDTH-1:0] ram [31:0];
@@ -264,9 +272,13 @@ module regNxW #(
 	input CLK,
 	input [WIDTH-1 :0] din,
 	input wr_en, rd_en, rst,
-	output reg empty = 1,
+	output reg empty,
 	output [N*WIDTH-1 :0] dout
 	);
+
+	// hashcat: set here, not in the port list, whose initial values Quartus ignores
+	initial
+		empty = 1;
 
 	reg [`MSB(N-1) :0] cnt = 0;
 	always @(posedge CLK) begin
