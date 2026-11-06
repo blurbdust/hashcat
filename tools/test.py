@@ -5052,13 +5052,13 @@ EDGE_SKIP_MODES = {2000}
 
 EDGE_SKIP_OUT_MATCH = {14000, 14100, 14300, 22000, 22001, 31500, 31600}
 
-# 1500 prints a recovered byte above 0x7f with its top bit cleared wherever that leaves it printable
-# (module_build_plain_postprocess). DES ignores that bit, so the printed password is another spelling
-# of the generated one with the same hash. Its outfile is checked through the module's own verify
-# rather than compared literally.
+# 1500 and 75200 print a recovered byte above 0x7f with its top bit cleared wherever that leaves it
+# printable (module_build_plain_postprocess). DES ignores that bit, so the printed password is
+# another spelling of the generated one with the same hash. Their outfiles are checked through the
+# module's own verify rather than compared literally.
 
 # 36901 prints the diversified key rather than the five-byte candidate index.
-EDGE_VERIFY_OUT = {1500, 36901}
+EDGE_VERIFY_OUT = {1500, 36901, 75200}
 
 # The modes whose -HH says same-salt is "Not" allowed but that the suite runs with a shared salt
 # anyway (test_edge.sh SKIP_SAME_SALT_HASH_TYPES, the active list).
