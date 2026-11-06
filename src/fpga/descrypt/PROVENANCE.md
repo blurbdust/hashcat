@@ -1,6 +1,6 @@
 # descrypt FPGA provenance
 
-The DES pipeline in this design is John the Ripper's ZTEX descrypt core, written by Denis Burykin: a ring of 16 registered DES rounds with the salt in the E-box, and the key preparation (crypt(3)'s 7-bit packing and permuted choice 1) its arbiter applies before a key enters the ring. hashcat uses them under their own permissive license and has changed one line of one header. Every file taken from upstream keeps its original header verbatim, and the modified file adds a notice under that header pointing here.
+The DES pipeline in this design is John the Ripper's ZTEX descrypt core, written by Denis Burykin: a ring of 16 registered DES rounds with the salt in the E-box, and the key preparation (crypt(3)'s 7-bit packing and permuted choice 1) its arbiter applies before a key enters the ring. hashcat uses them under their own permissive license and has changed one line of one header and one port declaration. Every file taken from upstream keeps its original header verbatim, and each modified file adds a notice under that header pointing here.
 
 The rest of the design was written for hashcat: the engine (the ring's batch control, result banks, comparator and C2H records), the datapath top, the LiteX wrapper and the bench here, and the H2C intake, end-of-batch tail, wrapper base, simulated board and bench they use (identical in every algorithm after bcrypt).
 
@@ -16,7 +16,8 @@ All under `gateware/descrypt/descrypt_core/`, upstream's directory.
 
 | File | Change |
 |---|---|
-| `descrypt16.v`, `descrypt_round.v`, `rotate_1or2_pc2.v`, `des_loop.v`, `Eblock.v`, `SP_v2.v`, `IP1.v` | none: the DES ring |
+| `descrypt16.v`, `rotate_1or2_pc2.v`, `des_loop.v`, `Eblock.v`, `SP_v2.v`, `IP1.v` | none: the DES ring |
+| `descrypt_round.v` | the DES ring's rounds; `descrypt_round0`'s last port is declared `output reg valid_out = 0` (below) |
 | `crypt3_ascii2bin.v`, `pc1.v` | none: the key preparation upstream's `arbiter.v` instantiates |
 | `descrypt.vh` | `COMPARE_35_BIT` off, so `HASH_MSB` is 63 (below) |
 
@@ -25,6 +26,10 @@ Not taken: upstream's core wrapper `descrypt_core.v` (the ring's control, a 35-b
 ### `COMPARE_35_BIT`
 
 Upstream's comparator compares the 35 low bits of each result ("64 is a remnant from earlier versions, may not work"), and `descrypt16`'s `hash_out` is `IP1_out[HASH_MSB:0]`, so with `COMPARE_35_BIT` the ring gives out only 35 of the 64 result bits. hashcat needs all 64 (mode 1500's digest is the whole block). The define is commented out, which makes `HASH_MSB` 63 and `DIN_MSB` 64; `descrypt16` is the only taken file that uses either, and its 64-bit output was checked against crypt(3) slot by slot before the engine was written. The "may not work" applies to upstream's comparator and core input bus, which are not taken.
+
+### `descrypt_round0`'s `valid_out`
+
+Upstream declares the last port of `descrypt_round0` as `reg valid_out = 0`, with no direction. Verilog and SystemVerilog give a port without a direction the previous port's, `output`, and Vivado and Verilator accept it; Quartus Prime Standard (Analysis, Error 10170 "expecting a direction") refuses it. The port now says `output reg valid_out = 0`: the same direction, type and initial value, so nothing changes for Vivado or Verilator (the bench's records and cycle counts are the same before and after). The other taken files pass Quartus's analysis unchanged.
 
 ### Lint
 
@@ -50,4 +55,4 @@ Shared with every algorithm after bcrypt, identical in each: `hcfpga_*.py` and `
 
 ## Toolchain
 
-LiteX and Verilator for the simulated board, Verilator for the bench. No board has been built yet.
+LiteX and Verilator for the simulated board, Verilator for the bench. Quartus Prime Standard for the Microsoft Storey Peak (Stratix V) target, `descrypt_storeypeak_dma.py`.
