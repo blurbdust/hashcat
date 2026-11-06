@@ -7,6 +7,7 @@
  * modification, are permitted.
  *
  */
+// Modified for hashcat, see PROVENANCE.md.
 
 `include "descrypt.vh"
 
@@ -65,7 +66,8 @@ module descrypt_round0(
 	
 	output [55:0] CiDi_out,
 	output [63:0] Ti_out,
-	reg valid_out = 0
+	// hashcat: direction given, Quartus refuses a port declared without one.
+	output reg valid_out = 0
 	);
 
 	//(* SHREG_EXTRACT="NO" *) 

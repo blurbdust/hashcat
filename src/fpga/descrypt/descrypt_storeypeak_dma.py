@@ -173,16 +173,22 @@ class StoreyPeakSoC(SoCMini):
             self.dma_up.source.connect(self.pcie_dma0.sink),
         ]
 
+# The build tested on the card: 8 units already outrun the candidates the host can feed over PCIe,
+# and the placement margin that closes timing at every corner.
+UNITS            = 8
+SYS_CLK_FREQ     = 160e6
+PLACEMENT_MARGIN = 0.5
+
 def main():
     Wrapper = load_wrapper()
 
     parser = argparse.ArgumentParser(description=f"hcfpga {ALGO} on a Microsoft Storey Peak (Stratix V).")
     parser.add_argument("--build",            action="store_true", help="Build the bitstream.")
     parser.add_argument("--load",             action="store_true", help="Load the bitstream over the card's own JTAG.")
-    parser.add_argument("--units",            type=int,   default=1,     help=f"Computing units: {getattr(Wrapper, 'SIM_UNITS_HELP', 'see the wrapper')}.")
+    parser.add_argument("--units",            type=int,   default=UNITS, help=f"Computing units: {getattr(Wrapper, 'SIM_UNITS_HELP', 'see the wrapper')}.")
     parser.add_argument("--no-cmp",           action="store_true",       help="Omit the on-device comparator. Every candidate then returns to the host.")
-    parser.add_argument("--sys-clk-freq",     type=float, default=100e6, help="System clock (Hz).")
-    parser.add_argument("--placement-margin", type=float, default=0.0,   help="Extra ns of setup clock uncertainty on sys_clk to over-constrain placement.")
+    parser.add_argument("--sys-clk-freq",     type=float, default=SYS_CLK_FREQ, help="System clock (Hz).")
+    parser.add_argument("--placement-margin", type=float, default=PLACEMENT_MARGIN, help="Extra ns of setup clock uncertainty on sys_clk to over-constrain placement.")
     parser.add_argument("--fitter-seed",      type=int,   default=None,  help="Quartus fitter seed.")
     parser.add_argument("--threads",          type=int,   default=None,  help="Cap Quartus parallel processors.")
     args = parser.parse_args()
