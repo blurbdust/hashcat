@@ -69,6 +69,8 @@ typedef struct fpga_ident
   u32  n;
   u32  r;
 
+  bool cmp;
+
   bool asserted;
 
 } fpga_ident_t;

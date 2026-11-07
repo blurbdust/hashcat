@@ -787,7 +787,8 @@ void *platform_init (hashcat_ctx_t *hashcat_ctx)
 
     member_buf->dev = dev;
 
-    member_buf->returns_all = ((strcmp (dev->ident.board, "ypcb") == 0) || (strcmp (dev->ident.board, "storeypeak") == 0)) ? true : false;
+    // These boards ship without the comparator unless the design says it has one.
+    member_buf->returns_all = ((dev->ident.cmp == false) && ((strcmp (dev->ident.board, "ypcb") == 0) || (strcmp (dev->ident.board, "storeypeak") == 0))) ? true : false;
 
     member_name (member_buf, dev);
 
