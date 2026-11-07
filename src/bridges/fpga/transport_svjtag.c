@@ -73,6 +73,7 @@
 #define SVJTAG_RECV_MAX     (64u << 10)
 
 #define SVJTAG_TCK_DEFAULT  30000000
+#define SVJTAG_TCK_FLOOR    7500000
 
 typedef struct svjtag_scan
 {
@@ -1046,9 +1047,26 @@ static int svjtag_enumerate (hashcat_ctx_t *hashcat_ctx, fpga_dev_t *devs, const
 
     snprintf (p->port, sizeof (p->port), "%.63s", e->d_name);
 
-    if (svjtag_bringup (p, svjtag_tck_hz ()) == false)
+    // A long cable or a busy hub can garble the top rate, so halve the clock until the IDCODE and
+    // the scratch register read back clean.
+    const u32 tck_top = svjtag_tck_hz ();
+
+    bool up     = false;
+    bool opened = false;
+
+    for (u32 tck_hz = tck_top; tck_hz >= MIN (tck_top, SVJTAG_TCK_FLOOR); tck_hz /= 2)
     {
-      if ((p->ftdi_open == false) && (access ("/dev/bus/usb", R_OK) == 0)) saw_permission = true;
+      up     = svjtag_bringup (p, tck_hz);
+      opened = p->ftdi_open;
+
+      if ((up == true) || (opened == false)) break;
+
+      svjtag_shutdown (p);
+    }
+
+    if (up == false)
+    {
+      if ((opened == false) && (access ("/dev/bus/usb", R_OK) == 0)) saw_permission = true;
 
       svjtag_shutdown (p);
 
