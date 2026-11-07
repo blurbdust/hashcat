@@ -111,7 +111,7 @@ class BcryptSoC(SoCMini):
         stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
         SoCMini.__init__(self, platform, sys_clk_freq,
-            ident         = f"hcfpga/1;board={BOARD};algo=bcrypt;cores={num_cores};clk={int(sys_clk_freq/1e6)};abi={abi};build={stamp}",
+            ident         = f"hcfpga/1;board={BOARD};algo=bcrypt;cores={num_cores};clk={int(sys_clk_freq/1e6)};abi={abi};cmp={int(bool(with_cmp))};build={stamp}",
             ident_version = False,
         )
 
