@@ -28,6 +28,7 @@ from litepcie.software      import generate_litepcie_software_headers
 from gateware.bcrypt_dma_wrapper import BcryptDmaWrapper
 
 from hcfpga_abi import fpga_abi_current
+from hcfpga_jtaglink import JTAGLink, connect_engine
 from hcfpga_litepcie import PCIE_CLASS_CODE, clock_mhz
 from hcfpga_stratixv import StratixVTemperature, StratixVChipID, sv_pcie_endpoint_params, sv_flash_image, sv_flash_command
 
@@ -102,7 +103,7 @@ class _CRG(LiteXModule):
         ]
 
 class BcryptSoC(SoCMini):
-    def __init__(self, sys_clk_freq=150e6, num_cores=1, with_led=True, feed_group=0, feed_shard=0, collect_group=0, init_batch=0, num_cores_dist=0, with_dump=1, with_cmp=1, din_bits=32, abi=1, cslow=1, pcie_connector=0, placement_margin=0.0, as_clock_mhz=100):
+    def __init__(self, sys_clk_freq=150e6, num_cores=1, with_led=True, feed_group=0, feed_shard=0, collect_group=0, init_batch=0, num_cores_dist=0, with_dump=1, with_cmp=1, din_bits=32, abi=1, cslow=1, pcie_connector=0, placement_margin=0.0, as_clock_mhz=100, with_jtaglink=False):
         platform = microsoft_storey_peak.Platform()
 
         self.crg = _CRG(platform, sys_clk_freq, cslow)
@@ -182,16 +183,22 @@ class BcryptSoC(SoCMini):
         dw = self.pcie_dma0.data_width
 
         self.dma_down = stream.Converter(dw, 32, reverse=False)
-        self.comb += [
-            self.pcie_dma0.source.connect(self.dma_down.sink),
-            self.dma_down.source.connect(self.bcrypt.sink),
-        ]
+        self.comb += self.pcie_dma0.source.connect(self.dma_down.sink)
 
         self.dma_up = stream.Converter(8, dw, reverse=False)
-        self.comb += [
-            self.bcrypt.source.connect(self.dma_up.sink),
-            self.dma_up.source.connect(self.pcie_dma0.sink),
-        ]
+        self.comb += self.dma_up.source.connect(self.pcie_dma0.sink)
+
+        if with_jtaglink:
+            # The same engine over the card's JTAG, for slots where the PCIe link does not come up.
+            self.jtaglink = JTAGLink(platform, csr_base=self.mem_map.get("csr", 0))
+            self.jtaglink.add_timing_constraints(platform)
+            self.bus.add_master(name="jtaglink", master=self.jtaglink.bus)
+            connect_engine(self, self.jtaglink, self.dma_down.source, self.dma_up.sink, self.bcrypt)
+        else:
+            self.comb += [
+                self.dma_down.source.connect(self.bcrypt.sink),
+                self.bcrypt.source.connect(self.dma_up.sink),
+            ]
 
 def main():
     parser = argparse.ArgumentParser(description="hcfpga bcrypt on a Microsoft Storey Peak (Stratix V).")
@@ -217,6 +224,7 @@ def main():
     parser.add_argument("--as-clock",     type=float, default=100, choices=[12.5, 25, 50, 100], help="Active Serial clock in MHz for booting from flash. The factory image uses 25.")
     parser.add_argument("--threads",      type=int,   default=None, help="Same as --num-processors, the name src/fpga/Makefile passes.")
     parser.add_argument("--num-processors", type=int, default=None, help="Cap Quartus parallel processors, so several builds can share a machine.")
+    parser.add_argument("--jtaglink",     action="store_true", help="Also reach the engine over the card's JTAG, for slots where PCIe does not come up.")
     args = parser.parse_args()
 
     mhz  = clock_mhz(args.sys_clk_freq)
@@ -235,7 +243,9 @@ def main():
 
     cs_suffix = "_cs2" if args.cslow == 2 else ""
 
-    name = f"bcrypt_{BOARD}_dma_c{args.cores}_{mhz}mhz{fg_suffix}{nd_suffix}{nc_suffix}{db_suffix}{ds_suffix}{fs_suffix}{cg_suffix}{ib_suffix}{cs_suffix}"
+    jl_suffix = "_jtag" if args.jtaglink else ""
+
+    name = f"bcrypt_{BOARD}_dma_c{args.cores}_{mhz}mhz{fg_suffix}{nd_suffix}{nc_suffix}{db_suffix}{ds_suffix}{fs_suffix}{cg_suffix}{ib_suffix}{cs_suffix}{jl_suffix}"
 
     soc = BcryptSoC(
         sys_clk_freq     = args.sys_clk_freq,
@@ -253,6 +263,7 @@ def main():
         pcie_connector   = args.pcie_connector,
         placement_margin = args.placement_margin,
         as_clock_mhz     = args.as_clock,
+        with_jtaglink    = args.jtaglink,
     )
 
     if args.fitter_seed is not None:
