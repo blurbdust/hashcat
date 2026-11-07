@@ -243,14 +243,6 @@ bool ftdi_read (ftdi_ctx_t *ctx, u8 *buf, const size_t len)
 
 bool ftdi_open (ftdi_ctx_t *ctx, const u16 vid, const u16 pid, const char *serial)
 {
-  memset (ctx, 0, sizeof (ftdi_ctx_t));
-
-  ctx->fd  = -1;
-  ctx->vid = vid;
-  ctx->pid = pid;
-
-  if (serial != NULL) snprintf (ctx->serial, sizeof (ctx->serial), "%s", serial);
-
   u32 busnum = 0;
   u32 devnum = 0;
 
@@ -260,6 +252,21 @@ bool ftdi_open (ftdi_ctx_t *ctx, const u16 vid, const u16 pid, const char *seria
 
     return false;
   }
+
+  if (ftdi_open_busdev (ctx, vid, pid, busnum, devnum) == false) return false;
+
+  if (serial != NULL) snprintf (ctx->serial, sizeof (ctx->serial), "%s", serial);
+
+  return true;
+}
+
+bool ftdi_open_busdev (ftdi_ctx_t *ctx, const u16 vid, const u16 pid, const u32 busnum, const u32 devnum)
+{
+  memset (ctx, 0, sizeof (ftdi_ctx_t));
+
+  ctx->fd  = -1;
+  ctx->vid = vid;
+  ctx->pid = pid;
 
   char path[128];
 
@@ -310,6 +317,105 @@ bool ftdi_open (ftdi_ctx_t *ctx, const u16 vid, const u16 pid, const char *seria
   }
 
   ctx->claimed = true;
+
+  return true;
+}
+
+int ftdi_read_some (ftdi_ctx_t *ctx, u8 *buf, const size_t max, const u32 timeout_ms)
+{
+  // One bulk read of whatever the chip has, status bytes stripped. 0 on timeout, -1 on error.
+  u8 raw[16384];
+
+  struct usbdevfs_bulktransfer bt;
+
+  memset (&bt, 0, sizeof (bt));
+
+  bt.ep      = FTDI_EP_IN;
+  bt.len     = (unsigned int) (sizeof (raw) - (sizeof (raw) % ctx->in_packet_size));
+  bt.timeout = timeout_ms;
+  bt.data    = raw;
+
+  const int rc = ioctl (ctx->fd, USBDEVFS_BULK, &bt);
+
+  if (rc < 0) return (errno == ETIMEDOUT) ? 0 : -1;
+
+  size_t got = 0;
+
+  for (int off = 0; off < rc; off += (int) ctx->in_packet_size)
+  {
+    int chunk = rc - off;
+
+    if (chunk > (int) ctx->in_packet_size) chunk = (int) ctx->in_packet_size;
+    if (chunk <= FTDI_STATUS_BYTES) continue;
+
+    const size_t payload = (size_t) (chunk - FTDI_STATUS_BYTES);
+
+    if ((got + payload) > max) return -1;
+
+    memcpy (&buf[got], &raw[off + FTDI_STATUS_BYTES], payload);
+
+    got += payload;
+  }
+
+  return (int) got;
+}
+
+bool ftdi_open_port (ftdi_ctx_t *ctx, const u16 vid, const u16 pid, const char *port)
+{
+  // Adapters without a serial number are told apart by the USB port they sit on, as in
+  // /sys/bus/usb/devices (for example "2-2.3").
+  char v[32];
+  char p[32];
+  char b[32];
+  char n[32];
+
+  if (read_attr (port, "idVendor",  v, sizeof (v)) == false) return false;
+  if (read_attr (port, "idProduct", p, sizeof (p)) == false) return false;
+
+  if ((u16) strtoul (v, NULL, 16) != vid) return false;
+  if ((u16) strtoul (p, NULL, 16) != pid) return false;
+
+  if (read_attr (port, "busnum", b, sizeof (b)) == false) return false;
+  if (read_attr (port, "devnum", n, sizeof (n)) == false) return false;
+
+  return ftdi_open_busdev (ctx, vid, pid, (u32) strtoul (b, NULL, 10), (u32) strtoul (n, NULL, 10));
+}
+
+bool ftdi_mpsse_enable_jtag (ftdi_ctx_t *ctx, const u32 tck_hz)
+{
+  // A bare FT232H wired as a JTAG cable: ADBUS0 TCK, ADBUS1 TDI, ADBUS2 TDO, ADBUS3 TMS, nothing
+  // else driven.
+  if (ctrl_out (ctx, FTDI_SIO_RESET, FTDI_RESET_SIO,      FTDI_INTERFACE_A_INDEX) == false) return false;
+  if (ctrl_out (ctx, FTDI_SIO_RESET, FTDI_RESET_PURGE_RX, FTDI_INTERFACE_A_INDEX) == false) return false;
+  if (ctrl_out (ctx, FTDI_SIO_RESET, FTDI_RESET_PURGE_TX, FTDI_INTERFACE_A_INDEX) == false) return false;
+
+  if (ctrl_out (ctx, FTDI_SIO_SET_LATENCY_TIMER, 1, FTDI_INTERFACE_A_INDEX) == false) return false;
+
+  if (ctrl_out (ctx, FTDI_SIO_SET_BITMODE, (FTDI_BITMODE_RESET << 8) | 0x00, FTDI_INTERFACE_A_INDEX) == false) return false;
+  if (ctrl_out (ctx, FTDI_SIO_SET_BITMODE, (FTDI_BITMODE_MPSSE << 8) | 0x0B, FTDI_INTERFACE_A_INDEX) == false) return false;
+
+  usleep (50000);
+
+  u32 divisor = 0;
+
+  if (tck_hz > 0)
+  {
+    divisor = (60000000 + (2 * tck_hz) - 1) / (2 * tck_hz);
+
+    if (divisor > 0) divisor = divisor - 1;
+    if (divisor > 0xFFFF) divisor = 0xFFFF;
+  }
+
+  const u8 setup[] =
+  {
+    0x8A, 0x97, 0x8D, 0x85,
+
+    0x86, (u8) (divisor & 0xFF), (u8) (divisor >> 8),
+
+    0x80, 0x08, 0x0B,
+  };
+
+  if (ftdi_write (ctx, setup, sizeof (setup)) == false) return false;
 
   return true;
 }
@@ -406,6 +512,45 @@ bool ftdi_open (ftdi_ctx_t *ctx, const u16 vid, const u16 pid, const char *seria
   (void) vid;
   (void) pid;
   (void) serial;
+
+  return false;
+}
+
+bool ftdi_open_busdev (ftdi_ctx_t *ctx, const u16 vid, const u16 pid, const u32 busnum, const u32 devnum)
+{
+  (void) ctx;
+  (void) vid;
+  (void) pid;
+  (void) busnum;
+  (void) devnum;
+
+  return false;
+}
+
+int ftdi_read_some (ftdi_ctx_t *ctx, u8 *buf, const size_t max, const u32 timeout_ms)
+{
+  (void) ctx;
+  (void) buf;
+  (void) max;
+  (void) timeout_ms;
+
+  return -1;
+}
+
+bool ftdi_open_port (ftdi_ctx_t *ctx, const u16 vid, const u16 pid, const char *port)
+{
+  (void) ctx;
+  (void) vid;
+  (void) pid;
+  (void) port;
+
+  return false;
+}
+
+bool ftdi_mpsse_enable_jtag (ftdi_ctx_t *ctx, const u32 tck_hz)
+{
+  (void) ctx;
+  (void) tck_hz;
 
   return false;
 }

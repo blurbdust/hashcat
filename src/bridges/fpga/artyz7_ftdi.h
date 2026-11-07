@@ -64,12 +64,16 @@ extern bool ARTYZ7_VERBOSE;
 #define artyz7_say(...) do { if (ARTYZ7_VERBOSE == true) printf (__VA_ARGS__); } while (0)
 
 bool ftdi_open   (ftdi_ctx_t *ctx, const u16 vid, const u16 pid, const char *serial);
+bool ftdi_open_busdev (ftdi_ctx_t *ctx, const u16 vid, const u16 pid, const u32 busnum, const u32 devnum);
+bool ftdi_open_port   (ftdi_ctx_t *ctx, const u16 vid, const u16 pid, const char *port);
 void ftdi_close  (ftdi_ctx_t *ctx);
 
 bool ftdi_mpsse_enable (ftdi_ctx_t *ctx, const u32 tck_hz);
+bool ftdi_mpsse_enable_jtag (ftdi_ctx_t *ctx, const u32 tck_hz);
 bool ftdi_mpsse_sync   (ftdi_ctx_t *ctx);
 
 bool ftdi_write (ftdi_ctx_t *ctx, const u8 *buf, const size_t len);
 bool ftdi_read  (ftdi_ctx_t *ctx, u8 *buf, const size_t len);
+int  ftdi_read_some (ftdi_ctx_t *ctx, u8 *buf, const size_t max, const u32 timeout_ms);
 
 #endif
