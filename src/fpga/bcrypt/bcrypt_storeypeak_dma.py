@@ -209,6 +209,7 @@ def main():
     parser.add_argument("--cores",        type=int,   default=1,     help="Number of bcrypt cores.")
     parser.add_argument("--no-dump",      action="store_true",       help="Omit the unfinished S state dump logic, whose muxes affect the Feistel critical path.")
     parser.add_argument("--no-cmp",       action="store_true",       help="Omit the per-core comparator. Every candidate then returns to the host.")
+    parser.add_argument("--shared-cmp",   action="store_true",       help="Compare in the collectors instead of in every core. Far smaller, so it fits where the per-core comparator does not.")
     parser.add_argument("--din-bits",     type=int,   default=BOARD_SHAPE["din_bits"],     help="Feeder-to-core bus width, 8 or 32 bits.")
     parser.add_argument("--feed-group",   type=int,   default=BOARD_SHAPE["feed_group"],   help="Cores per feeder fanout group. Zero means no fanout pipeline.")
     parser.add_argument("--feed-shard",   type=int,   default=BOARD_SHAPE["feed_shard"],   help="Cores per feeder engine. Must be a multiple of --feed-group. Zero uses one engine.")
@@ -232,7 +233,7 @@ def main():
     fg_suffix = "" if args.feed_group == 0 else f"_fg{args.feed_group}"
 
     nd_suffix = "_nodump" if args.no_dump == True else ""
-    nc_suffix = "_nocmp"  if args.no_cmp  == True else ""
+    nc_suffix = "_nocmp"  if args.no_cmp  == True else ("_scmp" if args.shared_cmp == True else "")
 
     db_suffix = "" if args.din_bits == 8 else f"_din{args.din_bits}"
 
@@ -253,7 +254,7 @@ def main():
         feed_group       = args.feed_group,
         feed_shard       = args.feed_shard,
         with_dump        = 0 if args.no_dump else 1,
-        with_cmp         = 0 if args.no_cmp  else 1,
+        with_cmp         = 0 if args.no_cmp  else (2 if args.shared_cmp else 1),
         din_bits         = args.din_bits,
         collect_group    = args.collect_group,
         num_cores_dist   = args.num_cores_dist,

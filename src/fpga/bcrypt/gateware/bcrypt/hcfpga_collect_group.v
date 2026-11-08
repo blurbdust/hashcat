@@ -18,6 +18,9 @@ module hcfpga_collect_group #(
   input  wire [NUM_CORES-1:0] core_dout,
   output wire [NUM_CORES-1:0] core_rd_en,
 
+  input  wire [127:0] cmp_bitmap,
+  input  wire         cmp_load,
+
   input  wire [31:0] batch_target,
   input  wire        batch_arm,
 
@@ -64,6 +67,19 @@ module hcfpga_collect_group #(
   end
   endgenerate
 
+  reg [127:0] cmp_bm   = {128{1'b1}};
+  reg         cmp_load_r = 0;
+
+  always @(posedge CLK)
+  begin
+    cmp_load_r <= cmp_load;
+
+    if (rst == 1'b1)
+      cmp_bm <= {128{1'b1}};
+    else if ((cmp_load == 1'b1) || (cmp_load_r == 1'b1))
+      cmp_bm <= cmp_bitmap;
+  end
+
   wire [8*NSRC-1:0] e_data;
   wire [NSRC-1:0]   e_valid;
   wire [NSRC-1:0]   e_last;
@@ -81,6 +97,7 @@ module hcfpga_collect_group #(
       .core_empty(pad_empty [g*EGROUP +: EGROUP]),
       .core_dout (pad_dout  [g*EGROUP +: EGROUP]),
       .core_rd_en(pad_rd_en [g*EGROUP +: EGROUP]),
+      .cmp_bm (cmp_bm),
       .retire (e_retire[g]),
       .m_data (e_data[8*g +: 8]),
       .m_valid(e_valid[g]),
