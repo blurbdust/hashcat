@@ -28,9 +28,9 @@ module hcfpga_feed #(
   input  wire [31:0] salt3,
   input  wire [31:0] iter_count,
 
-  (* max_fanout = 32 *) output reg  [DIN_BITS-1:0]  c_din = 0,
-  (* max_fanout = 32 *) output reg  [3:0]           c_bwe = 0,
-  (* max_fanout = 32 *) output reg                  c_start = 0,
+  (* max_fanout = 32, maxfan = 32, dont_merge *) output reg  [DIN_BITS-1:0]  c_din = 0,
+  (* max_fanout = 32, maxfan = 32, dont_merge *) output reg  [3:0]           c_bwe = 0,
+  (* max_fanout = 32, maxfan = 32, dont_merge *) output reg                  c_start = 0,
   output reg  [NUM_CORES-1:0] c_wr_en = 0,
 
   input  wire [NUM_CORES-1:0] core_init_ready,
