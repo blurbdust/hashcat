@@ -197,6 +197,21 @@ run_one "tb_cmp.backpressure_engine_per_core" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC
 run_one "tb_cmp.backpressure_selective" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC" \
   -Ptb_cmp.READY_DUTY=3 -Ptb_cmp.COLLECT_GROUP=2
 
+run_one "tb_cmp.shared" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC" \
+  -Ptb_cmp.WITH_CMP=2
+
+run_one "tb_cmp.shared_all_ones" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC" \
+  -Ptb_cmp.WITH_CMP=2 -Ptb_cmp.CMP_ALL=1
+
+run_one "tb_cmp.shared_collect_group" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC" \
+  -Ptb_cmp.WITH_CMP=2 -Ptb_cmp.COLLECT_GROUP=2
+
+run_one "tb_cmp.shared_nopad" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC" \
+  -Ptb_cmp.WITH_CMP=2 -Ptb_cmp.PAD_RECS=1
+
+run_one "tb_cmp.shared_backpressure_selective" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC" \
+  -Ptb_cmp.WITH_CMP=2 -Ptb_cmp.READY_DUTY=3 -Ptb_cmp.COLLECT_GROUP=2
+
 run_one "tb_datapath.no_filter" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" \
   -Ptb_datapath.WITH_CMP=0
 

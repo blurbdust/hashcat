@@ -7,6 +7,8 @@
 module hcfpga_collect #(
   parameter NUM_CORES = 4,
 
+  // 0 returns every result, 1 trusts the status bit of a per-core filter, 2 drops the results
+  // whose digest misses the bitmap here, once for the whole group of cores.
   parameter WITH_CMP = 1,
 
   parameter CORE_BASE = 0
@@ -17,6 +19,8 @@ module hcfpga_collect #(
   input  wire [NUM_CORES-1:0] core_empty,
   input  wire [NUM_CORES-1:0] core_dout,
   output reg  [NUM_CORES-1:0] core_rd_en = 0,
+
+  input  wire [127:0] cmp_bm,
 
   output reg  retire = 0,
 
@@ -34,6 +38,7 @@ module hcfpga_collect #(
   reg [CW-1:0]     rd_core = 0;
   reg [8:0]        bitcnt = 0;
   reg [255:0]      cap = 0;
+  reg              hit = 1;
 
   reg dout_r = 0;
   always @(posedge CLK)
@@ -96,7 +101,7 @@ module hcfpga_collect #(
         if (dout_r == 1'b1)
         begin
           bitcnt <= 0;
-          state  <= (WITH_CMP != 0) ? C_STATUS : C_CAPTURE;
+          state  <= (WITH_CMP == 1) ? C_STATUS : C_CAPTURE;
         end
       end
 
@@ -117,6 +122,9 @@ module hcfpga_collect #(
       C_CAPTURE:
       begin
         cap[bitcnt] <= dout_r;
+        // Bits 64 to 70 are the low bits of the first digest word, the index the per-core
+        // filter uses. They are long settled by bit 128.
+        if (bitcnt == 9'd128) hit <= (WITH_CMP == 2) ? cmp_bm[cap[70:64]] : 1'b1;
         if (bitcnt == 9'd255)
           state <= C_BUILD;
         else
@@ -124,6 +132,13 @@ module hcfpga_collect #(
       end
 
       C_BUILD:
+      if (hit == 1'b0)
+      begin
+        retire  <= 1;
+        rd_core <= (rd_core == NUM_CORES-1) ? {CW{1'b0}} : rd_core + 1'b1;
+        state   <= C_POLL;
+      end
+      else
       begin
         frame <= {
           flags[15:8],   flags[7:0],
