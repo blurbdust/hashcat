@@ -75,6 +75,11 @@
 #define SVJTAG_TCK_DEFAULT  30000000
 #define SVJTAG_TCK_FLOOR    7500000
 
+// The card changes TDO on the falling edge of TCK and the MPSSE samples it on the next rising edge,
+// half a period later. Bit 2 of a read opcode moves the sample to the falling edge after that, a
+// full period after the change, for a card whose TDO comes back too late for the rising one.
+#define SVJTAG_TDO_FALLING  0x04
+
 typedef struct svjtag_scan
 {
   u8 tdi[SVJTAG_SCAN_BYTES];
@@ -97,6 +102,7 @@ typedef struct svjtag_priv
   pthread_mutex_t lock;
 
   u32  tck_hz;
+  bool tdo_falling;
   u32  idcode;
   u32  vir_bits;
   u32  vir_value;
@@ -314,6 +320,8 @@ static bool mp_dr_send (svjtag_priv_t *p, const u8 *tdi, const u32 bits, const u
   const u32 bytes = body / 8;
   const u32 rem   = body % 8;
 
+  const u8 edge = (p->tdo_falling == true) ? SVJTAG_TDO_FALLING : 0;
+
   u8 cmd[SVJTAG_CHUNK_SCANS * (SVJTAG_SCAN_BYTES + 16) + 16];
 
   if (n > SVJTAG_CHUNK_SCANS) return false;
@@ -329,7 +337,7 @@ static bool mp_dr_send (svjtag_priv_t *p, const u8 *tdi, const u32 bits, const u
 
     if (bytes > 0)
     {
-      cmd[c++] = 0x39;
+      cmd[c++] = 0x39 | edge;
       cmd[c++] = (u8) ((bytes - 1) & 0xff);
       cmd[c++] = (u8) ((bytes - 1) >> 8);
 
@@ -340,12 +348,12 @@ static bool mp_dr_send (svjtag_priv_t *p, const u8 *tdi, const u32 bits, const u
 
     if (rem > 0)
     {
-      cmd[c++] = 0x3B;
+      cmd[c++] = 0x3B | edge;
       cmd[c++] = (u8) (rem - 1);
       cmd[c++] = in[bytes];
     }
 
-    cmd[c++] = 0x6B;
+    cmd[c++] = 0x6B | edge;
     cmd[c++] = 0x00;
     cmd[c++] = (u8) ((bit_get (in, body) << 7) | 0x01);
 
@@ -885,16 +893,17 @@ static void svjtag_shutdown (svjtag_priv_t *p)
   p->in  = NULL;
 }
 
-static bool svjtag_bringup (svjtag_priv_t *p, const u32 tck_hz)
+static bool svjtag_bringup (svjtag_priv_t *p, const u32 tck_hz, const bool tdo_falling)
 {
   if (ftdi_open_port (&p->ftdi, SVJTAG_VID, SVJTAG_PID, p->port) == false) return false;
 
-  p->ftdi_open = true;
-  p->broken    = false;
-  p->tck_hz    = tck_hz;
-  p->depth     = 0;
-  p->q_head    = 0;
-  p->q_len     = 0;
+  p->ftdi_open   = true;
+  p->broken      = false;
+  p->tck_hz      = tck_hz;
+  p->tdo_falling = tdo_falling;
+  p->depth       = 0;
+  p->q_head      = 0;
+  p->q_len       = 0;
 
   if (ftdi_mpsse_enable_jtag (&p->ftdi, tck_hz) == false) return false;
   if (ftdi_mpsse_sync (&p->ftdi) == false) return false;
@@ -909,7 +918,7 @@ static bool svjtag_bringup (svjtag_priv_t *p, const u32 tck_hz)
 
   p->idcode = (u32) tdo[0] | ((u32) tdo[1] << 8) | ((u32) tdo[2] << 16) | ((u32) tdo[3] << 24);
 
-  svjtag_dbg (p, "idcode %08x at %u Hz", p->idcode, tck_hz);
+  svjtag_dbg (p, "idcode %08x at %u Hz, TDO sampled on the %s edge", p->idcode, tck_hz, (tdo_falling == true) ? "falling" : "rising");
 
   if ((p->idcode & 0xfff) != SVJTAG_ALTERA_MFR) return false;
 
@@ -986,6 +995,30 @@ static u32 svjtag_tck_hz (void)
   return (v >= 100000 && v <= 30000000) ? (u32) v : SVJTAG_TCK_DEFAULT;
 }
 
+static bool svjtag_link_up (svjtag_priv_t *p, const u32 tck_top, bool *opened)
+{
+  // A long cable or a busy hub can garble the top rate, and some cards return TDO too late for the
+  // rising edge there. Sample on the falling edge, and failing that halve the clock, until the
+  // IDCODE and the scratch register read back clean.
+  *opened = false;
+
+  for (u32 tck_hz = tck_top; tck_hz >= MIN (tck_top, SVJTAG_TCK_FLOOR); tck_hz /= 2)
+  {
+    for (u32 falling = 0; falling < 2; falling++)
+    {
+      const bool up = svjtag_bringup (p, tck_hz, falling == 1);
+
+      *opened = p->ftdi_open;
+
+      if ((up == true) || (*opened == false)) return up;
+
+      svjtag_shutdown (p);
+    }
+  }
+
+  return false;
+}
+
 static int svjtag_enumerate (hashcat_ctx_t *hashcat_ctx, fpga_dev_t *devs, const int max, fpga_status_t *status)
 {
   (void) hashcat_ctx;
@@ -1047,24 +1080,9 @@ static int svjtag_enumerate (hashcat_ctx_t *hashcat_ctx, fpga_dev_t *devs, const
 
     snprintf (p->port, sizeof (p->port), "%.63s", e->d_name);
 
-    // A long cable or a busy hub can garble the top rate, so halve the clock until the IDCODE and
-    // the scratch register read back clean.
-    const u32 tck_top = svjtag_tck_hz ();
-
-    bool up     = false;
     bool opened = false;
 
-    for (u32 tck_hz = tck_top; tck_hz >= MIN (tck_top, SVJTAG_TCK_FLOOR); tck_hz /= 2)
-    {
-      up     = svjtag_bringup (p, tck_hz);
-      opened = p->ftdi_open;
-
-      if ((up == true) || (opened == false)) break;
-
-      svjtag_shutdown (p);
-    }
-
-    if (up == false)
+    if (svjtag_link_up (p, svjtag_tck_hz (), &opened) == false)
     {
       if ((opened == false) && (access ("/dev/bus/usb", R_OK) == 0)) saw_permission = true;
 
@@ -1225,7 +1243,7 @@ static bool svjtag_session_refresh (fpga_dev_t *dev)
 
   p->ftdi_open = false;
 
-  bool ok = svjtag_bringup (p, p->tck_hz);
+  bool ok = svjtag_bringup (p, p->tck_hz, p->tdo_falling);
 
   if (ok == true) ok = svjtag_route (p, true);
 
