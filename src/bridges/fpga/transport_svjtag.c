@@ -183,6 +183,31 @@ static u32 bits_get (const u8 *buf, const u32 pos, const u32 n)
   return v;
 }
 
+static u32 src_byte (const u8 *src, const u32 src_bits, const int at)
+{
+  if ((at < 0) || ((u32) at * 8 >= src_bits)) return 0;
+
+  const u32 left = src_bits - ((u32) at * 8);
+
+  return (left >= 8) ? src[at] : (src[at] & ((1u << left) - 1));
+}
+
+static void bits_shift (u8 *dst, const u32 dst_bytes, const u8 *src, const u32 src_bits, const int shift)
+{
+  // Bit i of dst is bit i + shift of src, or zero where that is outside src. A byte at a time,
+  // since a bit at a time cost hashcat 1.5 more cores with nine cables busy.
+  const int k = ((shift % 8) + 8) % 8;
+  const int b = (shift - k) / 8;
+
+  for (u32 j = 0; j < dst_bytes; j++)
+  {
+    const u32 lo = src_byte (src, src_bits, b + (int) j);
+    const u32 hi = src_byte (src, src_bits, b + (int) j + 1);
+
+    dst[j] = (u8) ((lo >> k) | (hi << (8 - k)));
+  }
+}
+
 // MPSSE ------------------------------------------------------------------------------------------
 
 static bool mp_tap_reset (svjtag_priv_t *p)
@@ -461,33 +486,17 @@ static void req_build (const svjtag_priv_t *p, svjtag_scan_t *s, const u32 words
   // behind what the host sent.
   const u32 start = SVJTAG_SLACK - p->tdi_delay;
 
-  memset (s->tdi, 0, sizeof (s->tdi));
-
-  for (u32 i = 0; i < SVJTAG_REG_BITS; i++) bit_set (s->tdi, start + i, bit_get (reg, i));
+  bits_shift (s->tdi, sizeof (s->tdi), reg, SVJTAG_REG_BITS, -(int) start);
 }
 
 static void rsp_parse (const svjtag_priv_t *p, const svjtag_scan_t *s, svjtag_rsp_t *r)
 {
   u8 reg[SVJTAG_REG_BYTES];
 
-  memset (reg, 0, sizeof (reg));
+  bits_shift (reg, sizeof (reg), s->tdo, SVJTAG_SCAN_BITS, p->tdo_shift);
 
-  for (u32 i = 0; i < SVJTAG_REG_BITS; i++)
-  {
-    const int at = (int) i + p->tdo_shift;
-
-    // Bits before the host's first sample can only be the start of the magic.
-    if (at < 0)
-    {
-      if (i < 16) bit_set (reg, i, (SVJTAG_RSP_MAGIC >> i) & 1);
-
-      continue;
-    }
-
-    if (at >= SVJTAG_SCAN_BITS) continue;
-
-    bit_set (reg, i, bit_get (s->tdo, (u32) at));
-  }
+  // Bits before the host's first sample can only be the start of the magic.
+  for (int i = 0; (i < -p->tdo_shift) && (i < 16); i++) bit_set (reg, (u32) i, (SVJTAG_RSP_MAGIC >> i) & 1);
 
   r->magic      = bits_get (reg,  0, 16);
   r->count      = bits_get (reg, 16,  7);
