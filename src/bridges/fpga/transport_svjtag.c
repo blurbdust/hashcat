@@ -74,6 +74,7 @@
 
 #define SVJTAG_TCK_DEFAULT  30000000
 #define SVJTAG_TCK_FLOOR    7500000
+#define SVJTAG_TCK_TRIES    3
 
 // The card changes TDO on the falling edge of TCK and the MPSSE samples it on the next rising edge,
 // half a period later. Bit 2 of a read opcode moves the sample to the falling edge after that, a
@@ -999,20 +1000,25 @@ static bool svjtag_link_up (svjtag_priv_t *p, const u32 tck_top, bool *opened)
 {
   // A long cable or a busy hub can garble the top rate, and some cards return TDO too late for the
   // rising edge there. Sample on the falling edge, and failing that halve the clock, until the
-  // IDCODE and the scratch register read back clean.
+  // IDCODE and the scratch register read back clean. A check can also fail once for reasons that
+  // have nothing to do with the clock, such as a USB hiccup, so a clock gets a few tries on both
+  // edges before it is given up.
   *opened = false;
 
   for (u32 tck_hz = tck_top; tck_hz >= MIN (tck_top, SVJTAG_TCK_FLOOR); tck_hz /= 2)
   {
-    for (u32 falling = 0; falling < 2; falling++)
+    for (u32 attempt = 0; attempt < SVJTAG_TCK_TRIES; attempt++)
     {
-      const bool up = svjtag_bringup (p, tck_hz, falling == 1);
+      for (u32 falling = 0; falling < 2; falling++)
+      {
+        const bool up = svjtag_bringup (p, tck_hz, falling == 1);
 
-      *opened = p->ftdi_open;
+        *opened = p->ftdi_open;
 
-      if ((up == true) || (*opened == false)) return up;
+        if ((up == true) || (*opened == false)) return up;
 
-      svjtag_shutdown (p);
+        svjtag_shutdown (p);
+      }
     }
   }
 
