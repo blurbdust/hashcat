@@ -180,6 +180,22 @@ typedef struct lxb_priv
   u64   pend_head;
   u64   pend_tail;
 
+  // H2C ring check, for measurement (lxb_h2c_put)
+
+  bool  h2c_ack;
+  u32   h2c_audit;
+  bool  h2c_report;
+
+  u64   h2c_bursts;
+  u64   h2c_bytes;
+  u64   h2c_strict_diff;
+  u64   h2c_audited;
+  u64   h2c_audit_bytes;
+  u64   h2c_audit_diff;
+  u64   h2c_audit_diff_words;
+
+  u64   rb_diff;
+
 } lxb_priv_t;
 
 static void lxb_sleep_ms (const u32 ms)
@@ -597,6 +613,8 @@ static bool lxb_write_chunk (lxb_priv_t *priv, const u32 addr, const u32 *wr, co
     if (check == LXB_CHECK_ACK) return true;
 
     if (memcmp (back, wr, n * 4) == 0) return true;
+
+    priv->rb_diff++;
 
     if ((udp == false) && (check == LXB_CHECK_STRICT))
     {
@@ -1023,6 +1041,15 @@ static lxb_priv_t *lxb_new (void)
 
   hc_thread_mutex_init (priv->mux);
 
+  // HCFPGA_LXB_H2C_CHECK=ack: see lxb_h2c_put
+
+  const char *check = getenv ("HCFPGA_LXB_H2C_CHECK");
+  const char *audit = getenv ("HCFPGA_LXB_H2C_AUDIT");
+
+  priv->h2c_ack    = ((check != NULL) && (strcmp (check, "ack") == 0));
+  priv->h2c_audit  = (audit != NULL) ? (u32) strtoul (audit, NULL, 10) : 8;
+  priv->h2c_report = ((check != NULL) || (getenv ("HCFPGA_DEBUG") != NULL));
+
   return priv;
 }
 
@@ -1436,6 +1463,18 @@ static int lxb_enumerate (hashcat_ctx_t *hashcat_ctx, fpga_dev_t *devs, const in
 
 static void lxb_close (fpga_dev_t *dev)
 {
+  const lxb_priv_t *priv = (const lxb_priv_t *) dev->priv;
+
+  if ((priv != NULL) && (priv->h2c_report == true) && (priv->h2c_bursts > 0))
+  {
+    fprintf (stderr, "[hcfpga] %s h2c check %s: %llu bursts, %llu bytes; strict read-backs that differed %llu; audit every %u: %llu bursts, %llu bytes read back, %llu differed (%llu words)\n",
+      dev->path, (priv->h2c_ack == true) ? "ack" : "strict",
+      (unsigned long long) priv->h2c_bursts, (unsigned long long) priv->h2c_bytes, (unsigned long long) priv->h2c_strict_diff,
+      (priv->h2c_ack == true) ? priv->h2c_audit : 0,
+      (unsigned long long) priv->h2c_audited, (unsigned long long) priv->h2c_audit_bytes,
+      (unsigned long long) priv->h2c_audit_diff, (unsigned long long) priv->h2c_audit_diff_words);
+  }
+
   lxb_free ((lxb_priv_t *) dev->priv);
 
   dev->priv = NULL;
@@ -1775,12 +1814,56 @@ static bool lxb_h2c_put (fpga_dev_t *dev, const u8 *src, const u32 n)
     words[i] = ((u32) p[0] << 0) | ((u32) p[1] << 8) | ((u32) p[2] << 16) | ((u32) p[3] << 24);
   }
 
+  // Measurement only. HCFPGA_LXB_H2C_CHECK=strict (the default) reads every burst back and fails the
+  // batch when it differs. =ack reads back only the burst's last word, which shows the burst arrived
+  // but not that its bytes are right; every HCFPGA_LXB_H2C_AUDIT-th burst (default 8, 0 never) is
+  // then read back whole anyway, counted when it differs and written again with the strict check.
+  // The ring pointer moves only after this, so the device never takes an audited burst before it is
+  // right. lxb_close prints the counts.
+
   for (u32 done = 0; done < n; )
   {
     const u32 idx = (priv->h2c_wr + done) % priv->h2c_depth;
-    const u32 len = MIN (n - done, priv->h2c_depth - idx);
+    const u32 len = MIN (MIN (n - done, priv->h2c_depth - idx), priv->burst);
 
-    if (lxb_write (priv, dev->csr_base + LXB_MS_H2C_MEM + (idx * 4), &words[done], len, LXB_CHECK_STRICT) == false) return false;
+    const u32  addr = dev->csr_base + LXB_MS_H2C_MEM + (idx * 4);
+    const u32 *wr   = &words[done];
+
+    const u64 diff_before = priv->rb_diff;
+
+    const bool sent = lxb_write (priv, addr, wr, len, (priv->h2c_ack == true) ? LXB_CHECK_ACK : LXB_CHECK_STRICT);
+
+    priv->h2c_strict_diff += priv->rb_diff - diff_before;
+
+    if (sent == false) return false;
+
+    priv->h2c_bursts++;
+    priv->h2c_bytes += (u64) len * 4;
+
+    if ((priv->h2c_ack == true) && (priv->h2c_audit > 0) && ((priv->h2c_bursts % priv->h2c_audit) == 0))
+    {
+      u32 back[LXB_MS_DEPTH_MAX];
+
+      if (lxb_read (priv, addr, back, len) == false) return false;
+
+      priv->h2c_audited++;
+      priv->h2c_audit_bytes += (u64) len * 4;
+
+      u32 differ = 0;
+
+      for (u32 i = 0; i < len; i++)
+      {
+        if (back[i] != wr[i]) differ++;
+      }
+
+      if (differ > 0)
+      {
+        priv->h2c_audit_diff++;
+        priv->h2c_audit_diff_words += differ;
+
+        if (lxb_write (priv, addr, wr, len, LXB_CHECK_STRICT) == false) return false;
+      }
+    }
 
     done += len;
   }
