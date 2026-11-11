@@ -396,6 +396,9 @@ bool ftdi_mpsse_enable_jtag (ftdi_ctx_t *ctx, const u32 tck_hz)
 
   usleep (50000);
 
+  // A command a previous user left waiting for its data would take the setup below for that data.
+  if (ftdi_mpsse_sync (ctx) == false) return false;
+
   u32 divisor = 0;
 
   if (tck_hz > 0)
@@ -479,29 +482,61 @@ bool ftdi_mpsse_enable (ftdi_ctx_t *ctx, const u32 tck_hz)
   return true;
 }
 
-bool ftdi_mpsse_sync (ftdi_ctx_t *ctx)
+static bool ftdi_drain (ftdi_ctx_t *ctx)
 {
-  const u8 bad[2] = { 0xAB, MPSSE_SEND_IMMEDIATE_BYTE };
-
-  if (ftdi_write (ctx, bad, sizeof (bad)) == false) return false;
-
-  u8 rsp[2] = { 0, 0 };
-
-  if (ftdi_read (ctx, rsp, sizeof (rsp)) == false)
+  // Read until the chip has had nothing to send twice in a row.
+  for (int i = 0, quiet = 0; (i < 64) && (quiet < 2); i++)
   {
-    fprintf (stderr, "ftdi: MPSSE did not answer a bad command at all\n");
+    if (ftdi_fill (ctx) == false) return false;
 
-    return false;
+    quiet = (ctx->rx_len == 0) ? quiet + 1 : 0;
   }
 
-  if ((rsp[0] != 0xFA) || (rsp[1] != 0xAB))
-  {
-    fprintf (stderr, "ftdi: MPSSE sync got 0x%02X 0x%02X, wanted 0xFA 0xAB\n", rsp[0], rsp[1]);
-
-    return false;
-  }
+  ctx->rx_len = 0;
+  ctx->rx_pos = 0;
 
   return true;
+}
+
+bool ftdi_mpsse_sync (ftdi_ctx_t *ctx)
+{
+  // The MPSSE answers a bad command with 0xFA and the command. A user that stopped in the middle
+  // of a transfer can leave bytes on their way to the host, and a command still waiting for its
+  // data that takes the bad command for that data. So the bytes are drained, the question is asked
+  // once and then as a run long enough to finish such a command, and the answers after the first
+  // are drained too.
+  u8 ask[257];
+
+  for (int attempt = 0; attempt < 3; attempt++)
+  {
+    if (ftdi_drain (ctx) == false) return false;
+
+    const size_t n = (attempt == 0) ? 1 : (sizeof (ask) - 1);
+
+    memset (ask, 0xAB, n);
+
+    ask[n] = MPSSE_SEND_IMMEDIATE_BYTE;
+
+    if (ftdi_write (ctx, ask, n + 1) == false) return false;
+
+    u8 prev = 0;
+
+    for (int i = 0; i < 100; i++)
+    {
+      if (ftdi_fill (ctx) == false) return false;
+
+      for (u32 j = 0; j < ctx->rx_len; j++)
+      {
+        if ((prev == 0xFA) && (ctx->rx[j] == 0xAB)) return ftdi_drain (ctx);
+
+        prev = ctx->rx[j];
+      }
+    }
+  }
+
+  fprintf (stderr, "ftdi: MPSSE did not answer a bad command\n");
+
+  return false;
 }
 
 #else
