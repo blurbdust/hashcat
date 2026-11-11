@@ -84,14 +84,14 @@ module hcfpga_cores #(
   else begin : pipe
     for (g = 0; g < NBUS; g = g + 1) begin : grp
       localparam integer SB = (SHARD == 0) ? 0 : ((g * GROUP) / SHARD);
-      (* max_fanout = 32 *) reg [DIN_BITS-1:0]  din_p   = 0;
-      (* max_fanout = 32 *) reg [3:0]           bwe_p   = 0;
-      (* max_fanout = 32 *) reg                 start_p = 0;
-                            reg [NUM_CORES-1:0] wr_en_p = 0;
+      (* max_fanout = 32, maxfan = 32, dont_merge *) reg [DIN_BITS-1:0]  din_p   = 0;
+      (* max_fanout = 32, maxfan = 32, dont_merge *) reg [3:0]           bwe_p   = 0;
+      (* max_fanout = 32, maxfan = 32, dont_merge *) reg                 start_p = 0;
+                                                     reg [NUM_CORES-1:0] wr_en_p = 0;
 
-      (* max_fanout = 32 *) reg                 bm_we_p   = 0;
-      (* max_fanout = 32 *) reg [6:0]           bm_addr_p = 0;
-      (* max_fanout = 32 *) reg                 bm_din_p  = 0;
+      (* max_fanout = 32, maxfan = 32, dont_merge *) reg                 bm_we_p   = 0;
+      (* max_fanout = 32, maxfan = 32, dont_merge *) reg [6:0]           bm_addr_p = 0;
+      (* max_fanout = 32, maxfan = 32, dont_merge *) reg                 bm_din_p  = 0;
 
       always @(posedge CLK)
       begin

@@ -28,6 +28,7 @@ from litepcie.software      import generate_litepcie_software_headers
 from gateware.bcrypt_dma_wrapper import BcryptDmaWrapper
 
 from hcfpga_abi import fpga_abi_current
+from hcfpga_jtaglink import JTAGLink, connect_engine
 from hcfpga_litepcie import PCIE_CLASS_CODE, clock_mhz
 from hcfpga_stratixv import StratixVTemperature, StratixVChipID, sv_pcie_endpoint_params, sv_flash_image, sv_flash_command
 
@@ -102,7 +103,7 @@ class _CRG(LiteXModule):
         ]
 
 class BcryptSoC(SoCMini):
-    def __init__(self, sys_clk_freq=150e6, num_cores=1, with_led=True, feed_group=0, feed_shard=0, collect_group=0, init_batch=0, num_cores_dist=0, with_dump=1, with_cmp=1, din_bits=32, abi=1, cslow=1, pcie_connector=0, placement_margin=0.0, as_clock_mhz=100):
+    def __init__(self, sys_clk_freq=150e6, num_cores=1, with_led=True, feed_group=0, feed_shard=0, collect_group=0, init_batch=0, num_cores_dist=0, with_dump=1, with_cmp=1, din_bits=32, abi=1, cslow=1, pcie_connector=0, placement_margin=0.0, as_clock_mhz=100, with_jtaglink=False):
         platform = microsoft_storey_peak.Platform()
 
         self.crg = _CRG(platform, sys_clk_freq, cslow)
@@ -110,7 +111,7 @@ class BcryptSoC(SoCMini):
         stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
         SoCMini.__init__(self, platform, sys_clk_freq,
-            ident         = f"hcfpga/1;board={BOARD};algo=bcrypt;cores={num_cores};clk={int(sys_clk_freq/1e6)};abi={abi};build={stamp}",
+            ident         = f"hcfpga/1;board={BOARD};algo=bcrypt;cores={num_cores};clk={int(sys_clk_freq/1e6)};abi={abi};cmp={int(bool(with_cmp))};build={stamp}",
             ident_version = False,
         )
 
@@ -182,16 +183,22 @@ class BcryptSoC(SoCMini):
         dw = self.pcie_dma0.data_width
 
         self.dma_down = stream.Converter(dw, 32, reverse=False)
-        self.comb += [
-            self.pcie_dma0.source.connect(self.dma_down.sink),
-            self.dma_down.source.connect(self.bcrypt.sink),
-        ]
+        self.comb += self.pcie_dma0.source.connect(self.dma_down.sink)
 
         self.dma_up = stream.Converter(8, dw, reverse=False)
-        self.comb += [
-            self.bcrypt.source.connect(self.dma_up.sink),
-            self.dma_up.source.connect(self.pcie_dma0.sink),
-        ]
+        self.comb += self.dma_up.source.connect(self.pcie_dma0.sink)
+
+        if with_jtaglink:
+            # The same engine over the card's JTAG, for slots where the PCIe link does not come up.
+            self.jtaglink = JTAGLink(platform, csr_base=self.mem_map.get("csr", 0))
+            self.jtaglink.add_timing_constraints(platform)
+            self.bus.add_master(name="jtaglink", master=self.jtaglink.bus)
+            connect_engine(self, self.jtaglink, self.dma_down.source, self.dma_up.sink, self.bcrypt)
+        else:
+            self.comb += [
+                self.dma_down.source.connect(self.bcrypt.sink),
+                self.bcrypt.source.connect(self.dma_up.sink),
+            ]
 
 def main():
     parser = argparse.ArgumentParser(description="hcfpga bcrypt on a Microsoft Storey Peak (Stratix V).")
@@ -202,6 +209,7 @@ def main():
     parser.add_argument("--cores",        type=int,   default=1,     help="Number of bcrypt cores.")
     parser.add_argument("--no-dump",      action="store_true",       help="Omit the unfinished S state dump logic, whose muxes affect the Feistel critical path.")
     parser.add_argument("--no-cmp",       action="store_true",       help="Omit the per-core comparator. Every candidate then returns to the host.")
+    parser.add_argument("--shared-cmp",   action="store_true",       help="Compare in the collectors instead of in every core. Far smaller, so it fits where the per-core comparator does not.")
     parser.add_argument("--din-bits",     type=int,   default=BOARD_SHAPE["din_bits"],     help="Feeder-to-core bus width, 8 or 32 bits.")
     parser.add_argument("--feed-group",   type=int,   default=BOARD_SHAPE["feed_group"],   help="Cores per feeder fanout group. Zero means no fanout pipeline.")
     parser.add_argument("--feed-shard",   type=int,   default=BOARD_SHAPE["feed_shard"],   help="Cores per feeder engine. Must be a multiple of --feed-group. Zero uses one engine.")
@@ -217,6 +225,7 @@ def main():
     parser.add_argument("--as-clock",     type=float, default=100, choices=[12.5, 25, 50, 100], help="Active Serial clock in MHz for booting from flash. The factory image uses 25.")
     parser.add_argument("--threads",      type=int,   default=None, help="Same as --num-processors, the name src/fpga/Makefile passes.")
     parser.add_argument("--num-processors", type=int, default=None, help="Cap Quartus parallel processors, so several builds can share a machine.")
+    parser.add_argument("--jtaglink",     action="store_true", help="Also reach the engine over the card's JTAG, for slots where PCIe does not come up.")
     args = parser.parse_args()
 
     mhz  = clock_mhz(args.sys_clk_freq)
@@ -224,7 +233,7 @@ def main():
     fg_suffix = "" if args.feed_group == 0 else f"_fg{args.feed_group}"
 
     nd_suffix = "_nodump" if args.no_dump == True else ""
-    nc_suffix = "_nocmp"  if args.no_cmp  == True else ""
+    nc_suffix = "_nocmp"  if args.no_cmp  == True else ("_scmp" if args.shared_cmp == True else "")
 
     db_suffix = "" if args.din_bits == 8 else f"_din{args.din_bits}"
 
@@ -235,7 +244,9 @@ def main():
 
     cs_suffix = "_cs2" if args.cslow == 2 else ""
 
-    name = f"bcrypt_{BOARD}_dma_c{args.cores}_{mhz}mhz{fg_suffix}{nd_suffix}{nc_suffix}{db_suffix}{ds_suffix}{fs_suffix}{cg_suffix}{ib_suffix}{cs_suffix}"
+    jl_suffix = "_jtag" if args.jtaglink else ""
+
+    name = f"bcrypt_{BOARD}_dma_c{args.cores}_{mhz}mhz{fg_suffix}{nd_suffix}{nc_suffix}{db_suffix}{ds_suffix}{fs_suffix}{cg_suffix}{ib_suffix}{cs_suffix}{jl_suffix}"
 
     soc = BcryptSoC(
         sys_clk_freq     = args.sys_clk_freq,
@@ -243,7 +254,7 @@ def main():
         feed_group       = args.feed_group,
         feed_shard       = args.feed_shard,
         with_dump        = 0 if args.no_dump else 1,
-        with_cmp         = 0 if args.no_cmp  else 1,
+        with_cmp         = 0 if args.no_cmp  else (2 if args.shared_cmp else 1),
         din_bits         = args.din_bits,
         collect_group    = args.collect_group,
         num_cores_dist   = args.num_cores_dist,
@@ -253,6 +264,7 @@ def main():
         pcie_connector   = args.pcie_connector,
         placement_margin = args.placement_margin,
         as_clock_mhz     = args.as_clock,
+        with_jtaglink    = args.jtaglink,
     )
 
     if args.fitter_seed is not None:

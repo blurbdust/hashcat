@@ -86,7 +86,7 @@ module hcfpga_top #(
   wire       bm_din;
 
   generate
-  if (WITH_CMP != 0) begin : bcast
+  if (WITH_CMP == 1) begin : bcast
     hcfpga_cmp_bcast b (
       .CLK(CLK), .rst(rst),
       .bitmap(cmp_bitmap), .load(cmp_load),
@@ -100,7 +100,7 @@ module hcfpga_top #(
   end
   endgenerate
 
-  hcfpga_cores #(.NUM_CORES(NUM_CORES), .NUM_CORES_DIST(NUM_CORES_DIST), .DIN_BITS(DIN_BITS), .GROUP(FEED_GROUP), .SHARD(FEED_SHARD), .WITH_DUMP(WITH_DUMP), .WITH_CMP(WITH_CMP), .CSLOW(CSLOW)) cores (
+  hcfpga_cores #(.NUM_CORES(NUM_CORES), .NUM_CORES_DIST(NUM_CORES_DIST), .DIN_BITS(DIN_BITS), .GROUP(FEED_GROUP), .SHARD(FEED_SHARD), .WITH_DUMP(WITH_DUMP), .WITH_CMP((WITH_CMP == 1) ? 1 : 0), .CSLOW(CSLOW)) cores (
     .CLK(CLK), .CLK_CORE(CLK_CORE), .rst(rst), .mode_dump(mode_dump),
     .c_din(c_din), .c_bwe(c_bwe), .c_start(c_start), .c_wr_en(c_wr_en),
     .bm_we(bm_we), .bm_addr(bm_addr), .bm_din(bm_din),
@@ -111,6 +111,7 @@ module hcfpga_top #(
   hcfpga_collect_group #(.NUM_CORES(NUM_CORES), .GROUP(COLLECT_GROUP), .WITH_CMP(WITH_CMP)) collect (
     .CLK(CLK), .rst(rst),
     .core_empty(empty), .core_dout(dout), .core_rd_en(rd_en),
+    .cmp_bitmap(cmp_bitmap), .cmp_load(cmp_load),
     .batch_target(batch_target), .batch_arm(batch_arm), .pad_recs(pad_recs), .retired_cnt(retired_cnt),
     .m_data(m_data), .m_valid(m_valid), .m_ready(m_ready), .m_last(m_last)
   );

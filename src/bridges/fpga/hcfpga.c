@@ -412,6 +412,7 @@ bool fpga_ident_parse (const char *raw, fpga_ident_t *ident)
     else if ((key_len == 1) && (strncmp (p, "r",     1) == 0)) ident->r       = (u32) strtoul (eq + 1, NULL, 10);
     else if ((key_len == 3) && (strncmp (p, "abi",   3) == 0)) ident->abi     = (u32) strtoul (eq + 1, NULL, 10);
     else if ((key_len == 5) && (strncmp (p, "parts", 5) == 0)) ident->parts   = (u32) strtoul (eq + 1, NULL, 10);
+    else if ((key_len == 3) && (strncmp (p, "cmp",   3) == 0)) ident->cmp     = (strtoul (eq + 1, NULL, 10) != 0) ? true : false;
 
     p = end;
   }
@@ -1449,6 +1450,46 @@ static fpga_status_t litepcie_identify (fpga_dev_t *dev)
   return FPGA_STATUS_OK;
 }
 
+bool fpga_litepcie_serial_present (const char *serial)
+{
+  // A card that answers on PCIe is driven there, so a transport that can also reach it some other
+  // way leaves it alone.
+  for (int i = 0; i < FPGA_MAX_DEVICES; i++)
+  {
+    char path[FPGA_PATH_MAX];
+
+    snprintf (path, sizeof (path), "/dev/litepcie%d", i);
+
+    if (hc_path_exist (path) == false) continue;
+
+    const int fd = open (path, O_RDWR);
+
+    if (fd < 0) continue;
+
+    fpga_dev_t dev;
+
+    memset (&dev, 0, sizeof (dev));
+
+    dev.fd       = fd;
+    dev.csr_base = fpga_csr_map_no_cpu.base;
+
+    const u64 dna_lo = litepcie_csr_read (&dev, fpga_csr_map_no_cpu.dna + 4);
+    const u64 dna_hi = litepcie_csr_read (&dev, fpga_csr_map_no_cpu.dna + 0);
+
+    close (fd);
+
+    const u64 dna = ((dna_hi << 32) | dna_lo) & 0x01ffffffffffffffULL;
+
+    char own[32];
+
+    snprintf (own, sizeof (own), "%014" PRIx64, dna);
+
+    if (strcmp (own, serial) == 0) return true;
+  }
+
+  return false;
+}
+
 static bool litepcie_map_rings (fpga_dev_t *dev)
 {
   struct litepcie_ioctl_mmap_dma_info info;
@@ -2037,6 +2078,8 @@ const fpga_transport_t fpga_transport_litepcie =
 
 void hcfpga_debug_window (MAYBE_UNUSED fpga_dev_t *dev) { }
 
+bool fpga_litepcie_serial_present (MAYBE_UNUSED const char *serial) { return false; }
+
 static void pci_foreign_fw_scan (MAYBE_UNUSED fpga_reject_t *rejects, MAYBE_UNUSED int *rejects_cnt) { }
 
 static int  stub_enumerate  (MAYBE_UNUSED hashcat_ctx_t *hashcat_ctx, MAYBE_UNUSED fpga_dev_t *devs, MAYBE_UNUSED const int max, fpga_status_t *status) { *status = FPGA_STATUS_UNSUPPORTED_OS; return 0; }
@@ -2108,6 +2151,7 @@ const fpga_transport_t *const fpga_transports[] =
   &fpga_transport_xrt,
   &fpga_transport_artyz7,
   &fpga_transport_litexbone,
+  &fpga_transport_svjtag,
 };
 
 const int fpga_transports_cnt = (int) (sizeof (fpga_transports) / sizeof (fpga_transports[0]));

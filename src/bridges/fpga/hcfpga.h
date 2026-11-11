@@ -71,6 +71,8 @@ typedef struct fpga_ident
 
   u32  parts;   // parts=: C2H records per candidate, 0 when the identity does not say (one)
 
+  bool cmp;
+
   bool asserted;
 
 } fpga_ident_t;
@@ -193,6 +195,7 @@ extern const fpga_transport_t fpga_transport_ztex213;
 extern const fpga_transport_t fpga_transport_xrt;
 extern const fpga_transport_t fpga_transport_artyz7;
 extern const fpga_transport_t fpga_transport_litexbone;
+extern const fpga_transport_t fpga_transport_svjtag;
 
 bool fpga_transport_litexbone_tried (void);
 
@@ -274,6 +277,7 @@ void        fpga_units_close  (fpga_dev_t *devs, const int cnt);
 
 bool        fpga_ident_parse  (const char *raw, fpga_ident_t *ident);
 
+bool        fpga_litepcie_serial_present (const char *serial);
 bool        hcfpga_c2h_scan_eob (const void *buf, const u64 bytes, const u32 rec_bytes, const u32 want, u32 *processed);
 
 void        hcfpga_debug_window (fpga_dev_t *dev);
