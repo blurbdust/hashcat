@@ -45,6 +45,7 @@ from litepcie.software      import generate_litepcie_software_headers
 
 from hcfpga_abi         import fpga_abi_current
 from hcfpga_dma_wrapper import HcfpgaDmaWrapper
+from hcfpga_jtaglink    import JTAGLink, connect_engine
 from hcfpga_litepcie    import PCIE_CLASS_CODE, clock_mhz
 from hcfpga_stratixv    import StratixVTemperature, StratixVChipID, sv_pcie_endpoint_params
 
@@ -103,7 +104,7 @@ class _CRG(LiteXModule):
         ]
 
 class StoreyPeakSoC(SoCMini):
-    def __init__(self, Wrapper, sys_clk_freq=100e6, units=1, with_cmp=1, placement_margin=0.0, n_max=None):
+    def __init__(self, Wrapper, sys_clk_freq=100e6, units=1, with_cmp=1, placement_margin=0.0, n_max=None, with_jtaglink=False):
         platform = microsoft_storey_peak.Platform()
 
         self.crg = _CRG(platform, sys_clk_freq)
@@ -167,16 +168,22 @@ class StoreyPeakSoC(SoCMini):
         dw = self.pcie_dma0.data_width
 
         self.dma_down = stream.Converter(dw, 32, reverse=False)
-        self.comb += [
-            self.pcie_dma0.source.connect(self.dma_down.sink),
-            self.dma_down.source.connect(wrapper.sink),
-        ]
+        self.comb += self.pcie_dma0.source.connect(self.dma_down.sink)
 
         self.dma_up = stream.Converter(8, dw, reverse=False)
-        self.comb += [
-            wrapper.source.connect(self.dma_up.sink),
-            self.dma_up.source.connect(self.pcie_dma0.sink),
-        ]
+        self.comb += self.dma_up.source.connect(self.pcie_dma0.sink)
+
+        if with_jtaglink:
+            # The same engine over the card's JTAG, for slots where the PCIe link does not come up.
+            self.jtaglink = JTAGLink(platform, csr_base=self.mem_map.get("csr", 0))
+            self.jtaglink.add_timing_constraints(platform)
+            self.bus.add_master(name="jtaglink", master=self.jtaglink.bus)
+            connect_engine(self, self.jtaglink, self.dma_down.source, self.dma_up.sink, wrapper)
+        else:
+            self.comb += [
+                self.dma_down.source.connect(wrapper.sink),
+                wrapper.source.connect(self.dma_up.sink),
+            ]
 
 UNITS            = 1
 SYS_CLK_FREQ     = 100e6
@@ -195,6 +202,7 @@ def main():
     parser.add_argument("--placement-margin", type=float, default=PLACEMENT_MARGIN, help="Extra ns of setup clock uncertainty on sys_clk to over-constrain placement.")
     parser.add_argument("--fitter-seed",      type=int,   default=None,  help="Quartus fitter seed.")
     parser.add_argument("--threads",          type=int,   default=None,  help="Cap Quartus parallel processors.")
+    parser.add_argument("--jtaglink",         action="store_true", help="Also reach the engine over the card's JTAG, for slots where PCIe does not come up.")
     parser.add_argument("--n-max",            type=int,   default=N_MAX, help="Largest scrypt N the units compute (a power of two, 2 to 32768).")
     args = parser.parse_args()
 
@@ -206,10 +214,11 @@ def main():
         units            = args.units,
         with_cmp         = 0 if args.no_cmp else 1,
         placement_margin = args.placement_margin,
+        with_jtaglink    = args.jtaglink,
         n_max            = args.n_max,
     )
 
-    name = f"{ALGO}_{BOARD}_dma_u{args.units}_{clock_mhz(args.sys_clk_freq)}mhz_n{args.n_max}" + ("_nocmp" if args.no_cmp else "")
+    name = f"{ALGO}_{BOARD}_dma_u{args.units}_{clock_mhz(args.sys_clk_freq)}mhz_n{args.n_max}" + ("_nocmp" if args.no_cmp else "") + ("_jtag" if args.jtaglink else "")
 
     if args.fitter_seed is not None:
         soc.platform.toolchain.additional_qsf_commands += [f"set_global_assignment -name SEED {args.fitter_seed}"]
