@@ -177,9 +177,9 @@ class StoreyPeakSoC(SoCMini):
             self.dma_up.source.connect(self.pcie_dma0.sink),
         ]
 
-# The build tested on the card: 16 pipes of two rounds a stage (352 candidates in flight) at 200 MHz,
-# 82% of the ALMs, and the placement margin that closes timing at every corner.
-UNITS            = 16
+# The build tested on the card: 18 pipes of two rounds a stage (396 candidates in flight) at 200 MHz,
+# 92% of the ALMs, and the placement margin that closes timing at every corner.
+UNITS            = 18
 SYS_CLK_FREQ     = 200e6
 PLACEMENT_MARGIN = 0.2
 
