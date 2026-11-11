@@ -2495,6 +2495,24 @@ static bool launch_run (hashcat_ctx_t *hashcat_ctx, bridge_fpga_scrypt_t *ctx, h
     return false;
   }
 
+  // A board whose identity has n= was built for N up to that value (its V table holds n blocks); a
+  // larger N would compute a wrong result, so the run is refused. An identity without n= takes N up
+  // to FPGA_ITER_MAX.
+
+  for (int m = 0; m < unit_buf->members_cnt; m++)
+  {
+    const member_t *member_buf = &ctx->members_buf[unit_buf->member_idx[m]];
+
+    const u32 dev_n = member_buf->dev->ident.n;
+
+    if ((dev_n > 0) && (salt->salt_iter > dev_n))
+    {
+      event_log_error (hashcat_ctx, "FPGA bridge: %s computes N up to %u (n= in its identity), and this salt has N = %u. Use a bitstream built for a larger N.", member_buf->name, dev_n, salt->salt_iter);
+
+      return false;
+    }
+  }
+
   // What the limits above do not say: the unit computes r = 1 and p = 1 only, and takes N as
   // log2 (N), so N has to be a power of two. The module refuses anything else at parse time.
 

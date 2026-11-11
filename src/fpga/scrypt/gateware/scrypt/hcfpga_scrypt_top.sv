@@ -23,7 +23,10 @@ module hcfpga_scrypt_top #(
   // The identity's cores= (the wrapper's core_count): scrypt units, one candidate in flight each.
   parameter NUM_CORES = 1,
 
-  parameter WITH_CMP = 1
+  parameter WITH_CMP = 1,
+
+  // log2 of the largest N the units compute: each unit's V table holds 2^N_LOG2_MAX blocks.
+  parameter N_LOG2_MAX = 15
 )(
   input  wire CLK,
   input  wire rst,
@@ -96,7 +99,7 @@ module hcfpga_scrypt_top #(
   wire       r_ready;
   wire       r_last;
 
-  hcfpga_scrypt_engine #(.NUM_CORES(NUM_CORES), .PW_MAX(PW_MAX), .DIGEST_BYTES(DIGEST_BYTES), .WITH_CMP(WITH_CMP)) engine (
+  hcfpga_scrypt_engine #(.NUM_CORES(NUM_CORES), .PW_MAX(PW_MAX), .DIGEST_BYTES(DIGEST_BYTES), .WITH_CMP(WITH_CMP), .N_LOG2_MAX(N_LOG2_MAX)) engine (
     .CLK(CLK), .rst(rst),
     .rec_valid(rec_valid), .rec_len(rec_len), .rec_id(rec_id),
     .pw_rd_addr(pw_rd_addr), .pw_rd_data(pw_rd_data), .rec_taken(rec_taken), .hold(send_busy),

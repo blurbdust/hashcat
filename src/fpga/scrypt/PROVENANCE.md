@@ -33,7 +33,8 @@ All under `gateware/scrypt/`, in upstream's directories (`scrypt/`, `util/`). Th
 
 | File | Change |
 |---|---|
-| `scrypt/v_table_bram.v`, `scrypt/blockmix.v`, `scrypt/scrypt.vh`, `scrypt/main.vh`, `util/fifo_sync.v`, `util/log2.vh` | none |
+| `scrypt/v_table_bram.v`, `scrypt/scrypt.vh`, `scrypt/main.vh`, `util/fifo_sync.v`, `util/log2.vh` | none |
+| `scrypt/blockmix.v` | the output index at `R` = 1 (below) |
 | `scrypt/romix.v`, `scrypt/salsa20_8.v`, `scrypt/pbkdf2_sha256.v`, `scrypt/hmac_sha256.v` | comments only: em dashes replaced by colons and commas, the project's style |
 | `scrypt/scrypt_unit.v` | `main.vh` included; full mode: byte order to and from `pbkdf2_sha256`, one start pulse per PBKDF2 call (below); comment punctuation as above |
 | `scrypt/sha256_core.v` | the message schedule of rounds 16 to 63 (below); comment punctuation as above |
@@ -56,11 +57,14 @@ The SMix-only path holds `romix_start` high until `done` in the same way (`ST_RU
 
 The unit takes every payload byte before the 8 ID bytes as key and ignores the length (`pw_len_reg` is unused, `pbkdf2_sha256` ignores `password_len`). That is not changed: hashcat's engine sends the password zero filled to 64 bytes, which HMAC-SHA256 treats exactly as the password.
 
+### Synthesis
+
+- **`blockmix.v`: the output index at `R` = 1.** With `R` = 1 the index `round_cnt[IDX_BITS-1:1]` is `round_cnt[0:1]` of a 1-bit counter. Verilator reads it as 0, the right index, but Quartus refuses the reversed range. The index is now `round_cnt >> 1`, the same value at every `R`.
+
 ### Left as upstream wrote it
 
 A Verilator lint of `scrypt_unit` alone (`-Wall`, `FULL_MODE` 0 and 1) shows no errors. Its warnings are all in upstream code: width expansions and truncations, out-of-range selects, incomplete cases, unused signals and parameters, and style. Those in control logic were read:
 
-- `scrypt/blockmix.v`: with `R` = 1 the output index `round_cnt[IDX_BITS-1:1]` is `round_cnt[0:1]` of a 1-bit counter. Verilator reads it as 0, which is the right index (the bench checks BlockMix through ROMix and full scrypt); a synthesis tool may refuse the reversed range at `R` = 1.
 - `scrypt/romix.v`: the Integerify case has arms for r = 2 to 8 that select past the 1024 bits `R` = 1 has. `r_actual_r` is 1 bit then, so they are never taken; a synthesis tool may refuse the constant out-of-range selects.
 - `scrypt/scrypt_unit.v`: `pw_len_reg <= in_byte_cnt - 53` is cut to 8 bits; nothing reads it, and `pbkdf2_sha256.v` ignores its `password_len` port. The key is the 64 bytes the unit receives before the IDs, which is why hashcat's engine always sends 64.
 - `scrypt/sha256_core.v`: the schedule's `(round - k) & 4'hF` and `K[round]` are wider than their targets on purpose (indices modulo 16 and 64).

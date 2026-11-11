@@ -16,6 +16,9 @@
  *           (evens first, then odds)
  */
 
+// Modified for hashcat from LiteX-Scrypt's original.
+// src/fpga/scrypt/PROVENANCE.md lists every change.
+
 module blockmix #(
    parameter R = 1    // Max scrypt block size (compile-time)
 )(
@@ -69,9 +72,10 @@ module blockmix #(
    // i even -> position i/2
    // i odd  -> position r_actual + (i-1)/2
    // = round_cnt[0] ? (r_latched + round_cnt[MSB:1]) : round_cnt[MSB:1]
+   wire [IDX_BITS-1:0] half_idx = round_cnt >> 1;
    wire [IDX_BITS-1:0] out_idx = round_cnt[0]
-      ? (r_latched[IDX_BITS-1:0] + round_cnt[IDX_BITS-1:1])
-      : round_cnt[IDX_BITS-1:1];
+      ? (r_latched[IDX_BITS-1:0] + half_idx)
+      : half_idx;
 
    // Flatten Y array to output
    genvar gi;

@@ -43,10 +43,13 @@ class ScryptDmaWrapper(HcfpgaDmaWrapper):
     # The engine reads the units with the shared JtR collector.
     COMMON_RTL = HcfpgaDmaWrapper.COMMON_RTL + ("hcfpga_jtr_unit_collect.v",)
 
-    def __init__(self, platform, num_cores=1, with_cmp=1):
+    # N_LOG2_MAX sizes each unit's V table: 2^N_LOG2_MAX blocks of 128 bytes in block RAM. The
+    # identity reports n = 2^N_LOG2_MAX, and the bridge sends no larger N to the board.
+    def __init__(self, platform, num_cores=1, with_cmp=1, n_log2_max=15):
+        self.n_max = 1 << n_log2_max
         HcfpgaDmaWrapper.__init__(self, platform,
             num_cores = num_cores,
-            params    = dict(NUM_CORES=num_cores, WITH_CMP=with_cmp),
+            params    = dict(NUM_CORES=num_cores, WITH_CMP=with_cmp, N_LOG2_MAX=n_log2_max),
         )
 
     def hdl_sources(self):
