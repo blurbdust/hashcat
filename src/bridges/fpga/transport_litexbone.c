@@ -133,6 +133,14 @@ typedef enum lxb_check
 
 } lxb_check_t;
 
+// How H2C ring bursts are checked (lxb_h2c_put): by link, or forced by HCFPGA_LXB_H2C_CHECK.
+
+#define LXB_H2C_CHECK_LINK    0
+#define LXB_H2C_CHECK_STRICT  1
+#define LXB_H2C_CHECK_ACK     2
+
+#define LXB_H2C_AUDIT         8
+
 typedef struct lxb_priv
 {
   lxb_link_t link;
@@ -180,17 +188,16 @@ typedef struct lxb_priv
   u64   pend_head;
   u64   pend_tail;
 
-  // H2C ring check, for measurement (lxb_h2c_put)
+  // how H2C ring bursts are checked, see lxb_h2c_put
 
-  bool  h2c_ack;
+  int   h2c_check;
   u32   h2c_audit;
-  bool  h2c_report;
 
   u64   h2c_bursts;
   u64   h2c_bytes;
+  u64   h2c_whole;
+  u64   h2c_whole_bytes;
   u64   h2c_strict_diff;
-  u64   h2c_audited;
-  u64   h2c_audit_bytes;
   u64   h2c_audit_diff;
   u64   h2c_audit_diff_words;
 
@@ -1041,14 +1048,17 @@ static lxb_priv_t *lxb_new (void)
 
   hc_thread_mutex_init (priv->mux);
 
-  // HCFPGA_LXB_H2C_CHECK=ack: see lxb_h2c_put
+  // HCFPGA_LXB_H2C_CHECK and HCFPGA_LXB_H2C_AUDIT, see lxb_h2c_put
 
   const char *check = getenv ("HCFPGA_LXB_H2C_CHECK");
   const char *audit = getenv ("HCFPGA_LXB_H2C_AUDIT");
 
-  priv->h2c_ack    = ((check != NULL) && (strcmp (check, "ack") == 0));
-  priv->h2c_audit  = (audit != NULL) ? (u32) strtoul (audit, NULL, 10) : 8;
-  priv->h2c_report = ((check != NULL) || (getenv ("HCFPGA_DEBUG") != NULL));
+  priv->h2c_check = LXB_H2C_CHECK_LINK;
+
+  if ((check != NULL) && (strcmp (check, "strict") == 0)) priv->h2c_check = LXB_H2C_CHECK_STRICT;
+  if ((check != NULL) && (strcmp (check, "ack")    == 0)) priv->h2c_check = LXB_H2C_CHECK_ACK;
+
+  priv->h2c_audit = (audit != NULL) ? (u32) strtoul (audit, NULL, 10) : LXB_H2C_AUDIT;
 
   return priv;
 }
@@ -1465,14 +1475,24 @@ static void lxb_close (fpga_dev_t *dev)
 {
   const lxb_priv_t *priv = (const lxb_priv_t *) dev->priv;
 
-  if ((priv != NULL) && (priv->h2c_report == true) && (priv->h2c_bursts > 0))
+  if ((priv != NULL) && (priv->h2c_bursts > 0))
   {
-    fprintf (stderr, "[hcfpga] %s h2c check %s: %llu bursts, %llu bytes; strict read-backs that differed %llu; audit every %u: %llu bursts, %llu bytes read back, %llu differed (%llu words)\n",
-      dev->path, (priv->h2c_ack == true) ? "ack" : "strict",
-      (unsigned long long) priv->h2c_bursts, (unsigned long long) priv->h2c_bytes, (unsigned long long) priv->h2c_strict_diff,
-      (priv->h2c_ack == true) ? priv->h2c_audit : 0,
-      (unsigned long long) priv->h2c_audited, (unsigned long long) priv->h2c_audit_bytes,
-      (unsigned long long) priv->h2c_audit_diff, (unsigned long long) priv->h2c_audit_diff_words);
+    const u64 differed = priv->h2c_strict_diff + priv->h2c_audit_diff;
+
+    if (getenv ("HCFPGA_DEBUG") != NULL)
+    {
+      fprintf (stderr, "[hcfpga] %s h2c %llu bursts, %llu bytes; read back whole %llu bursts, %llu bytes; differed %llu (%llu strict, %llu audited, %llu words)\n",
+        dev->path, (unsigned long long) priv->h2c_bursts, (unsigned long long) priv->h2c_bytes,
+        (unsigned long long) priv->h2c_whole, (unsigned long long) priv->h2c_whole_bytes,
+        (unsigned long long) differed, (unsigned long long) priv->h2c_strict_diff,
+        (unsigned long long) priv->h2c_audit_diff, (unsigned long long) priv->h2c_audit_diff_words);
+    }
+
+    if (differed > 0)
+    {
+      fprintf (stderr, "\nFPGA bridge: warning: %s: %llu of the %llu H2C bursts read back whole differed from what was sent (each was sent again, or its batch redone). Bursts between audits are not read back whole; HCFPGA_LXB_H2C_CHECK=strict reads back every burst.\n\n",
+        dev->path, (unsigned long long) differed, (unsigned long long) priv->h2c_whole);
+    }
   }
 
   lxb_free ((lxb_priv_t *) dev->priv);
@@ -1814,12 +1834,23 @@ static bool lxb_h2c_put (fpga_dev_t *dev, const u8 *src, const u32 n)
     words[i] = ((u32) p[0] << 0) | ((u32) p[1] << 8) | ((u32) p[2] << 16) | ((u32) p[3] << 24);
   }
 
-  // Measurement only. HCFPGA_LXB_H2C_CHECK=strict (the default) reads every burst back and fails the
-  // batch when it differs. =ack reads back only the burst's last word, which shows the burst arrived
-  // but not that its bytes are right; every HCFPGA_LXB_H2C_AUDIT-th burst (default 8, 0 never) is
-  // then read back whole anyway, counted when it differs and written again with the strict check.
-  // The ring pointer moves only after this, so the device never takes an audited burst before it is
-  // right. lxb_close prints the counts.
+  // Each burst is checked by reading back what was written. Strict reads back the whole burst and
+  // fails the batch when it differs. Ack reads back only the burst's last word: that shows the whole
+  // burst arrived (a lost byte desynchronises UARTBone, and the read never answers) but not that its
+  // bytes are right, so every eighth burst (LXB_H2C_AUDIT) is read back whole anyway, and when it
+  // differs it is counted and written again with the strict check. The ring pointer moves only after
+  // that, so the device never takes an audited burst before it is right.
+  //
+  // A serial port (uart:) uses ack with the audit: reading every burst back takes as long again on
+  // the wire. udp: keeps the strict check, as a lost write datagram still lets the read answer, and
+  // so does tcp:. HCFPGA_LXB_H2C_CHECK=strict or =ack forces one for every link,
+  // HCFPGA_LXB_H2C_AUDIT=<n> sets the audit interval (0 never). lxb_close warns when a burst
+  // differed.
+
+  bool ack = (priv->link == LXB_LINK_UART);
+
+  if (priv->h2c_check == LXB_H2C_CHECK_STRICT) ack = false;
+  if (priv->h2c_check == LXB_H2C_CHECK_ACK)    ack = true;
 
   for (u32 done = 0; done < n; )
   {
@@ -1831,7 +1862,7 @@ static bool lxb_h2c_put (fpga_dev_t *dev, const u8 *src, const u32 n)
 
     const u64 diff_before = priv->rb_diff;
 
-    const bool sent = lxb_write (priv, addr, wr, len, (priv->h2c_ack == true) ? LXB_CHECK_ACK : LXB_CHECK_STRICT);
+    const bool sent = lxb_write (priv, addr, wr, len, (ack == true) ? LXB_CHECK_ACK : LXB_CHECK_STRICT);
 
     priv->h2c_strict_diff += priv->rb_diff - diff_before;
 
@@ -1840,14 +1871,19 @@ static bool lxb_h2c_put (fpga_dev_t *dev, const u8 *src, const u32 n)
     priv->h2c_bursts++;
     priv->h2c_bytes += (u64) len * 4;
 
-    if ((priv->h2c_ack == true) && (priv->h2c_audit > 0) && ((priv->h2c_bursts % priv->h2c_audit) == 0))
+    if (ack == false)
+    {
+      priv->h2c_whole++;
+      priv->h2c_whole_bytes += (u64) len * 4;
+    }
+    else if ((priv->h2c_audit > 0) && ((priv->h2c_bursts % priv->h2c_audit) == 0))
     {
       u32 back[LXB_MS_DEPTH_MAX];
 
       if (lxb_read (priv, addr, back, len) == false) return false;
 
-      priv->h2c_audited++;
-      priv->h2c_audit_bytes += (u64) len * 4;
+      priv->h2c_whole++;
+      priv->h2c_whole_bytes += (u64) len * 4;
 
       u32 differ = 0;
 
