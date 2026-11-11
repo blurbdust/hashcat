@@ -184,9 +184,11 @@ class StoreyPeakSoC(SoCMini):
                 wrapper.source.connect(self.dma_up.sink),
             ]
 
-UNITS            = 1
-SYS_CLK_FREQ     = 100e6
-PLACEMENT_MARGIN = 0.0
+# The build tested on the card: 18 pipes of two rounds a stage (396 candidates in flight) at 200 MHz,
+# 92% of the ALMs, and the placement margin that closes timing at every corner.
+UNITS            = 18
+SYS_CLK_FREQ     = 200e6
+PLACEMENT_MARGIN = 0.2
 
 def main():
     Wrapper = load_wrapper()

@@ -105,7 +105,8 @@
 
 #define MEMBER_FATAL_RUN  (MEMBER_FATAL_ATTEMPTS * 2)
 
-// An iteration is two SHA-1 compressions of 83 cycles; 1000 leaves room for a slow simulator.
+// An iteration is two SHA-1 compressions of every candidate in flight, twice the device's ring (44 or
+// 84 cycles), plus the setup of the next candidates; 1000 leaves room for a slow simulator.
 #define WAVE_CYCLES_PER_ITER 1000
 
 #define WAIT_SLACK      4
@@ -2399,7 +2400,7 @@ static fpga_pool_verdict_t run_range (launch_t *lc, const int member_idx, const 
 
         const u32 idx = part_asm.id;
 
-        // core_id names the PBKDF2 pair that computed the candidate.
+        // core_id names the slot that computed the candidate (pipe * slots + slot).
         const u16 core_id = part_asm.core_id;
 
         u32 digest[DIGEST_WORDS];
