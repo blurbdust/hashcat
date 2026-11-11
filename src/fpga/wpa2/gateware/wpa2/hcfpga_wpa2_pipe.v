@@ -3,13 +3,13 @@
  * License.....: MIT
  */
 
-// One PBKDF2-HMAC-SHA1 pipe of wpa2's engine (hcfpga_wpa2_engine.v): an unrolled SHA-1, a round per
-// stage, closed into a ring, and the state of the PBKDF2 chains that circulate in it.
+// One PBKDF2-HMAC-SHA1 pipe of wpa2's engine (hcfpga_wpa2_engine.v): an unrolled SHA-1, RPS rounds
+// (1 or 2) per stage, closed into a ring, and the state of the PBKDF2 chains that circulate in it.
 //
-// The ring is R = 84 registers long: the feedback stage (FB), the first-word stage (PRE), the 80
-// rounds (hcfpga_wpa2_round.v), the final add (FA) and one more (X). Every cycle every token moves
-// one stage on, so the ring holds R tokens, one per chain, and a chain's token is back at FB every
-// R cycles. Chain p is the token at X when the position counter is p; chains 2k and 2k+1 are
+// The ring is R = 80 / RPS + 4 registers long (84, or 44): the feedback stage (FB), the first-word
+// stage (PRE), the round stages (hcfpga_wpa2_round.v), the final add (FA) and one more (X). Every
+// cycle every token moves one stage on, so the ring holds R tokens, one per chain, and a chain's
+// token is back at FB every R cycles. Chain p is the token at X when the position counter is p; chains 2k and 2k+1 are
 // candidate slot k, which runs PBKDF2 block 1 (T1) and block 2 (T2) of one candidate side by side.
 // SLOTS = R / 2 candidates are in flight.
 //
@@ -23,7 +23,7 @@
 // and read again at FA, where it is added to the state after round 79; the chain's T and its count
 // of U values are read at X from the ACC memory and written back at FB. A chain starts with an outer
 // compression of the candidate's inner (i) (the setup unit's work), which gives U1 = T, and ends
-// after U4096: 8191 compressions, 8191 R cycles a candidate. Both chains of a slot start in
+// after U4096: 8191 compressions, 8191 * R cycles a candidate. Both chains of a slot start in
 // consecutive cycles and so end in consecutive cycles: T1's end is held, T2's end pushes the slot's
 // result (T1, the first 12 bytes of T2, the candidate's id and generation) into the result FIFO.
 //
@@ -40,6 +40,7 @@
 
 `timescale 1ns / 1ps
 module hcfpga_wpa2_pipe #(
+  parameter RPS   = 1,
   parameter SLOTS = 42
 )(
   input  wire         CLK,
@@ -59,13 +60,18 @@ module hcfpga_wpa2_pipe #(
   output reg  [309:0] res_data
 );
 
-  localparam R = 84;
+  // Round stages, and the ring.
+  localparam S = 80 / RPS;
+  localparam R = S + 4;
 
   localparam PW = 7;             // position bits
   localparam SW = 6;             // slot bits
   localparam FW = 6;             // FIFO address bits; the FIFO holds 64 results
 
-  localparam [PW-1:0] R_LAST = R - 1;
+  localparam integer  R1     = R - 1;
+  localparam [PW-1:0] R_LAST = R1[PW-1:0];
+
+  localparam [SW:0]   SLOTS_N = SLOTS[SW:0];
 
   localparam [FW:0] FIFO_DEPTH = 1 << FW;
 
@@ -79,7 +85,7 @@ module hcfpga_wpa2_pipe #(
 
   // The ring has exactly SLOTS * 2 stages; the wrapper's slot count has to agree.
   generate
-    if (SLOTS * 2 != R)
+    if ((SLOTS * 2 != R) || (RPS * S != 80))
     begin : slots_mismatch
       hcfpga_wpa2_pipe_needs_SLOTS_equal_to_R_over_2 error ();
     end
@@ -124,14 +130,15 @@ module hcfpga_wpa2_pipe #(
   reg [159:0] fb_msg;
   reg [159:0] fb_mid;
 
-  // Rounds: tags { v, ph } and state, stage n the input of round n, stage 80 round 79's output.
-  wire [1:0]   s_tag [0:80];
-  wire [31:0]  s_a   [0:80];
-  wire [31:0]  s_b   [0:80];
-  wire [31:0]  s_c   [0:80];
-  wire [31:0]  s_d   [0:80];
-  wire [31:0]  s_h   [0:80];
-  wire [511:0] s_w   [0:80];
+  // Round stages: tags { v, ph } and state, n the input of stage n (rounds RPS * n ..), S the
+  // state after round 79.
+  wire [1:0]   s_tag [0:S];
+  wire [31:0]  s_a   [0:S];
+  wire [31:0]  s_b   [0:S];
+  wire [31:0]  s_c   [0:S];
+  wire [31:0]  s_d   [0:S];
+  wire [31:0]  s_h   [0:S];
+  wire [511:0] s_w   [0:S];
 
   // FA and X.
   reg         fa_v = 0;
@@ -157,9 +164,9 @@ module hcfpga_wpa2_pipe #(
   reg [159:0] mid1_r, mid1_q, mid2_r, mid2_q;
 
   // MID1 is read in the cycle the chain is at FA, for its next token's phase; MID2 in the cycle
-  // it is at round 77's output, for its current one.
+  // it is two stages before the last round stage's output, for its current one.
   wire [SW:0] mid1_ra = { pos_1[PW-1:1], ~fa_ph };
-  wire [SW:0] mid2_ra = { pos_4[PW-1:1], s_tag[78][0] };
+  wire [SW:0] mid2_ra = { pos_4[PW-1:1], s_tag[S-2][0] };
 
   always @(posedge CLK)
   begin
@@ -252,9 +259,9 @@ module hcfpga_wpa2_pipe #(
   genvar n;
 
   generate
-    for (n = 0; n < 80; n = n + 1)
+    for (n = 0; n < S; n = n + 1)
     begin : rounds
-      hcfpga_wpa2_round #(.T(n), .TW(2)) rnd (
+      hcfpga_wpa2_round #(.T(RPS * n), .N(RPS), .TW(2)) rnd (
         .CLK(CLK),
         .tag_i(s_tag[n]),   .a_i(s_a[n]),   .b_i(s_b[n]),   .c_i(s_c[n]),   .d_i(s_d[n]),   .h_i(s_h[n]),   .w_i(s_w[n]),
         .tag_o(s_tag[n+1]), .a_o(s_a[n+1]), .b_o(s_b[n+1]), .c_o(s_c[n+1]), .d_o(s_d[n+1]), .h_o(s_h[n+1]), .w_o(s_w[n+1])
@@ -266,10 +273,10 @@ module hcfpga_wpa2_pipe #(
 
   always @(posedge CLK)
   begin
-    fa_v   <= s_tag[80][1];
-    fa_ph  <= s_tag[80][0];
-    fa_dig <= { mid2_q[159:128] + s_a[80], mid2_q[127:96] + s_b[80], mid2_q[95:64] + s_c[80],
-                mid2_q[63:32]   + s_d[80], mid2_q[31:0]   + s_h[80] };
+    fa_v   <= s_tag[S][1];
+    fa_ph  <= s_tag[S][0];
+    fa_dig <= { mid2_q[159:128] + s_a[S], mid2_q[127:96] + s_b[S], mid2_q[95:64] + s_c[S],
+                mid2_q[63:32]   + s_d[S], mid2_q[31:0]   + s_h[S] };
 
     x_v   <= fa_v;
     x_ph  <= fa_ph;
@@ -419,7 +426,7 @@ module hcfpga_wpa2_pipe #(
 
     // Written when nothing changes for a cycle after a load: the engine sends a candidate at most
     // every setup (well over the two cycles this takes to follow a load).
-    cand_ready <= (flush_q == 1'b0) & (pend_v == 1'b0) & (cand_load == 1'b0) & (busy < SLOTS) & (held < FIFO_DEPTH);
+    cand_ready <= (flush_q == 1'b0) & (pend_v == 1'b0) & (cand_load == 1'b0) & (busy < SLOTS_N) & (held < FIFO_DEPTH);
   end
 
   // Result FIFO --------------------------------------------------------------------------------

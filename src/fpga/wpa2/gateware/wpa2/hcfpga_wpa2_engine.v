@@ -11,14 +11,15 @@
 //                SHA1-compress (IV, K ^ 0x5c..), then inner (i) = SHA1-compress (ipad, ESSID ||
 //                INT (i) || padding) for blocks i = 1, 2. K is the password, zero filled to 64 bytes
 //                (WPA passphrases are 8 to 63 bytes, so never hashed first).
-//   PIPES        pipes (hcfpga_wpa2_pipe.v): an unrolled SHA-1 closed into a ring that holds SLOTS
-//                candidates, both PBKDF2 blocks of each, and does one compression a cycle. A pipe
+//   PIPES        pipes (hcfpga_wpa2_pipe.v): an unrolled SHA-1, RPS rounds a stage, closed into a
+//                ring that holds SLOTS candidates (42 with a round a stage, 22 with two), both
+//                PBKDF2 blocks of each, and does one compression a cycle. A pipe
 //                starts a candidate from its setup in a free slot and returns T1 and T2, from which
 //                the PMK is T1's 20 bytes and the first 12 of T2's.
 //   collector    takes the pipes' results in turn and sends each PMK as two C2H records.
 //
-// A candidate takes 8191 compressions in each block, 8191 * 84 cycles in its slot; a pipe finishes
-// one every 16382 cycles, and the setup unit sets one up in about 190.
+// A candidate takes 8191 compressions in each block, 8191 * 2 * SLOTS cycles in its slot; a pipe
+// finishes one every 16382 cycles, and the setup unit sets one up in about 190.
 //
 // Contract with the top, PARTS = 2:
 //
@@ -47,6 +48,7 @@
 `timescale 1ns / 1ps
 module hcfpga_wpa2_engine #(
   parameter PIPES        = 1,
+  parameter RPS          = 1,
   parameter PW_MAX       = 63,
   parameter DIGEST_BYTES = 32,
   parameter PARTS        = 2,
@@ -96,7 +98,7 @@ module hcfpga_wpa2_engine #(
 );
 
   // Candidates in flight in a pipe: its ring is 2 * SLOTS stages long (hcfpga_wpa2_pipe.v).
-  localparam SLOTS = 42;
+  localparam SLOTS = (80 / RPS + 4) / 2;
 
   localparam QW = (PIPES <= 1) ? 1 : $clog2(PIPES);
 
@@ -107,7 +109,8 @@ module hcfpga_wpa2_engine #(
   localparam [159:0] SHA1_IV = 160'h67452301_efcdab89_98badcfe_10325476_c3d2e1f0;
 
   // A framing reset keeps the pipes flushing until every token has been round once.
-  localparam [7:0] FLUSH_CYCLES = 2 * SLOTS + 8;
+  localparam integer FLUSH_N      = 2 * SLOTS + 8;
+  localparam [7:0]   FLUSH_CYCLES = FLUSH_N[7:0];
 
   function [QW-1:0] next_pipe (input [QW-1:0] q);
     next_pipe = (q == LAST_PIPE) ? {QW{1'b0}} : q + 1'b1;
@@ -350,7 +353,7 @@ module hcfpga_wpa2_engine #(
       wire res_avail;
       reg  avail_r = 0;
 
-      hcfpga_wpa2_pipe #(.SLOTS(SLOTS)) pipe (
+      hcfpga_wpa2_pipe #(.RPS(RPS), .SLOTS(SLOTS)) pipe (
         .CLK(CLK), .flush(flush),
         .cand_load(p_load[q]), .cand_ready(p_ready[q]),
         .cand_ipad(so_ipad), .cand_opad(so_opad), .cand_in1(so_in1), .cand_in2(so_in2),

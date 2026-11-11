@@ -35,8 +35,9 @@ DIGEST_BYTES = 32
 # C2H records per candidate: digest bytes 24k..24k+23 in record k.
 PARTS        = 2
 
-# Candidates in flight in one pipe (the engine's SLOTS; the wrapper's SLOTS_PER_PIPE).
-SLOTS        = 42
+def slots(rps):
+  """Candidates in flight in one pipe of rps rounds a stage (the engine's SLOTS)."""
+  return (80 // rps + 4) // 2
 
 # The ESSID is 0 to 32 bytes: salt0..3 hold bytes 0..15, salt4..7 bytes 16..31.
 SALT_MAX = 32

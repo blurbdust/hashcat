@@ -11,8 +11,8 @@
 // per returned candidate) plus a retire pulse per candidate.
 //
 // The engine (hcfpga_wpa2_engine.v) holds a setup unit that computes each candidate's HMAC setup,
-// PIPES PBKDF2 pipes (unrolled SHA-1 rings of SLOTS candidates each, both PMK blocks of every
-// candidate), the generation and a collector that sends each PMK as two C2H records (PARTS = 2).
+// PIPES PBKDF2 pipes (unrolled SHA-1 rings, RPS rounds a stage, of SLOTS candidates each, both PMK
+// blocks of every candidate), the generation and a collector that sends each PMK as two C2H records (PARTS = 2).
 // The setup unit holds the intake's record while it reads the password (hold).
 //
 // wpa2's own registers, from 0x3c: salt_len, then salt4..7 (ESSID bytes 16..31; salt0..3 carry
@@ -20,9 +20,10 @@
 
 `timescale 1ns / 1ps
 module hcfpga_wpa2_top #(
-  // PBKDF2 pipes. The identity's cores= (the wrapper's core_count) is PIPES * 42, the candidates in
-  // flight (the engine's SLOTS per pipe).
+  // PBKDF2 pipes, and SHA-1 rounds per pipe stage (1 or 2). The identity's cores= (the wrapper's
+  // core_count) is the candidates in flight, PIPES * (80 / RPS + 4) / 2 (the engine's SLOTS a pipe).
   parameter PIPES = 1,
+  parameter RPS   = 1,
 
   parameter WITH_CMP = 1
 )(
@@ -99,7 +100,7 @@ module hcfpga_wpa2_top #(
   wire       r_ready;
   wire       r_last;
 
-  hcfpga_wpa2_engine #(.PIPES(PIPES), .PW_MAX(PW_MAX), .DIGEST_BYTES(DIGEST_BYTES), .PARTS(PARTS), .WITH_CMP(WITH_CMP)) engine (
+  hcfpga_wpa2_engine #(.PIPES(PIPES), .RPS(RPS), .PW_MAX(PW_MAX), .DIGEST_BYTES(DIGEST_BYTES), .PARTS(PARTS), .WITH_CMP(WITH_CMP)) engine (
     .CLK(CLK), .rst(rst),
     .rec_valid(rec_valid), .rec_len(rec_len), .rec_id(rec_id),
     .pw_rd_addr(pw_rd_addr), .pw_rd_data(pw_rd_data), .rec_taken(rec_taken), .hold(rec_hold),

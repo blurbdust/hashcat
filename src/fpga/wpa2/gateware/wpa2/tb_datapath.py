@@ -14,8 +14,9 @@
 #   ./tb_datapath.py --case lengths       one case
 #   SIM_WORK=<dir> ./tb_datapath.py       where to build (default ../../build/tb_datapath)
 #
-# A candidate takes 8191 * 84 cycles (about 688,000) in a pipe's slot, and a pipe holds SLOTS of them
-# at once, so a batch of up to SLOTS * units candidates takes that long, and one more takes twice.
+# A candidate takes 8191 * 2 * SLOTS cycles in a pipe's slot (about 688,000 with a round a stage and
+# 42 slots, 360,000 with two and 22), and a pipe holds SLOTS of them at once, so a batch of up to
+# SLOTS * units candidates takes that long, and one more takes twice.
 
 import argparse
 import os
@@ -33,7 +34,7 @@ sys.path.insert(0, HERE)
 
 import hcfpga_bench as hb
 
-from wpa2_ref import wpa2_digest, PW_MAX, DIGEST_BYTES, PARTS, SALT, SALT_MAX, ROUNDS, CANARY_PW, SLOTS, salt_regs, extra_regs
+from wpa2_ref import wpa2_digest, PW_MAX, DIGEST_BYTES, PARTS, SALT, SALT_MAX, ROUNDS, CANARY_PW, slots, salt_regs, extra_regs
 
 SOURCES = [os.path.join(HERE, f) for f in [
   "hcfpga_wpa2_top.sv", "hcfpga_wpa2_engine.v", "hcfpga_wpa2_pipe.v", "hcfpga_wpa2_round.v", "hcfpga_wpa2_sha1.v",
@@ -53,7 +54,7 @@ def check(name, salt, rounds, cands, bitmap_idx, recs, done, errs, pad, pad_recs
   return hb.check(name, cands, want, bitmap_idx, recs, done, errs, pad, pad_recs=pad_recs,
                   digest_bytes=DIGEST_BYTES, parts=PARTS, cmp_byte=CMP_BYTE, core_name="slots")
 
-def build_restart(work, units):
+def build_restart(work, units, rps):
   """tb_restart.v around the same top, the way hb.build builds tb_hcfpga.v."""
   exe = os.path.join(work, "obj_dir", "Vtb_restart")
   hdl = SOURCES + [os.path.join(HERE, f) for f in ("tb_restart.v", "tb_dut.vh")]
@@ -62,7 +63,7 @@ def build_restart(work, units):
   os.makedirs(work, exist_ok=True)
   cmd = ["verilator", "--binary", "-j", "0", "-O3", "--x-initial", "unique"] + hb.VERILATOR_WARNINGS
   cmd += ["-I" + d for d in [HERE, hb.IFACE]]
-  cmd += ["-GNUM_UNITS=%d" % units, "-GWITH_CMP=1"]
+  cmd += ["-GNUM_UNITS=%d" % units, "-GWITH_CMP=1", "-GRPS=%d" % rps]
   cmd += ["--top-module", "tb_restart", "--Mdir", os.path.join(work, "obj_dir"), os.path.join(HERE, "tb_restart.v")]
   cmd += SOURCES
   r = subprocess.run(cmd, cwd=work, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -106,14 +107,16 @@ def main():
   ap = argparse.ArgumentParser(description="wpa2 datapath bench")
   ap.add_argument("--case", default="all")
   ap.add_argument("--units", type=int, default=2)
+  ap.add_argument("--rps", type=int, default=1, choices=(1, 2), help="SHA-1 rounds a pipe stage")
   ap.add_argument("--rebuild", action="store_true")
   args = ap.parse_args()
 
   base = os.environ.get("SIM_WORK", os.path.join(HERE, "..", "..", "build", "tb_datapath"))
-  work = os.path.abspath(os.path.join(base, "u%d" % args.units))
+  work = os.path.abspath(os.path.join(base, "u%d_r%d" % (args.units, args.rps)))
   if args.rebuild and os.path.isdir(work):
     shutil.rmtree(work)
-  exe = hb.build(work, SOURCES, INCLUDES, {"NUM_UNITS": args.units, "WITH_CMP": 1}, HERE)
+  exe = hb.build(work, SOURCES, INCLUDES, {"NUM_UNITS": args.units, "WITH_CMP": 1, "RPS": args.rps}, HERE)
+  SLOTS = slots(args.rps)
 
   rng = random.Random(7)
   salt = SALT
@@ -194,8 +197,8 @@ def main():
   # one while they run in the pipes, and B armed without a reset while A's run (A's results then
   # come back under the old generation and are dropped).
   if args.case in ("all", "restart"):
-    rwork = os.path.abspath(os.path.join(base, "u%d_restart" % args.units))
-    rexe = build_restart(rwork, args.units)
+    rwork = os.path.abspath(os.path.join(base, "u%d_r%d_restart" % (args.units, args.rps)))
+    rexe = build_restart(rwork, args.units, args.rps)
     s2 = rbin(11)
     for name, abort_at, mode, na in (("rst_setup", 1500, 1, 30), ("rst_run", 300000, 1, 30), ("arm_run", 100000, 2, 20)):
       cands_a = [(5000 + i, rnd(9)) for i in range(na)]
@@ -210,8 +213,8 @@ def main():
 
   # hashcat's build: WITH_CMP = 0 returns every candidate, whatever the bitmap holds.
   if args.case in ("all", "nocmp"):
-    work0 = os.path.abspath(os.path.join(base, "u%d_nocmp" % args.units))
-    exe0 = hb.build(work0, SOURCES, INCLUDES, {"NUM_UNITS": args.units, "WITH_CMP": 0}, HERE)
+    work0 = os.path.abspath(os.path.join(base, "u%d_r%d_nocmp" % (args.units, args.rps)))
+    exe0 = hb.build(work0, SOURCES, INCLUDES, {"NUM_UNITS": args.units, "WITH_CMP": 0, "RPS": args.rps}, HERE)
     cands = [(i, rnd(10)) for i in range(4)]
     recs, done, errs, pad = run_batch(exe0, work0, salt, R, cands, [0, 0, 0, 0])
     results.append(check("nocmp", salt, R, cands, None, recs, done, errs, pad))

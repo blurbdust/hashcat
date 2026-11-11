@@ -28,8 +28,10 @@ from hcfpga_dma_wrapper import HcfpgaDmaWrapper
 ENGINE_FILES = ["hcfpga_wpa2_top.sv", "hcfpga_wpa2_engine.v", "hcfpga_wpa2_pipe.v", "hcfpga_wpa2_round.v",
                 "hcfpga_wpa2_sha1.v"]
 
-# Candidates in flight in one pipe: the engine's SLOTS, half its ring of 84 stages.
-SLOTS_PER_PIPE = 42
+# SHA-1 rounds a pipe stage (the top's RPS), and the candidates in flight in one pipe that gives
+# (the engine's SLOTS): half the ring of 80 / RPS round stages and four more.
+ROUNDS_PER_STAGE = 1
+SLOTS_PER_PIPE   = (80 // ROUNDS_PER_STAGE + 4) // 2
 
 class Wpa2DmaWrapper(HcfpgaDmaWrapper):
     ALGO = "wpa2"
@@ -52,7 +54,7 @@ class Wpa2DmaWrapper(HcfpgaDmaWrapper):
     def __init__(self, platform, pipes=1, with_cmp=0):
         HcfpgaDmaWrapper.__init__(self, platform,
             num_cores = pipes * SLOTS_PER_PIPE,
-            params    = dict(PIPES=pipes, WITH_CMP=0),
+            params    = dict(PIPES=pipes, RPS=ROUNDS_PER_STAGE, WITH_CMP=0),
         )
 
     def hdl_sources(self):
