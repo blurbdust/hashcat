@@ -61,8 +61,12 @@
 #define SVJTAG_CSR_WRITE    2
 
 // One USB write may only ask for as many TDO bytes as the FT232H's 1 KiB transmit buffer holds,
-// or the MPSSE stalls while the host is still writing.
-#define SVJTAG_CHUNK_SCANS  12
+// or the MPSSE stalls while the host is still writing. Its commands should also fit the 1 KiB
+// receive buffer, two 512-byte packets: twelve scans take 1108 bytes, and the short third packet
+// left the MPSSE waiting for commands, 22% slower than eleven scans in 1016 bytes with nine
+// cables busy.
+#define SVJTAG_CHUNK_SCANS  11
+#define SVJTAG_CHUNK_BYTES  1024
 
 // Chunks in flight. A reader thread drains the chip while the next chunk is written, so the USB
 // round trip overlaps the JTAG shifting.
@@ -369,6 +373,8 @@ static bool mp_dr_send (svjtag_priv_t *p, const u8 *tdi, const u32 bits, const u
   }
 
   cmd[c++] = 0x87;
+
+  if (c > SVJTAG_CHUNK_BYTES) return false;
 
   return ftdi_write (&p->ftdi, cmd, c);
 }
