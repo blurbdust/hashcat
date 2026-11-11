@@ -14,13 +14,15 @@
 #   ./tb_datapath.py --case lengths       one case
 #   SIM_WORK=<dir> ./tb_datapath.py       where to build (default ../../build/tb_datapath)
 #
-# A candidate takes about 680,000 cycles on a pair, so the cases keep their candidate counts low.
+# A candidate takes 8191 * 84 cycles (about 688,000) in a pipe's slot, and a pipe holds SLOTS of them
+# at once, so a batch of up to SLOTS * units candidates takes that long, and one more takes twice.
 
 import argparse
 import os
 import random
 import shutil
 import struct
+import subprocess
 import sys
 
 sys.dont_write_bytecode = True
@@ -31,17 +33,11 @@ sys.path.insert(0, HERE)
 
 import hcfpga_bench as hb
 
-from wpa2_ref import wpa2_digest, PW_MAX, DIGEST_BYTES, PARTS, SALT, SALT_MAX, ROUNDS, CANARY_PW, salt_regs, extra_regs
-
-# OpenCiphers' cores (see PROVENANCE.md), in upstream's directories.
-WPAPSK = os.path.join(HERE, "wpapsk")
-SHA1   = os.path.join(HERE, "sha1")
+from wpa2_ref import wpa2_digest, PW_MAX, DIGEST_BYTES, PARTS, SALT, SALT_MAX, ROUNDS, CANARY_PW, SLOTS, salt_regs, extra_regs
 
 SOURCES = [os.path.join(HERE, f) for f in [
-  "hcfpga_wpa2_top.sv", "hcfpga_wpa2_engine.v",
-]] + [os.path.join(WPAPSK, f) for f in [
-  "PBKDF2.v", "Sha1.v", "Sha1BRAM.v", "R.v", "Add32.v",
-]] + [os.path.join(SHA1, "Sha1.v")] + hb.RTL_TAIL
+  "hcfpga_wpa2_top.sv", "hcfpga_wpa2_engine.v", "hcfpga_wpa2_pipe.v", "hcfpga_wpa2_round.v", "hcfpga_wpa2_sha1.v",
+]] + hb.RTL_TAIL
 
 INCLUDES = [HERE]
 
@@ -55,7 +51,56 @@ def run_batch(exe, work, salt, rounds, cands, bitmap, gaps=1, pad_recs=1):
 def check(name, salt, rounds, cands, bitmap_idx, recs, done, errs, pad, pad_recs=1):
   want = {cid: wpa2_digest(pw, salt, rounds) for cid, pw in cands}
   return hb.check(name, cands, want, bitmap_idx, recs, done, errs, pad, pad_recs=pad_recs,
-                  digest_bytes=DIGEST_BYTES, parts=PARTS, cmp_byte=CMP_BYTE, core_name="pairs")
+                  digest_bytes=DIGEST_BYTES, parts=PARTS, cmp_byte=CMP_BYTE, core_name="slots")
+
+def build_restart(work, units):
+  """tb_restart.v around the same top, the way hb.build builds tb_hcfpga.v."""
+  exe = os.path.join(work, "obj_dir", "Vtb_restart")
+  hdl = SOURCES + [os.path.join(HERE, f) for f in ("tb_restart.v", "tb_dut.vh")]
+  if os.path.isfile(exe) and os.path.getmtime(exe) >= max(os.path.getmtime(f) for f in hdl):
+    return exe
+  os.makedirs(work, exist_ok=True)
+  cmd = ["verilator", "--binary", "-j", "0", "-O3", "--x-initial", "unique"] + hb.VERILATOR_WARNINGS
+  cmd += ["-I" + d for d in [HERE, hb.IFACE]]
+  cmd += ["-GNUM_UNITS=%d" % units, "-GWITH_CMP=1"]
+  cmd += ["--top-module", "tb_restart", "--Mdir", os.path.join(work, "obj_dir"), os.path.join(HERE, "tb_restart.v")]
+  cmd += SOURCES
+  r = subprocess.run(cmd, cwd=work, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+  if r.returncode != 0:
+    sys.stdout.write(r.stdout.decode(errors="replace")[-4000:])
+    raise SystemExit("verilator build failed")
+  return exe
+
+def run_restart(exe, work, salt, rounds, cands_a, cands_b, abort_at, mode):
+  """Batch A abandoned abort_at cycles into its stream (mode 1: a framing reset, 2: B armed without
+  one), then batch B. Returns B's records as hb.run_batch does, and the ABORT line."""
+  words_a, _ = hb.h2c_records(cands_a)
+  words_b, pad_b = hb.h2c_records(cands_b)
+  cfg = [0] * 32
+  cfg[0:4]   = salt_regs(salt)
+  cfg[4]     = rounds
+  cfg[6:10]  = [0xffffffff] * 4
+  cfg[10:14] = [len(cands_b), 1, len(words_b), 0]
+  for i, v in enumerate(extra_regs(salt, rounds)):
+    cfg[16 + i] = v
+  cfg[24:28] = [len(cands_a), len(words_a), abort_at, mode]
+  with open(os.path.join(work, "cfg.hex"), "w") as f:
+    f.write("\n".join("%08x" % (w & 0xffffffff) for w in cfg) + "\n")
+  for name, words in (("h2c_a.hex", words_a), ("h2c.hex", words_b)):
+    with open(os.path.join(work, name), "w") as f:
+      f.write("\n".join("%08x" % w for w in words) + "\n")
+  r = subprocess.run([exe], cwd=work, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+  recs, done, errs, abort = [], None, [], ""
+  for line in r.stdout.decode(errors="replace").splitlines():
+    if line.startswith("REC "):
+      recs.append(bytes.fromhex(line[4:]))
+    elif line.startswith("DONE "):
+      done = line.split()[1:]
+    elif line.startswith("ERR"):
+      errs.append(line)
+    elif line.startswith("ABORT"):
+      abort = line
+  return recs, done, errs, pad_b, abort
 
 def main():
   ap = argparse.ArgumentParser(description="wpa2 datapath bench")
@@ -106,7 +151,6 @@ def main():
 
   # Several wrong candidates and one right one, the bitmap holding only the target's index: the
   # comparator passes the target (both records) and drops, but retires, everything that misses.
-  # Filtered candidates free their pair at once, so pairs are restarted back to back here.
   if args.case in ("all", "cmp"):
     target = wpa2_digest(b"hashcat!", salt, R)
     cands = [(i, rnd(8)) for i in range(15)]
@@ -135,6 +179,34 @@ def main():
     cands = [(i, rnd(8)) for i in range(3)]
     recs, done, errs, pad = run_batch(exe, work, salt, R, cands, [0xffffffff] * 4, pad_recs=4)
     results.append(check("pad", salt, R, cands, None, recs, done, errs, pad, pad_recs=4))
+
+  # More candidates than slots: every slot of every pipe is taken, and the last candidates wait for
+  # slots to free and run in them again. Ids out of order, a few ESSID-length passwords.
+  if args.case in ("all", "full"):
+    n = SLOTS * args.units + 13
+    cands = [(1000 + 7 * i, rnd(8 + i % 56)) for i in range(n)]
+    recs, done, errs, pad = run_batch(exe, work, salt, R, cands, [0xffffffff] * 4)
+    results.append(check("full", salt, R, cands, None, recs, done, errs, pad))
+
+  # Batches abandoned with candidates in flight, as hashcat's board restart does after a failed
+  # batch, and a batch armed while the last one still runs: whatever was in flight never comes
+  # back, and the next batch returns whole. A framing reset while A's candidates are being set up,
+  # one while they run in the pipes, and B armed without a reset while A's run (A's results then
+  # come back under the old generation and are dropped).
+  if args.case in ("all", "restart"):
+    rwork = os.path.abspath(os.path.join(base, "u%d_restart" % args.units))
+    rexe = build_restart(rwork, args.units)
+    s2 = rbin(11)
+    for name, abort_at, mode, na in (("rst_setup", 1500, 1, 30), ("rst_run", 300000, 1, 30), ("arm_run", 100000, 2, 20)):
+      cands_a = [(5000 + i, rnd(9)) for i in range(na)]
+      cands_b = [(i, rnd(8 + i % 3)) for i in range(SLOTS * args.units - na + 4)]
+      cands_b.insert(5, (77, b"hashcat!"))
+      recs, done, errs, pad, abort = run_restart(rexe, rwork, s2, R, cands_a, cands_b, abort_at, mode)
+      print("           %s" % abort)
+      # Without a reset the intake's slip count runs on from A's pad words.
+      if mode == 2:
+        pad += hb.h2c_records(cands_a)[1]
+      results.append(check(name, s2, R, cands_b, None, recs, done, errs, pad))
 
   # hashcat's build: WITH_CMP = 0 returns every candidate, whatever the bitmap holds.
   if args.case in ("all", "nocmp"):
