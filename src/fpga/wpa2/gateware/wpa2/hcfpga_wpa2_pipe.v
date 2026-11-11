@@ -40,8 +40,8 @@
 
 `timescale 1ns / 1ps
 module hcfpga_wpa2_pipe #(
-  parameter RPS   = 1,
-  parameter SLOTS = 42
+  parameter RPS   = 2,
+  parameter SLOTS = 22
 )(
   input  wire         CLK,
   input  wire         flush,

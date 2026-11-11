@@ -23,7 +23,7 @@ module hcfpga_wpa2_top #(
   // PBKDF2 pipes, and SHA-1 rounds per pipe stage (1 or 2). The identity's cores= (the wrapper's
   // core_count) is the candidates in flight, PIPES * (80 / RPS + 4) / 2 (the engine's SLOTS a pipe).
   parameter PIPES = 1,
-  parameter RPS   = 1,
+  parameter RPS   = 2,
 
   parameter WITH_CMP = 1
 )(

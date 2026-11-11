@@ -30,7 +30,7 @@ ENGINE_FILES = ["hcfpga_wpa2_top.sv", "hcfpga_wpa2_engine.v", "hcfpga_wpa2_pipe.
 
 # SHA-1 rounds a pipe stage (the top's RPS), and the candidates in flight in one pipe that gives
 # (the engine's SLOTS): half the ring of 80 / RPS round stages and four more.
-ROUNDS_PER_STAGE = 1
+ROUNDS_PER_STAGE = 2
 SLOTS_PER_PIPE   = (80 // ROUNDS_PER_STAGE + 4) // 2
 
 class Wpa2DmaWrapper(HcfpgaDmaWrapper):

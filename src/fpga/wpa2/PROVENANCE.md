@@ -13,13 +13,13 @@ Those cores compress a block in 83 cycles, one SHA-1 round a cycle on one set of
 | File | Notes |
 |---|---|
 | `gateware/wpa2/hcfpga_wpa2_engine.v` | the engine: the setup unit (the HMAC setup on two `hcfpga_wpa2_sha1` cores), the hand-off of each candidate to a pipe, the flush on a framing reset, the collector with two C2H records per candidate |
-| `gateware/wpa2/hcfpga_wpa2_pipe.v` | one PBKDF2 pipe: 80 rounds closed into a ring of 84 stages, 42 candidates in flight (both PMK blocks of each), the chains' midstates, accumulators and counts in memories, the result FIFO |
-| `gateware/wpa2/hcfpga_wpa2_round.v` | one SHA-1 round of the pipe, specialised for the PBKDF2 loop's 20-byte messages (message words 5..15 are constants) |
+| `gateware/wpa2/hcfpga_wpa2_pipe.v` | one PBKDF2 pipe: 80 rounds, two a stage by default (or one), closed into a ring of 44 stages (or 84), 22 candidates in flight (or 42), both PMK blocks of each; the chains' midstates, accumulators and counts in memories, the result FIFO |
+| `gateware/wpa2/hcfpga_wpa2_round.v` | one stage of the pipe, one or two SHA-1 rounds, specialised for the PBKDF2 loop's 20-byte messages (message words 5..15 are constants) |
 | `gateware/wpa2/hcfpga_wpa2_sha1.v` | the setup unit's SHA-1 compression of a full 512-bit block, a round a cycle |
 | `gateware/wpa2/hcfpga_wpa2_top.sv` | the datapath top |
 | `gateware/wpa2_dma_wrapper.py` | the LiteX wrapper |
 | `gateware/wpa2/tb_datapath.py`, `tb_dut.vh`, `tb_restart.v`, `wpa2_ref.py` | the datapath bench, its restart bench (batches abandoned with candidates in flight) and the reference |
-| `wpa2_storeypeak_dma.py`, `hcfpga_litepcie.py`, `hcfpga_stratixv.py`, `gateware/stratixv/hcfpga_sv_tsd.v` | the Microsoft Storey Peak (Stratix V) target, the same as the crypt(3) ports' |
+| `wpa2_storeypeak_dma.py`, `hcfpga_litepcie.py`, `hcfpga_stratixv.py`, `gateware/stratixv/hcfpga_sv_tsd.v` | the Microsoft Storey Peak (Stratix V) target, as the crypt(3) ports have it, with wpa2's tested build as its default |
 | `src/bridges/bridge_fpga_wpa2.c`, `src/bridges/fpga/hcfpga_wpa2_ref.h` | the bridge (bcrypt's with wpa2's specifics) and the canary's reference |
 | `src/modules/module_75600.c`, `OpenCL/m75600-pure.cl`, `tools/test_modules/m75600.py` | mode 22000's module, kernel and test module, bridged |
 

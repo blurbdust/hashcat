@@ -48,7 +48,7 @@
 `timescale 1ns / 1ps
 module hcfpga_wpa2_engine #(
   parameter PIPES        = 1,
-  parameter RPS          = 1,
+  parameter RPS          = 2,
   parameter PW_MAX       = 63,
   parameter DIGEST_BYTES = 32,
   parameter PARTS        = 2,

@@ -107,7 +107,7 @@ def main():
   ap = argparse.ArgumentParser(description="wpa2 datapath bench")
   ap.add_argument("--case", default="all")
   ap.add_argument("--units", type=int, default=2)
-  ap.add_argument("--rps", type=int, default=1, choices=(1, 2), help="SHA-1 rounds a pipe stage")
+  ap.add_argument("--rps", type=int, default=2, choices=(1, 2), help="SHA-1 rounds a pipe stage")
   ap.add_argument("--rebuild", action="store_true")
   args = ap.parse_args()
 

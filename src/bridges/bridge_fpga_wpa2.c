@@ -105,8 +105,8 @@
 
 #define MEMBER_FATAL_RUN  (MEMBER_FATAL_ATTEMPTS * 2)
 
-// An iteration is two SHA-1 compressions of every candidate in flight, 2 * 84 cycles in the device's
-// pipes, plus the setup of the next candidates; 1000 leaves room for a slow simulator.
+// An iteration is two SHA-1 compressions of every candidate in flight, twice the device's ring (44 or
+// 84 cycles), plus the setup of the next candidates; 1000 leaves room for a slow simulator.
 #define WAVE_CYCLES_PER_ITER 1000
 
 #define WAIT_SLACK      4
