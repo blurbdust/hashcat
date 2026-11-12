@@ -21,7 +21,7 @@
 // A candidate takes 8191 compressions in each block, 8191 * 2 * SLOTS cycles in its slot; a pipe
 // finishes one every 16382 cycles, and the setup unit sets one up in about 190.
 //
-// Contract with the top, PARTS = 2:
+// Contract with the top, PARTS = 2 (PARTS = 1 below):
 //
 // - A record is ready while rec_valid is high: rec_len, rec_id, and the password through
 //   pw_rd_addr/pw_rd_data (word k = bytes 4k..4k+3, big-endian, as SHA-1 reads them). The setup unit
@@ -33,6 +33,9 @@
 //   bytes 4..11 and zeros at 12..27, flags 0x0000 and 0x0100 (the part index in bits 11..8),
 //   core_id the slot that computed it (pipe * SLOTS + slot, below the identity's cores=). A
 //   filtered one retires without a record.
+// - PARTS = 1 sends the PMK in one record of 40 bytes instead, for links where C2H bytes are what
+//   is short (a serial port): bytes 0..27 as record 0 above (flags 0x0000), PMK bytes 24..31 at
+//   bytes 32..39. The top makes its end-of-batch records 40 bytes long too.
 // - Comparator: the low 7 bits of PMK byte 3 (C2H byte 7 of record 0; the low byte of the bridge's
 //   digest[0] after hcfpga_digest_swap32) index cmp_bitmap. WITH_CMP = 0 returns every candidate,
 //   which is how hashcat builds it: hashcat's digest is a MIC or a PMKID that its comp kernels
@@ -427,7 +430,17 @@ module hcfpga_wpa2_engine #(
 
   localparam C_SCAN = 3'd0, C_WAIT = 3'd1, C_DECIDE = 3'd2, C_EMIT = 3'd3, C_NEXT = 3'd4;
 
-  localparam REST_BITS = 192 * PARTS;
+  // PARTS = 2: the second part's 24 bytes wait in rest. PARTS = 1: the record is 8 bytes longer.
+  localparam REST_BITS = 192 * ((PARTS < 2) ? 2 : PARTS);
+
+  localparam [5:0] REC_LAST = (PARTS == 1) ? 6'd39 : 6'd31;
+
+  generate
+    if ((PARTS != 1) && (PARTS != 2))
+    begin : parts_unsupported
+      hcfpga_wpa2_engine_needs_PARTS_1_or_2 error ();
+    end
+  endgenerate
 
   reg [2:0]    c_state = C_SCAN;
   reg [QW-1:0] cq      = 0;
@@ -453,15 +466,15 @@ module hcfpga_wpa2_engine #(
   wire [REST_BITS-1:0] pmk_field = { {(REST_BITS - 8*DIGEST_BYTES){1'b0}}, pmk[8*DIGEST_BYTES-1:0] };
 
   reg [15:0]          core_id = 0;
-  reg [255:0]         frame   = 0;
-  reg [4:0]           bytecnt = 0;
+  reg [319:0]         frame   = 0;
+  reg [5:0]           bytecnt = 0;
   reg [3:0]           part    = 0;
   reg [REST_BITS-1:0] rest    = 0;
   reg [31:0]          id_r    = 0;
 
   assign r_data  = frame[7:0];
   assign r_valid = (c_state == C_EMIT);
-  assign r_last  = (c_state == C_EMIT) & (bytecnt == 5'd31);
+  assign r_last  = (c_state == C_EMIT) & (bytecnt == REC_LAST);
 
   always @(posedge CLK)
   begin
@@ -501,7 +514,7 @@ module hcfpga_wpa2_engine #(
       else
       begin
         core_id <= slot_id;
-        frame   <= { 16'h0000, slot_id, pmk_field[191:0], e_id };
+        frame   <= { ((PARTS == 1) ? pmk[255:192] : 64'd0), 16'h0000, slot_id, pmk_field[191:0], e_id };
         rest    <= pmk_field >> 192;
         part    <= 0;
         id_r    <= e_id;
@@ -515,14 +528,14 @@ module hcfpga_wpa2_engine #(
         c_state <= C_NEXT;
       else if (r_ready == 1'b1)
       begin
-        if ((bytecnt == 5'd31) && (part == PARTS - 1))
+        if ((bytecnt == REC_LAST) && (part == PARTS - 1))
         begin
           retire  <= 1'b1;
           c_state <= C_NEXT;
         end
-        else if (bytecnt == 5'd31)
+        else if (bytecnt == REC_LAST)
         begin
-          frame   <= { 4'h0, part + 4'h1, 8'h00, core_id, rest[191:0], id_r };
+          frame   <= { 64'd0, 4'h0, part + 4'h1, 8'h00, core_id, rest[191:0], id_r };
           rest    <= rest >> 192;
           part    <= part + 1'b1;
           bytecnt <= 0;

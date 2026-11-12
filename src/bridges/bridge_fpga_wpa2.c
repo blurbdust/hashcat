@@ -75,6 +75,11 @@
 #define C2H_PART_SHIFT    24
 #define C2H_PART_MASK     0xfu
 
+// Or, the identity's parts=1, one record of 40 bytes: words 0..7 as part 0 (flags 0x0000), PMK bytes
+// 24..31 in words 8..9. The end-of-batch records are 40 bytes too, their flags in word 7 as ever.
+// 24 bytes a candidate less on the link, for boards whose link is short of C2H bytes.
+#define C2H_REC40_WORDS   10
+
 // The ESSID, 0 to 32 bytes; mode 22000's salt_iter is always 4095, the count after U1 (the
 // device's count is fixed at 4096).
 #define FPGA_SALT_MIN     0
@@ -176,6 +181,7 @@ typedef struct
 
   u32     h2c_rec_bytes;
   u32     c2h_rec_bytes;
+  u32     c2h_parts;
 
   u32    *slot_id;
 
@@ -747,13 +753,18 @@ void *platform_init (hashcat_ctx_t *hashcat_ctx)
     }
 
     // A board built for another number of C2H records per candidate would have its results read
-    // as the wrong parts. An identity without parts= returns one record per candidate.
+    // as the wrong parts. An identity without parts= returns one record per candidate, which for
+    // wpa2 is the 40-byte record; those have to fill the transport's granule exactly, if it has one.
 
     const u32 dev_parts = (dev->ident.parts > 0) ? dev->ident.parts : 1;
 
-    if (dev_parts != C2H_PARTS)
+    const u32 dev_rec_bytes = ((dev_parts == 1) ? C2H_REC40_WORDS : C2H_REC_WORDS) * 4;
+
+    const bool parts_ok = (dev_parts == C2H_PARTS) || ((dev_parts == 1) && ((dev->transport->in_granule % dev_rec_bytes) == 0));
+
+    if (parts_ok == false)
     {
-      event_log_error (hashcat_ctx, "FPGA bridge: %s returns %u C2H record%s per candidate (parts= in its identity), but the wpa2 bridge reads %u, and it is not used.", member_buf->name, dev_parts, (dev_parts == 1) ? "" : "s", (u32) C2H_PARTS);
+      event_log_error (hashcat_ctx, "FPGA bridge: %s returns %u C2H record%s per candidate (parts= in its identity), but the wpa2 bridge reads 2, or 1 on a transport without a granule, and it is not used.", member_buf->name, dev_parts, (dev_parts == 1) ? "" : "s");
       event_log_info (hashcat_ctx, "Its bitstream was built for another version of this algorithm's gateware. Rebuild it from this tree.");
       event_log_info (hashcat_ctx, NULL);
 
@@ -765,16 +776,17 @@ void *platform_init (hashcat_ctx_t *hashcat_ctx)
     }
 
     member_buf->h2c_rec_bytes = H2C_REC_BYTES_MAX;
-    member_buf->c2h_rec_bytes = C2H_REC_WORDS * 4;
+    member_buf->c2h_rec_bytes = dev_rec_bytes;
+    member_buf->c2h_parts     = dev_parts;
 
     member_buf->out_capacity = dev->transport->out_capacity (dev);
 
     member_buf->cands_max = (u32) (member_buf->out_capacity / member_buf->h2c_rec_bytes);
 
-    // The results come back into a buffer of the same capacity: C2H_PARTS records per candidate,
+    // The results come back into a buffer of the same capacity: c2h_parts records per candidate,
     // the end-of-batch record and up to a granule of padding, which can be the tighter limit.
 
-    const u64 c2h_cand_bytes = (u64) C2H_PARTS * member_buf->c2h_rec_bytes;
+    const u64 c2h_cand_bytes = (u64) member_buf->c2h_parts * member_buf->c2h_rec_bytes;
     const u64 c2h_slack      = (u64) member_buf->c2h_rec_bytes + dev->transport->in_granule;
     const u64 c2h_cands      = (member_buf->out_capacity > c2h_slack) ? ((member_buf->out_capacity - c2h_slack) / c2h_cand_bytes) : 0;
 
@@ -1833,6 +1845,8 @@ static bool inject_due (const inject_t *cfg, const int member_idx, const int fau
 
 typedef struct c2h_asm
 {
+  u32 parts;
+
   u32 id;
   u32 next;
   u16 core_id;
@@ -1847,6 +1861,23 @@ typedef struct c2h_asm
 static int c2h_asm_take (c2h_asm_t *a, const u32 *f)
 {
   const u32 part = (f[7] >> C2H_PART_SHIFT) & C2H_PART_MASK;
+
+  // One 40-byte record: the whole PMK, part index 0.
+
+  if (a->parts == 1)
+  {
+    if (part != 0) return -1;
+
+    a->id      = f[0];
+    a->core_id = (u16) (f[7] & 0xffff);
+
+    for (u32 k = 0; k < C2H_PART_WORDS; k++) a->words[k] = f[1 + k];
+
+    a->words[C2H_PART_WORDS + 0] = f[8];
+    a->words[C2H_PART_WORDS + 1] = f[9];
+
+    return 1;
+  }
 
   if ((part != a->next) || ((part > 0) && (f[0] != a->id)))
   {
@@ -1865,7 +1896,7 @@ static int c2h_asm_take (c2h_asm_t *a, const u32 *f)
 
   a->next++;
 
-  if (a->next < C2H_PARTS) return 0;
+  if (a->next < a->parts) return 0;
 
   a->next = 0;
 
@@ -2191,9 +2222,9 @@ static fpga_pool_verdict_t run_range (launch_t *lc, const int member_idx, const 
 
   const u64 h2c_bytes = fill_bytes;
 
-  // C2H_PARTS records per candidate when every candidate returns; fewer when the device filters.
+  // c2h_parts records per candidate when every candidate returns; fewer when the device filters.
 
-  u64 c2h_bytes = recs * C2H_PARTS * member_buf->c2h_rec_bytes;
+  u64 c2h_bytes = recs * member_buf->c2h_parts * member_buf->c2h_rec_bytes;
 
   if ((device_compares == true) && (dev->transport->in_granule > 0))
   {
@@ -2289,12 +2320,17 @@ static fpga_pool_verdict_t run_range (launch_t *lc, const int member_idx, const 
 
   memset (&part_asm, 0, sizeof (part_asm));
 
+  part_asm.parts = member_buf->c2h_parts;
+
   bool parts_broken = false;
 
   c2h_inject_t part_inject;
 
   memset (&part_inject, 0, sizeof (part_inject));
 
+  // Part faults break a candidate's two records apart; a board that sends one record has none.
+
+  if (member_buf->c2h_parts == C2H_PARTS)
   {
     const int part_faults[3] = { INJECT_FAULT_PART_LOSE, INJECT_FAULT_PART_DUP, INJECT_FAULT_PART_SWAP };
 
@@ -2499,7 +2535,7 @@ static fpga_pool_verdict_t run_range (launch_t *lc, const int member_idx, const 
 
   if ((ok == true) && (parts_broken == true))
   {
-    event_log_error (hashcat_ctx, "FPGA bridge: board %s returned a candidate's result in broken parts (%u C2H records per candidate: one missing, repeated or out of order).", member_buf->name, (u32) C2H_PARTS);
+    event_log_error (hashcat_ctx, "FPGA bridge: board %s returned a candidate's result in broken parts (%u C2H records per candidate: one missing, repeated or out of order).", member_buf->name, member_buf->c2h_parts);
 
     ok = false;
 

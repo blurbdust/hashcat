@@ -7,12 +7,12 @@
 //
 // The shared parts (the hcfpga_* files beside this one) are the H2C intake, which delivers one whole record at a
 // time, and the end-of-batch tail, which counts retired candidates and closes the batch. The engine
-// takes records from the intake, computes, and hands the tail whole 32-byte result records (PARTS
-// per returned candidate) plus a retire pulse per candidate.
+// takes records from the intake, computes, and hands the tail whole result records (PARTS per
+// returned candidate, below) plus a retire pulse per candidate.
 //
 // The engine (hcfpga_wpa2_engine.v) holds a setup unit that computes each candidate's HMAC setup,
 // PIPES PBKDF2 pipes (unrolled SHA-1 rings, RPS rounds a stage, of SLOTS candidates each, both PMK
-// blocks of every candidate), the generation and a collector that sends each PMK as two C2H records (PARTS = 2).
+// blocks of every candidate), the generation and a collector that sends each PMK in PARTS C2H records.
 // The setup unit holds the intake's record while it reads the password (hold).
 //
 // wpa2's own registers, from 0x3c: salt_len, then salt4..7 (ESSID bytes 16..31; salt0..3 carry
@@ -20,6 +20,11 @@
 //
 // die_temp is the die temperature in XADC encoding (0 where the board has none) for the engine's
 // thermal stop; frame_status bit 16 is set while that stop holds new candidates back.
+//
+// PARTS = 2 sends each PMK as two 32-byte C2H records. PARTS = 1 sends it as one 40-byte record (the
+// engine's contract), and the end-of-batch records of the shared tail get 8 zero bytes more here, so
+// that every C2H record is 40 bytes long: the flags stay at bytes 30..31 of each. The identity's
+// parts= says which one a board was built with.
 
 `timescale 1ns / 1ps
 module hcfpga_wpa2_top #(
@@ -32,7 +37,10 @@ module hcfpga_wpa2_top #(
 
   // The engine's thermal stop: no new candidate from THERM_HOT_C until below THERM_COOL_C.
   parameter THERM_HOT_C  = 85,
-  parameter THERM_COOL_C = 75
+  parameter THERM_COOL_C = 75,
+
+  // C2H records per candidate: 2 of 32 bytes, or 1 of 40 (above).
+  parameter PARTS = 2
 )(
   input  wire CLK,
   input  wire rst,
@@ -76,9 +84,6 @@ module hcfpga_wpa2_top #(
 
   localparam PW_MAX       = 63;
   localparam DIGEST_BYTES = 32;
-
-  // C2H records per candidate, 24 digest bytes each (the identity's parts= when above 1).
-  localparam PARTS        = 2;
 
   localparam PW_WORDS = (PW_MAX + 3) / 4;
   localparam PW_AW    = (PW_WORDS <= 2) ? 1 : $clog2(PW_WORDS);
@@ -125,14 +130,80 @@ module hcfpga_wpa2_top #(
     .r_data(r_data), .r_valid(r_valid), .r_ready(r_ready), .r_last(r_last)
   );
 
+  wire [7:0] e_data;
+  wire       e_valid;
+  wire       e_ready;
+  wire       e_last;
+
   hcfpga_c2h_eob eob (
     .CLK(CLK), .rst(rst),
     .retire(retire),
     .batch_target(batch_target), .batch_arm(batch_arm), .pad_recs(pad_recs),
     .retired_cnt(retired_cnt),
     .r_data(r_data), .r_valid(r_valid), .r_ready(r_ready), .r_last(r_last),
-    .m_data(m_data), .m_valid(m_valid), .m_ready(m_ready), .m_last(m_last)
+    .m_data(e_data), .m_valid(e_valid), .m_ready(e_ready), .m_last(e_last)
   );
+
+  generate
+    if (PARTS == 1)
+    begin : rec40
+      // The engine's records are 40 bytes, the tail's end-of-batch records 32: a record that ends
+      // at byte 31 gets 8 zero bytes, and its end moves to the last of them.
+      reg [5:0] bcnt = 0;
+      reg       ext  = 0;
+      reg [2:0] ecnt = 0;
+
+      assign m_data  = (ext == 1'b1) ? 8'h00 : e_data;
+      assign m_valid = ext | e_valid;
+      assign e_ready = ~ext & m_ready;
+      assign m_last  = (ext == 1'b1) ? (ecnt == 3'd7) : (e_last & (bcnt != 6'd31));
+
+      always @(posedge CLK)
+      begin
+        if (rst == 1'b1)
+        begin
+          bcnt <= 0;
+          ext  <= 0;
+          ecnt <= 0;
+        end
+        else if (ext == 1'b1)
+        begin
+          if (m_ready == 1'b1)
+          begin
+            ecnt <= ecnt + 1'b1;
+
+            if (ecnt == 3'd7)
+            begin
+              ext  <= 0;
+              bcnt <= 0;
+            end
+          end
+        end
+        else if ((e_valid == 1'b1) && (m_ready == 1'b1))
+        begin
+          if (e_last == 1'b1)
+          begin
+            if (bcnt == 6'd31)
+            begin
+              ext  <= 1'b1;
+              ecnt <= 0;
+            end
+            else
+              bcnt <= 0;
+          end
+          else
+            bcnt <= bcnt + 1'b1;
+        end
+      end
+    end
+    else
+    begin : rec32
+      assign m_data  = e_data;
+      assign m_valid = e_valid;
+      assign e_ready = m_ready;
+      assign m_last  = e_last;
+    end
+  endgenerate
 
   // The shared frame status, and bit 16 the thermal stop.
   assign frame_status = {15'd0, therm_stop, intake_status[15:0]};

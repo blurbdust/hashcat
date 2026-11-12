@@ -54,16 +54,21 @@ class Wpa2DmaWrapper(HcfpgaDmaWrapper):
         ("salt7",    32, "ESSID bytes 28..31 (hashcat's salt_buf[7])."),
     )
 
-    # C2H records per candidate (the top's PARTS, the bridge's C2H_PARTS, the identity's parts=):
-    # the 32-byte PMK in two.
+    # C2H records per candidate (the top's PARTS, the identity's parts=): the 32-byte PMK in two
+    # records of 32 bytes. parts=1 sends it in one record of 40 bytes instead (hcfpga_wpa2_top.sv):
+    # 40 bytes a candidate instead of 64, for a board whose link is short of C2H bytes (UARTBone).
+    # The bridge reads the format from the identity. A DMA board keeps 2: its granule is a multiple
+    # of 32 bytes.
     PARTS = 2
 
     # with_cmp is taken for the shared signature and not used: the device cannot compare (above).
-    def __init__(self, platform, pipes=1, with_cmp=0):
+    def __init__(self, platform, pipes=1, with_cmp=0, parts=PARTS):
+        assert parts in (1, 2), "wpa2 returns its PMK in 1 or 2 C2H records"
+        self.PARTS = parts
         HcfpgaDmaWrapper.__init__(self, platform,
             num_cores = pipes * SLOTS_PER_PIPE,
             params    = dict(PIPES=pipes, RPS=ROUNDS_PER_STAGE, WITH_CMP=0,
-                             THERM_HOT_C=THERM_HOT_C, THERM_COOL_C=THERM_COOL_C),
+                             THERM_HOT_C=THERM_HOT_C, THERM_COOL_C=THERM_COOL_C, PARTS=parts),
         )
 
         # The die temperature, a port of wpa2's top beyond the shared ones.

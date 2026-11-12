@@ -8,7 +8,8 @@
 # wpa2's datapath bench: the shared bench (hcfpga_bench.py, tb_hcfpga.v)
 # around hcfpga_wpa2_top (tb_dut.vh), each batch checked against wpa2_ref.py: every returned PMK in
 # its two C2H records, the records the comparator should and should not let through, the retired
-# count, the end-of-batch record and the frame status.
+# count, the end-of-batch record and the frame status. The pack case builds the top with PARTS = 1
+# (one 40-byte record a candidate), which tb_dut.vh takes apart into the two records the checks read.
 #
 #   ./tb_datapath.py                      all cases
 #   ./tb_datapath.py --case lengths       one case
@@ -60,7 +61,7 @@ def check(name, salt, rounds, cands, bitmap_idx, recs, done, errs, pad, pad_recs
   return hb.check(name, cands, want, bitmap_idx, recs, done, errs, pad, pad_recs=pad_recs,
                   digest_bytes=DIGEST_BYTES, parts=PARTS, cmp_byte=CMP_BYTE, core_name="slots")
 
-def build_restart(work, units, rps):
+def build_restart(work, units, rps, parts=2):
   """tb_restart.v around the same top, the way hb.build builds tb_hcfpga.v."""
   exe = os.path.join(work, "obj_dir", "Vtb_restart")
   hdl = SOURCES + [os.path.join(HERE, f) for f in ("tb_restart.v", "tb_dut.vh")]
@@ -69,7 +70,7 @@ def build_restart(work, units, rps):
   os.makedirs(work, exist_ok=True)
   cmd = ["verilator", "--binary", "-j", "0", "-O3", "--x-initial", "unique"] + hb.VERILATOR_WARNINGS
   cmd += ["-I" + d for d in [HERE, hb.IFACE]]
-  cmd += ["-GNUM_UNITS=%d" % units, "-GWITH_CMP=1", "-GRPS=%d" % rps]
+  cmd += ["-GNUM_UNITS=%d" % units, "-GWITH_CMP=1", "-GRPS=%d" % rps, "-GPARTS=%d" % parts]
   cmd += ["--top-module", "tb_restart", "--Mdir", os.path.join(work, "obj_dir"), os.path.join(HERE, "tb_restart.v")]
   cmd += SOURCES
   r = subprocess.run(cmd, cwd=work, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -244,6 +245,42 @@ def main():
     cands = [(i, rnd(10)) for i in range(4)]
     recs, done, errs, pad = run_batch(exe0, work0, salt, R, cands, [0, 0, 0, 0])
     results.append(check("nocmp", salt, R, cands, None, recs, done, errs, pad))
+
+  # PARTS = 1, the build for serial links: one 40-byte record a candidate, end-of-batch records
+  # 40 bytes too. The same checks as above through tb_dut.vh's unpacking: every length and the
+  # canary, the comparator, a batch past the slots with hashcat's WITH_CMP = 0, and a framing reset
+  # with candidates in flight.
+  if args.case in ("all", "pack"):
+    work1 = os.path.abspath(os.path.join(base, "u%d_r%d_parts1" % (args.units, args.rps)))
+    exe1 = hb.build(work1, SOURCES, INCLUDES, {"NUM_UNITS": args.units, "WITH_CMP": 1, "RPS": args.rps, "PARTS": 1}, HERE)
+    lens = [0, 1, 4, 8, 15, 16, 17, 32, 33, 63]
+    cands = [(i, rnd(n)) for i, n in enumerate(lens)] + [(201, b"hashcat!"), (hb.CANARY_ID, CANARY_PW)]
+    recs, done, errs, pad = run_batch(exe1, work1, salt, R, cands, [0xffffffff] * 4)
+    results.append(check("pack_lengths", salt, R, cands, None, recs, done, errs, pad))
+
+    target = wpa2_digest(b"hashcat!", salt, R)
+    cands = [(i, rnd(8)) for i in range(11)]
+    cands.insert(4, (11, b"hashcat!"))
+    idx = {hb.cmp_index(target, CMP_BYTE)}
+    recs, done, errs, pad = run_batch(exe1, work1, salt, R, cands, hb.bitmap_words(idx))
+    results.append(check("pack_cmp", salt, R, cands, idx, recs, done, errs, pad))
+
+    work0 = os.path.abspath(os.path.join(base, "u%d_r%d_parts1_nocmp" % (args.units, args.rps)))
+    exe0 = hb.build(work0, SOURCES, INCLUDES, {"NUM_UNITS": args.units, "WITH_CMP": 0, "RPS": args.rps, "PARTS": 1}, HERE)
+    n = SLOTS * args.units + 9
+    cands = [(3000 + 5 * i, rnd(8 + i % 56)) for i in range(n)]
+    recs, done, errs, pad = run_batch(exe0, work0, salt, R, cands, [0, 0, 0, 0])
+    results.append(check("pack_full", salt, R, cands, None, recs, done, errs, pad))
+
+    rwork = os.path.abspath(os.path.join(base, "u%d_r%d_parts1_restart" % (args.units, args.rps)))
+    rexe = build_restart(rwork, args.units, args.rps, parts=1)
+    s2 = rbin(7)
+    cands_a = [(5000 + i, rnd(9)) for i in range(30)]
+    cands_b = [(i, rnd(8 + i % 3)) for i in range(SLOTS * args.units - 26)]
+    cands_b.insert(3, (77, b"hashcat!"))
+    recs, done, errs, pad, abort = run_restart(rexe, rwork, s2, R, cands_a, cands_b, 300000, 1)
+    print("           %s" % abort)
+    results.append(check("pack_rst_run", s2, R, cands_b, None, recs, done, errs, pad))
 
   print("ALL PASS" if all(results) else "*** FAIL ***")
   return 0 if all(results) else 1
