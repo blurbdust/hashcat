@@ -44,6 +44,14 @@
 //   framing reset in the middle of a result's records abandons them.
 // - batch_target and iter_count are not used: candidates stream through the slots, and the
 //   iteration count is fixed by the format (hashcat's salt_iter is 4095, the count after U1).
+//
+// Thermal stop: die_temp is the die temperature in XADC encoding (the xadc temperature register's,
+// code * 503.975 / 4096 - 273.15 C; 0 where the board has none). From THERM_HOT_C up the engine
+// stops starting candidates (therm_stop) until it reads below THERM_COOL_C. The chains in flight run
+// to their end, at most a slot's 8191 ring passes, and a ring with no candidate in it does not
+// toggle (hcfpga_wpa2_pipe.v), so the pipes are idle while the die cools. Nothing is dropped:
+// candidates wait in the pipes' pending registers, the setup unit and the intake, and the batch
+// completes later. A reading has to hold for THERM_FILTER cycles to count.
 
 `timescale 1ns / 1ps
 module hcfpga_wpa2_engine #(
@@ -54,11 +62,17 @@ module hcfpga_wpa2_engine #(
   parameter PARTS        = 2,
   parameter WITH_CMP     = 1,
 
+  parameter THERM_HOT_C  = 85,
+  parameter THERM_COOL_C = 75,
+
   parameter PW_WORDS = (PW_MAX + 3) / 4,
   parameter PW_AW    = (PW_WORDS <= 2) ? 1 : $clog2(PW_WORDS)
 )(
   input  wire CLK,
   input  wire rst,
+
+  input  wire [11:0]       die_temp,
+  output reg               therm_stop = 0,
 
   input  wire              rec_valid,
   input  wire [7:0]        rec_len,
@@ -119,6 +133,43 @@ module hcfpga_wpa2_engine #(
   function [31:0] bswap (input [31:0] w);
     bswap = { w[7:0], w[15:8], w[23:16], w[31:24] };
   endfunction
+
+  // Thermal stop ------------------------------------------------------------------------------
+
+  // The register value the host would read as C + 0.5, as hcfpga_stratixv.py's
+  // xadc_temperature_code computes it.
+  localparam integer THERM_HOT  = ((THERM_HOT_C  * 1000 + 500 + 273150) * 4096 + 251987) / 503975;
+  localparam integer THERM_COOL = ((THERM_COOL_C * 1000 + 500 + 273150) * 4096 + 251987) / 503975;
+
+  localparam [11:0] HOT_CODE  = THERM_HOT[11:0];
+  localparam [11:0] COOL_CODE = THERM_COOL[11:0];
+
+  localparam THERM_FILTER = 64;
+
+  reg [11:0] temp_q    = 0;
+  reg        temp_hot  = 0;
+  reg        temp_cool = 1;
+  reg [6:0]  therm_cnt = 0;
+
+  always @(posedge CLK)
+  begin
+    temp_q    <= die_temp;
+    temp_hot  <= (temp_q >= HOT_CODE);
+    temp_cool <= (temp_q < COOL_CODE);
+
+    if ((therm_stop == 1'b0) ? (temp_hot == 1'b1) : (temp_cool == 1'b1))
+    begin
+      if (therm_cnt == THERM_FILTER - 1)
+      begin
+        therm_stop <= ~therm_stop;
+        therm_cnt  <= 0;
+      end
+      else
+        therm_cnt <= therm_cnt + 1'b1;
+    end
+    else
+      therm_cnt <= 0;
+  end
 
   // Generation and flush ---------------------------------------------------------------------
 
@@ -354,7 +405,7 @@ module hcfpga_wpa2_engine #(
       reg  avail_r = 0;
 
       hcfpga_wpa2_pipe #(.RPS(RPS), .SLOTS(SLOTS)) pipe (
-        .CLK(CLK), .flush(flush),
+        .CLK(CLK), .flush(flush), .pause(therm_stop),
         .cand_load(p_load[q]), .cand_ready(p_ready[q]),
         .cand_ipad(so_ipad), .cand_opad(so_opad), .cand_in1(so_in1), .cand_in2(so_in2),
         .cand_id(so_id), .cand_gen(so_gen),

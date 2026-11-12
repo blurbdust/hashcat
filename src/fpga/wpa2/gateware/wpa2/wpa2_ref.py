@@ -35,6 +35,15 @@ DIGEST_BYTES = 32
 # C2H records per candidate: digest bytes 24k..24k+23 in record k.
 PARTS        = 2
 
+def xadc_code(celsius):
+  """The die temperature register value for celsius, XADC encoding (hcfpga_stratixv.py's
+  xadc_temperature_code), as the engine's thermal stop compares it."""
+  return int(round((celsius + 0.5 + 273.15) * 4096 / 503.975))
+
+# The engine's thermal stop (the wrapper's THERM_HOT_C, THERM_COOL_C).
+THERM_HOT_C  = 85
+THERM_COOL_C = 75
+
 def slots(rps):
   """Candidates in flight in one pipe of rps rounds a stage (the engine's SLOTS)."""
   return (80 // rps + 4) // 2

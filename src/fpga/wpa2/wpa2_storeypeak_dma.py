@@ -163,6 +163,10 @@ class StoreyPeakSoC(SoCMini):
         setattr(self, ALGO, wrapper)
         wrapper.add_hdl_sources()
 
+        # An algorithm with a thermal stop reads the die temperature.
+        if hasattr(wrapper, "die_temp"):
+            self.comb += wrapper.die_temp.eq(self.xadc.temperature.status)
+
         dw = self.pcie_dma0.data_width
 
         self.dma_down = stream.Converter(dw, 32, reverse=False)

@@ -30,6 +30,13 @@
 #define CSR_SALT3       0x10
 #define CSR_ITER_COUNT  0x14
 #define CSR_STATUS      0x18
+
+// wpa2's bit of the status register (the shared frame status keeps bits 15:0): the device's thermal
+// stop holds candidates back while its die is too hot, and the batch goes on once it has cooled.
+#define STATUS_THERM_STOP  (1u << 16)
+
+// How long one batch may stay held by the thermal stop before it counts as quiet after all.
+#define THERM_WAIT_MS_MAX  600000
 #define CSR_CORE_COUNT  0x1c
 
 #define CSR_CMP_BM0     0x20
@@ -2301,6 +2308,8 @@ static fpga_pool_verdict_t run_range (launch_t *lc, const int member_idx, const 
 
   const u64 t_recv = fpga_now_ns ();
 
+  u64 therm_ms = 0;
+
   while (in_done < c2h_bytes)
   {
 
@@ -2342,6 +2351,19 @@ static fpga_pool_verdict_t run_range (launch_t *lc, const int member_idx, const 
 
       if ((fpga_now_ns () - quiet_since_ns) > (wait_ms * 1000000ull))
       {
+        // A board that is quiet because its thermal stop holds candidates back is cooling, not
+        // stuck: wait for it, up to THERM_WAIT_MS_MAX.
+        if ((dev->transport->csr_read != NULL) && (therm_ms < THERM_WAIT_MS_MAX) && ((dev->transport->csr_read (dev, CSR_STATUS) & STATUS_THERM_STOP) != 0))
+        {
+          if (therm_ms == 0) event_log_warning (hashcat_ctx, "FPGA bridge: board %s is too hot and holds candidates back until it cools; the batch waits for it.", member_buf->name);
+
+          therm_ms += wait_ms;
+
+          quiet_since_ns = fpga_now_ns ();
+
+          continue;
+        }
+
         if ((dev->transport->csr_read != NULL) && (dev->transport->retired_reads_zero == false))
         {
           const u32 retired = dev->transport->csr_read (dev, CSR_RETIRED);

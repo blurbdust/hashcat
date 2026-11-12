@@ -17,6 +17,9 @@
 //
 // wpa2's own registers, from 0x3c: salt_len, then salt4..7 (ESSID bytes 16..31; salt0..3 carry
 // bytes 0..15). iter_count is hashcat's salt_iter, 4095, and not used: the count is fixed.
+//
+// die_temp is the die temperature in XADC encoding (0 where the board has none) for the engine's
+// thermal stop; frame_status bit 16 is set while that stop holds new candidates back.
 
 `timescale 1ns / 1ps
 module hcfpga_wpa2_top #(
@@ -25,10 +28,16 @@ module hcfpga_wpa2_top #(
   parameter PIPES = 1,
   parameter RPS   = 2,
 
-  parameter WITH_CMP = 1
+  parameter WITH_CMP = 1,
+
+  // The engine's thermal stop: no new candidate from THERM_HOT_C until below THERM_COOL_C.
+  parameter THERM_HOT_C  = 85,
+  parameter THERM_COOL_C = 75
 )(
   input  wire CLK,
   input  wire rst,
+
+  input  wire [11:0] die_temp,
 
   input  wire [31:0] s_data,
   input  wire        s_valid,
@@ -100,8 +109,12 @@ module hcfpga_wpa2_top #(
   wire       r_ready;
   wire       r_last;
 
-  hcfpga_wpa2_engine #(.PIPES(PIPES), .RPS(RPS), .PW_MAX(PW_MAX), .DIGEST_BYTES(DIGEST_BYTES), .PARTS(PARTS), .WITH_CMP(WITH_CMP)) engine (
+  wire therm_stop;
+
+  hcfpga_wpa2_engine #(.PIPES(PIPES), .RPS(RPS), .PW_MAX(PW_MAX), .DIGEST_BYTES(DIGEST_BYTES), .PARTS(PARTS), .WITH_CMP(WITH_CMP),
+                       .THERM_HOT_C(THERM_HOT_C), .THERM_COOL_C(THERM_COOL_C)) engine (
     .CLK(CLK), .rst(rst),
+    .die_temp(die_temp), .therm_stop(therm_stop),
     .rec_valid(rec_valid), .rec_len(rec_len), .rec_id(rec_id),
     .pw_rd_addr(pw_rd_addr), .pw_rd_data(pw_rd_data), .rec_taken(rec_taken), .hold(rec_hold),
     .salt0(salt0), .salt1(salt1), .salt2(salt2), .salt3(salt3), .iter_count(iter_count),
@@ -121,7 +134,7 @@ module hcfpga_wpa2_top #(
     .m_data(m_data), .m_valid(m_valid), .m_ready(m_ready), .m_last(m_last)
   );
 
-  // The shared frame status; bits 31:16 are not used.
-  assign frame_status = {16'd0, intake_status[15:0]};
+  // The shared frame status, and bit 16 the thermal stop.
+  assign frame_status = {15'd0, therm_stop, intake_status[15:0]};
 
 endmodule

@@ -33,7 +33,12 @@
 // for every candidate it holds, so a done chain always has a FIFO entry and never waits.
 //
 // flush (the engine's, at least R cycles) empties the pipe: every token that reaches FB dies, the
-// pending candidate and the FIFO are dropped.
+// pending candidate and the FIFO are dropped. pause (the engine's thermal stop) keeps empty slots
+// from taking the pending candidate; the chains in flight run on to their end.
+//
+// An empty token carries no new data: PRE, FA and X keep their registers when the token entering
+// them is empty, and the memories are read only for live tokens. A ring with no candidate in it so
+// holds the same values in every stage and does not toggle.
 //
 // Results: res_avail while the FIFO is not empty; res_rd pops the head, whose entry is on res_data
 // two cycles later: { gen, id, slot, T1, T2[159:64] }.
@@ -45,6 +50,7 @@ module hcfpga_wpa2_pipe #(
 )(
   input  wire         CLK,
   input  wire         flush,
+  input  wire         pause,
 
   input  wire         cand_load,
   output reg          cand_ready = 0,
@@ -176,9 +182,10 @@ module hcfpga_wpa2_pipe #(
       mid2[mid_wa] <= mid_wd;
     end
 
-    mid1_r <= mid1[mid1_ra];
+    if (fa_v == 1'b1)         mid1_r <= mid1[mid1_ra];
+    if (s_tag[S-2][1] == 1'b1) mid2_r <= mid2[mid2_ra];
+
     mid1_q <= mid1_r;
-    mid2_r <= mid2[mid2_ra];
     mid2_q <= mid2_r;
   end
 
@@ -195,7 +202,8 @@ module hcfpga_wpa2_pipe #(
   begin
     if (acc_we == 1'b1) acc[acc_wa] <= acc_wd;
 
-    acc_r <= acc[pos_2];
+    if (s_tag[S][1] == 1'b1) acc_r <= acc[pos_2];
+
     acc_q <= acc_r;
   end
 
@@ -215,7 +223,8 @@ module hcfpga_wpa2_pipe #(
   begin
     if (idg_we == 1'b1) idg[idg_wa] <= idg_wd;
 
-    idg_r <= idg[pos_2[PW-1:1]];
+    if (s_tag[S][1] == 1'b1) idg_r <= idg[pos_2[PW-1:1]];
+
     idg_q <= idg_r;
   end
 
@@ -233,16 +242,20 @@ module hcfpga_wpa2_pipe #(
   always @(posedge CLK)
   begin
     pre_tag <= { fb_v, fb_ph };
-    pre_a   <= pre_mid[159:128];
-    pre_b   <= pre_mid[127:96];
-    pre_c   <= pre_mid[95:64];
-    pre_d   <= pre_mid[63:32];
-    pre_h   <= pre_mid[31:0] + K0 + fb_msg[159:128];
-    pre_w1  <= fb_msg[127:96];
-    pre_w2  <= fb_msg[95:64];
-    pre_w3  <= fb_msg[63:32];
-    pre_w4  <= fb_msg[31:0];
-    pre_w16 <= rol1 (fb_msg[95:64] ^ fb_msg[159:128]);
+
+    if (fb_v == 1'b1)
+    begin
+      pre_a   <= pre_mid[159:128];
+      pre_b   <= pre_mid[127:96];
+      pre_c   <= pre_mid[95:64];
+      pre_d   <= pre_mid[63:32];
+      pre_h   <= pre_mid[31:0] + K0 + fb_msg[159:128];
+      pre_w1  <= fb_msg[127:96];
+      pre_w2  <= fb_msg[95:64];
+      pre_w3  <= fb_msg[63:32];
+      pre_w4  <= fb_msg[31:0];
+      pre_w16 <= rol1 (fb_msg[95:64] ^ fb_msg[159:128]);
+    end
   end
 
   // { tag[1] valid, tag[0] phase }
@@ -273,14 +286,16 @@ module hcfpga_wpa2_pipe #(
 
   always @(posedge CLK)
   begin
-    fa_v   <= s_tag[S][1];
-    fa_ph  <= s_tag[S][0];
-    fa_dig <= { mid2_q[159:128] + s_a[S], mid2_q[127:96] + s_b[S], mid2_q[95:64] + s_c[S],
-                mid2_q[63:32]   + s_d[S], mid2_q[31:0]   + s_h[S] };
-
+    fa_v  <= s_tag[S][1];
+    fa_ph <= s_tag[S][0];
     x_v   <= fa_v;
     x_ph  <= fa_ph;
-    x_dig <= fa_dig;
+
+    if (s_tag[S][1] == 1'b1)
+      fa_dig <= { mid2_q[159:128] + s_a[S], mid2_q[127:96] + s_b[S], mid2_q[95:64] + s_c[S],
+                  mid2_q[63:32]   + s_d[S], mid2_q[31:0]   + s_h[S] };
+
+    if (fa_v == 1'b1) x_dig <= fa_dig;
   end
 
   // Pending candidate --------------------------------------------------------------------------
@@ -308,7 +323,11 @@ module hcfpga_wpa2_pipe #(
   reg          push = 0;
   reg  [309:0] push_d;
 
-  wire inject1 = (flush_q == 1'b0) & (pend_v == 1'b1) & (odd_x == 1'b0) & (x_v == 1'b0) & (fa_v == 1'b0) & (inj2 == 1'b0);
+  reg  pause_q = 0;
+
+  always @(posedge CLK) pause_q <= pause;
+
+  wire inject1 = (flush_q == 1'b0) & (pause_q == 1'b0) & (pend_v == 1'b1) & (odd_x == 1'b0) & (x_v == 1'b0) & (fa_v == 1'b0) & (inj2 == 1'b0);
   wire inject2 = (flush_q == 1'b0) & (inj2 == 1'b1);
 
   wire done_x  = (flush_q == 1'b0) & (x_v == 1'b1) & (x_ph == OUTER) & last;

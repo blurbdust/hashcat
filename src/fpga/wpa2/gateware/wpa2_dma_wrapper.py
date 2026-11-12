@@ -22,6 +22,8 @@ ALGO   = os.path.join(HERE, "wpa2")
 if BASE not in sys.path:
     sys.path.insert(0, BASE)
 
+from migen import Signal, Instance
+
 from hcfpga_dma_wrapper import HcfpgaDmaWrapper
 
 # The engine and what it instantiates.
@@ -32,6 +34,12 @@ ENGINE_FILES = ["hcfpga_wpa2_top.sv", "hcfpga_wpa2_engine.v", "hcfpga_wpa2_pipe.
 # (the engine's SLOTS): half the ring of 80 / RPS round stages and four more.
 ROUNDS_PER_STAGE = 2
 SLOTS_PER_PIPE   = (80 // ROUNDS_PER_STAGE + 4) // 2
+
+# The engine's thermal stop (C): no new candidate from THERM_HOT_C until the die reads below
+# THERM_COOL_C. A board wires its die temperature, in XADC encoding, to the wrapper's die_temp;
+# where nothing drives it, it reads 0 and the stop never acts.
+THERM_HOT_C  = 85
+THERM_COOL_C = 75
 
 class Wpa2DmaWrapper(HcfpgaDmaWrapper):
     ALGO = "wpa2"
@@ -54,8 +62,16 @@ class Wpa2DmaWrapper(HcfpgaDmaWrapper):
     def __init__(self, platform, pipes=1, with_cmp=0):
         HcfpgaDmaWrapper.__init__(self, platform,
             num_cores = pipes * SLOTS_PER_PIPE,
-            params    = dict(PIPES=pipes, RPS=ROUNDS_PER_STAGE, WITH_CMP=0),
+            params    = dict(PIPES=pipes, RPS=ROUNDS_PER_STAGE, WITH_CMP=0,
+                             THERM_HOT_C=THERM_HOT_C, THERM_COOL_C=THERM_COOL_C),
         )
+
+        # The die temperature, a port of wpa2's top beyond the shared ones.
+        self.die_temp = Signal(12)
+
+        top = [s for s in self._fragment.specials if isinstance(s, Instance) and s.of == self.TOP]
+        assert len(top) == 1
+        top[0].items.append(Instance.Input("die_temp", self.die_temp))
 
     def hdl_sources(self):
         includes = [ALGO]

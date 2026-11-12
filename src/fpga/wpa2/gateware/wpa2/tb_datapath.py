@@ -34,7 +34,7 @@ sys.path.insert(0, HERE)
 
 import hcfpga_bench as hb
 
-from wpa2_ref import wpa2_digest, PW_MAX, DIGEST_BYTES, PARTS, SALT, SALT_MAX, ROUNDS, CANARY_PW, slots, salt_regs, extra_regs
+from wpa2_ref import wpa2_digest, PW_MAX, DIGEST_BYTES, PARTS, SALT, SALT_MAX, ROUNDS, CANARY_PW, slots, salt_regs, extra_regs, xadc_code
 
 SOURCES = [os.path.join(HERE, f) for f in [
   "hcfpga_wpa2_top.sv", "hcfpga_wpa2_engine.v", "hcfpga_wpa2_pipe.v", "hcfpga_wpa2_round.v", "hcfpga_wpa2_sha1.v",
@@ -45,9 +45,15 @@ INCLUDES = [HERE]
 # The comparator looks at PMK byte 3, the low byte of the bridge's digest[0] (hcfpga_digest_swap32).
 CMP_BYTE = 3
 
-def run_batch(exe, work, salt, rounds, cands, bitmap, gaps=1, pad_recs=1):
+def run_batch(exe, work, salt, rounds, cands, bitmap, gaps=1, pad_recs=1, heat=None):
+  """heat: (t1, t2, t3, celsius1, celsius2), the die at celsius1 from cycle t1 and celsius2 from t2,
+  cold again from t3 (tb_dut.vh); None keeps it cold."""
+  extra = extra_regs(salt, rounds)
+  if heat is not None:
+    t1, t2, t3, c1, c2 = heat
+    extra = extra + [t1, t2, t3] + [0] * 4 + [xadc_code(c1), xadc_code(c2)]
   return hb.run_batch(exe, work, salt_regs(salt), rounds, cands, bitmap, gaps=gaps, pad_recs=pad_recs,
-                      extra=extra_regs(salt, rounds))
+                      extra=extra)
 
 def check(name, salt, rounds, cands, bitmap_idx, recs, done, errs, pad, pad_recs=1):
   want = {cid: wpa2_digest(pw, salt, rounds) for cid, pw in cands}
@@ -210,6 +216,26 @@ def main():
       if mode == 2:
         pad += hb.h2c_records(cands_a)[1]
       results.append(check(name, s2, R, cands_b, None, recs, done, errs, pad))
+
+  # The thermal stop. A die at 90 C from early in the batch, then at 80 C (between the thresholds,
+  # so the stop holds), then cold: the candidates started before the stop finish, the others wait,
+  # every one comes back exact and once, and the batch ends a slot's run after the die cooled. A
+  # reading of 90 C for a few cycles only, shorter than the filter, changes nothing.
+  if args.case in ("all", "hot"):
+    slot_run = 8191 * 2 * SLOTS
+    cands = [(i, rnd(8 + i % 9)) for i in range(SLOTS * args.units - 14)]
+    t1, t2, t3 = 3000, 3000 + slot_run, 3000 + 2 * slot_run
+    recs, done, errs, pad = run_batch(exe, work, salt, R, cands, [0xffffffff] * 4, heat=(t1, t2, t3, 90, 80))
+    ok = check("hot", salt, R, cands, None, recs, done, errs, pad)
+    cyc = int(done[2]) if done else 0
+    print("           %d cycles, the die cold again at %d, a slot's run %d" % (cyc, t3, slot_run))
+    ok &= cyc > t3 + slot_run
+    recs, done, errs, pad = run_batch(exe, work, salt, R, cands, [0xffffffff] * 4, heat=(3000, 3010, 3010, 90, 0))
+    ok &= check("hot_blip", salt, R, cands, None, recs, done, errs, pad)
+    cyc = int(done[2]) if done else 0
+    print("           %d cycles with a 10-cycle reading of 90 C (want under %d)" % (cyc, slot_run + 20000))
+    ok &= cyc < slot_run + 20000
+    results.append(ok)
 
   # hashcat's build: WITH_CMP = 0 returns every candidate, whatever the bitmap holds.
   if args.case in ("all", "nocmp"):
