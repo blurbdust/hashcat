@@ -123,13 +123,16 @@ typedef enum lxb_link
 } lxb_link_t;
 
 // What a write is checked against once the words read back: ACK only waits for the read, RETRY
-// rewrites a register that reads back different and accepts it in the end, STRICT fails.
+// rewrites a register that reads back different and accepts it in the end, STRICT fails. LATER
+// sends the write without reading anything back; the caller checks the register in a read it makes
+// anyway (see lxb_c2h_pull).
 
 typedef enum lxb_check
 {
   LXB_CHECK_ACK    = 0,
   LXB_CHECK_RETRY  = 1,
   LXB_CHECK_STRICT = 2,
+  LXB_CHECK_LATER  = 3,
 
 } lxb_check_t;
 
@@ -202,6 +205,12 @@ typedef struct lxb_priv
   u64   h2c_audit_diff_words;
 
   u64   rb_diff;
+
+  // a C2H read pointer written without a read-back, checked by the next pointer read (lxb_c2h_check)
+
+  bool  c2h_rd_due;
+  u64   c2h_rd_later;
+  u64   c2h_rd_diff;
 
 } lxb_priv_t;
 
@@ -592,6 +601,13 @@ static bool lxb_read (lxb_priv_t *priv, const u32 addr, u32 *rd, const u32 n)
 static bool lxb_write_chunk (lxb_priv_t *priv, const u32 addr, const u32 *wr, const u32 n, const lxb_check_t check)
 {
   const bool udp = (priv->link == LXB_LINK_UDP);
+
+  if (check == LXB_CHECK_LATER)
+  {
+    const bool sent = (udp == true) ? eb_write (priv, addr, wr, n) : ub_write_once (priv, addr, wr, n);
+
+    return sent;
+  }
 
   const u32 back_cnt  = (check == LXB_CHECK_ACK) ? 1 : n;
   const u32 back_addr = (check == LXB_CHECK_ACK) ? addr + ((n - 1) * 4) : addr;
@@ -1495,6 +1511,12 @@ static void lxb_close (fpga_dev_t *dev)
     }
   }
 
+  if ((priv != NULL) && (priv->c2h_rd_diff > 0))
+  {
+    fprintf (stderr, "\nFPGA bridge: warning: %s: %llu of the %llu C2H read pointers written unchecked read back different, and their batches were redone.\n\n",
+      dev->path, (unsigned long long) priv->c2h_rd_diff, (unsigned long long) priv->c2h_rd_later);
+  }
+
   lxb_free ((lxb_priv_t *) dev->priv);
 
   dev->priv = NULL;
@@ -1763,9 +1785,55 @@ static bool lxb_c2h_pull (fpga_dev_t *dev, const u32 c2h_wr, bool *moved)
 
   priv->c2h_rd = (priv->c2h_rd + take) & LXB_PTR_MASK;
 
-  if (lxb_write1 (priv, dev->csr_base + LXB_MS_C2H_RD, priv->c2h_rd, LXB_CHECK_STRICT) == false) return false;
+  // Handing the space back takes a write and, checked on its own, a read that waits for it: on a
+  // serial link a round trip per pull, as long as moving a few dozen words. There the write goes
+  // out unchecked, and the next pointer read, which every caller makes before it pulls again,
+  // includes the read pointer and checks it (lxb_c2h_check). udp: and tcp: check it right away.
+
+  const lxb_check_t check = (priv->link == LXB_LINK_UART) ? LXB_CHECK_LATER : LXB_CHECK_STRICT;
+
+  if (lxb_write1 (priv, dev->csr_base + LXB_MS_C2H_RD, priv->c2h_rd, check) == false) return false;
+
+  if (check == LXB_CHECK_LATER)
+  {
+    priv->c2h_rd_due = true;
+
+    priv->c2h_rd_later++;
+  }
 
   if (moved != NULL) *moved = true;
+
+  return true;
+}
+
+// The pointers from C2H_RD on: the read pointer as the device holds it, H2C_RD and C2H_WR. A read
+// pointer written unchecked has to read back as written. One that does not let the device count
+// ring words the host has not read as free, so the batch fails rather than trust them.
+
+static bool lxb_c2h_check (fpga_dev_t *dev, u32 *h2c_rd, u32 *c2h_wr)
+{
+  lxb_priv_t *priv = (lxb_priv_t *) dev->priv;
+
+  u32 ptr[3];
+
+  if (lxb_read (priv, dev->csr_base + LXB_MS_C2H_RD, ptr, 3) == false) return false;
+
+  if (priv->c2h_rd_due == true)
+  {
+    if ((ptr[0] & LXB_PTR_MASK) != priv->c2h_rd)
+    {
+      priv->c2h_rd_diff++;
+
+      priv->lost = true;
+
+      return false;
+    }
+
+    priv->c2h_rd_due = false;
+  }
+
+  if (h2c_rd != NULL) *h2c_rd = ptr[1] & LXB_PTR_MASK;
+  if (c2h_wr != NULL) *c2h_wr = ptr[2] & LXB_PTR_MASK;
 
   return true;
 }
@@ -1805,6 +1873,8 @@ static bool lxb_batch_begin (fpga_dev_t *dev, MAYBE_UNUSED const u64 out_bytes, 
 
   priv->h2c_wr = ptr[0] & LXB_PTR_MASK;
   priv->c2h_rd = ptr[1] & LXB_PTR_MASK;
+
+  priv->c2h_rd_due = false;
 
   const u32 c2h_wr = ptr[3] & LXB_PTR_MASK;
 
@@ -1931,12 +2001,10 @@ static bool lxb_batch_send (fpga_dev_t *dev, const void *src, const u64 bytes)
 
   while (sent < total)
   {
-    u32 ptr[2];
+    u32 h2c_rd = 0;
+    u32 c2h_wr = 0;
 
-    if (lxb_read (priv, dev->csr_base + LXB_MS_H2C_RD, ptr, 2) == false) return false;
-
-    const u32 h2c_rd = ptr[0] & LXB_PTR_MASK;
-    const u32 c2h_wr = ptr[1] & LXB_PTR_MASK;
+    if (lxb_c2h_check (dev, &h2c_rd, &c2h_wr) == false) return false;
 
     bool moved = false;
 
@@ -1986,7 +2054,7 @@ static const void *lxb_batch_recv (fpga_dev_t *dev, u64 *bytes, const u32 timeou
   {
     u32 c2h_wr = 0;
 
-    if ((lxb_read1 (priv, dev->csr_base + LXB_MS_C2H_WR, &c2h_wr) == false) || (lxb_c2h_pull (dev, c2h_wr & LXB_PTR_MASK, NULL) == false))
+    if ((lxb_c2h_check (dev, NULL, &c2h_wr) == false) || (lxb_c2h_pull (dev, c2h_wr, NULL) == false))
     {
       priv->lost = true;
 
