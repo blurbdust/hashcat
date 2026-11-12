@@ -12,8 +12,8 @@ Those cores compress a block in 83 cycles, one SHA-1 round a cycle on one set of
 
 | File | Notes |
 |---|---|
-| `gateware/wpa2/hcfpga_wpa2_engine.v` | the engine: the setup unit (the HMAC setup on two `hcfpga_wpa2_sha1` cores), the hand-off of each candidate to a pipe, the flush on a framing reset, the collector with two C2H records per candidate |
-| `gateware/wpa2/hcfpga_wpa2_pipe.v` | one PBKDF2 pipe: 80 rounds, two a stage by default (or one), closed into a ring of 44 stages (or 84), 22 candidates in flight (or 42), both PMK blocks of each; the chains' midstates, accumulators and counts in memories, the result FIFO |
+| `gateware/wpa2/hcfpga_wpa2_engine.v` | the engine: the setup unit (the HMAC setup on two `hcfpga_wpa2_sha1` cores), the hand-off of each candidate to a pipe, the flush on a framing reset, the thermal stop on the die temperature, the collector with two C2H records per candidate |
+| `gateware/wpa2/hcfpga_wpa2_pipe.v` | one PBKDF2 pipe: 80 rounds, two a stage by default (or one), closed into a ring of 44 stages (or 84), 22 candidates in flight (or 42), both PMK blocks of each; the chains' midstates, accumulators and counts in memories, the result FIFO; an empty ring holds still |
 | `gateware/wpa2/hcfpga_wpa2_round.v` | one stage of the pipe, one or two SHA-1 rounds, specialised for the PBKDF2 loop's 20-byte messages (message words 5..15 are constants) |
 | `gateware/wpa2/hcfpga_wpa2_sha1.v` | the setup unit's SHA-1 compression of a full 512-bit block, a round a cycle |
 | `gateware/wpa2/hcfpga_wpa2_top.sv` | the datapath top |
