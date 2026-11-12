@@ -138,6 +138,22 @@ bool bridge_active (hashcat_ctx_t *hashcat_ctx, MAYBE_UNUSED const int bridge_li
   return true;
 }
 
+// Whether this mask round's launches go to launch_loop_amp (): a bridge walks the amplifier itself
+// and the round's split gave it one (mask_ctx_update_loop ()).
+
+bool bridge_amp_active (const hashcat_ctx_t *hashcat_ctx)
+{
+  const mask_ctx_t           *mask_ctx           = hashcat_ctx->mask_ctx;
+  const user_options_t       *user_options       = hashcat_ctx->user_options;
+  const user_options_extra_t *user_options_extra = hashcat_ctx->user_options_extra;
+
+  if (user_options->slow_candidates == true) return false;
+
+  if (user_options_extra->attack_kern != ATTACK_KERN_BF) return false;
+
+  return mask_ctx->bridge_amp_active;
+}
+
 // Are these two units the same kind of thing, so that a tuning result found on one is valid on the
 // other?
 //
@@ -286,6 +302,8 @@ static void bridge_ctx_defaults (bridge_ctx_t *bridge_ctx)
   if (bridge_ctx->thread_term                    == NULL) bridge_ctx->thread_term                    = BRIDGE_DEFAULT;
   if (bridge_ctx->launch_loop                    == NULL) bridge_ctx->launch_loop                    = BRIDGE_DEFAULT;
   if (bridge_ctx->launch_loop2                   == NULL) bridge_ctx->launch_loop2                   = BRIDGE_DEFAULT;
+  if (bridge_ctx->get_mask_amp                   == NULL) bridge_ctx->get_mask_amp                   = BRIDGE_DEFAULT;
+  if (bridge_ctx->launch_loop_amp                == NULL) bridge_ctx->launch_loop_amp                = BRIDGE_DEFAULT;
   if (bridge_ctx->st_update_pass                 == NULL) bridge_ctx->st_update_pass                 = BRIDGE_DEFAULT;
   if (bridge_ctx->st_update_hash                 == NULL) bridge_ctx->st_update_hash                 = BRIDGE_DEFAULT;
   if (bridge_ctx->get_unit_temperature           == NULL) bridge_ctx->get_unit_temperature           = BRIDGE_DEFAULT;
@@ -357,6 +375,8 @@ bool bridges_init_late (hashcat_ctx_t *hashcat_ctx)
   if (hashconfig->bridge_type & BRIDGE_TYPE_REPLACE_LOOP2) CHECK_MANDATORY (launch_loop2);
   if (hashconfig->bridge_type & BRIDGE_TYPE_LAUNCH_LOOP)   CHECK_MANDATORY (launch_loop);
   if (hashconfig->bridge_type & BRIDGE_TYPE_LAUNCH_LOOP2)  CHECK_MANDATORY (launch_loop2);
+  if (hashconfig->bridge_type & BRIDGE_TYPE_MASK_AMP)      CHECK_MANDATORY (get_mask_amp);
+  if (hashconfig->bridge_type & BRIDGE_TYPE_MASK_AMP)      CHECK_MANDATORY (launch_loop_amp);
 
   #undef CHECK_MANDATORY
 

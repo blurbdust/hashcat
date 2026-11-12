@@ -59,6 +59,46 @@ static inline u32 bridge_salt_pos (const hashcat_ctx_t *hashcat_ctx, const hc_de
   return salt_pos;
 }
 
+// A bridge that walks a mask's amplifier itself (BRIDGE_TYPE_MASK_AMP) reports a crack by hashcat's
+// item number, the il_pos build_plain () rebuilds the candidate from. This turns the candidate's first
+// amp->pos_cnt characters into it: hashcat's walk takes the lowest digit from position 0, from the
+// root charset there, and every later position's charset is the markov one its predecessor's
+// character chose. Inline for the reason bridge_salt_pos () is. False when a character is not one the
+// amplifier holds.
+
+static inline bool bridge_amp_rank (const bridge_amp_t *amp, const u8 *pw, u64 *il_pos)
+{
+  u64 off = 0;
+  u64 mul = 1;
+
+  const cs_t *cs = &amp->root_css_buf[0];
+
+  for (u32 i = 0; i < amp->pos_cnt; i++)
+  {
+    const u32 k = pw[i];
+
+    u32 m;
+
+    for (m = 0; m < cs->cs_len; m++)
+    {
+      if (cs->cs_buf[m] == k) break;
+    }
+
+    if (m == cs->cs_len) return false;
+
+    off += (u64) m * mul;
+    mul *= cs->cs_len;
+
+    cs = &amp->markov_css_buf[(i * 256) + k];   // CHARSIZ charsets per position
+  }
+
+  *il_pos = off;
+
+  return true;
+}
+
+bool  bridge_amp_active (const hashcat_ctx_t *hashcat_ctx);
+
 bool  bridges_init      (hashcat_ctx_t *hashcat_ctx);
 bool  bridges_init_late (hashcat_ctx_t *hashcat_ctx);
 void  bridges_destroy   (hashcat_ctx_t *hashcat_ctx);

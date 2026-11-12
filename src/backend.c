@@ -4761,7 +4761,13 @@ int run_bridge_loop (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param
 
   pipe_acc (device_param, PIPE_XFER, &timer_stage);
 
-  if (bridge_ctx->launch_loop (hashcat_ctx, bridge_ctx->platform_context, device_param, hashconfig, hashes, salt_pos, pws_cnt) == false)
+  // A mask round whose amplifier the bridge walks itself goes to launch_loop_amp (), with all of it.
+
+  const bool rc_launch = (bridge_amp_active (hashcat_ctx) == true)
+                       ? bridge_ctx->launch_loop_amp (hashcat_ctx, bridge_ctx->platform_context, device_param, hashconfig, hashes, salt_pos, pws_cnt, &hashcat_ctx->mask_ctx->bridge_amp)
+                       : bridge_ctx->launch_loop     (hashcat_ctx, bridge_ctx->platform_context, device_param, hashconfig, hashes, salt_pos, pws_cnt);
+
+  if (rc_launch == false)
   {
     bridges_failed (hashcat_ctx);
 
@@ -6218,9 +6224,20 @@ static int amp_prepare (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_pa
 
       device_param->kernel_params_mp_r_buf64[3] = off;
 
-      if (run_kernel_mp (hashcat_ctx, device_param, KERN_RUN_MP_R, innerloop_left) == -1) return -1;
+      if (bridge_amp_active (hashcat_ctx) == true)
+      {
+        // The bridge walks the amplifier itself, so nothing generates it here. The launch's base words
+        // reach the bridge with the amplifier's positions zero: the amp kernel ORs item zero into
+        // them, and item zero is made zero.
 
-      if (hc_dev_memcpy_d2d (hashcat_ctx, device_param, device_param->d_buf[HC_DEV_BUF_BFS_C], 0, device_param->d_buf[HC_DEV_BUF_BFS], 0, innerloop_left * sizeof (bf_t)) == -1) return -1;
+        if (run_kernel_bzero (hashcat_ctx, device_param, device_param->d_buf[HC_DEV_BUF_BFS_C], sizeof (bf_t)) == -1) return -1;
+      }
+      else
+      {
+        if (run_kernel_mp (hashcat_ctx, device_param, KERN_RUN_MP_R, innerloop_left) == -1) return -1;
+
+        if (hc_dev_memcpy_d2d (hashcat_ctx, device_param, device_param->d_buf[HC_DEV_BUF_BFS_C], 0, device_param->d_buf[HC_DEV_BUF_BFS], 0, innerloop_left * sizeof (bf_t)) == -1) return -1;
+      }
     }
   }
 
@@ -6283,6 +6300,10 @@ static bool slow_amp_pack (const hashcat_ctx_t *hashcat_ctx)
 static u64 slow_amp_step (const hashcat_ctx_t *hashcat_ctx, const hc_device_param_t *device_param, const u64 pws_cnt)
 {
   const user_options_extra_t *user_options_extra = hashcat_ctx->user_options_extra;
+
+  // A bridge that walks the amplifier itself takes all of it in one launch.
+
+  if (bridge_amp_active (hashcat_ctx) == true) return MAX (hashcat_ctx->mask_ctx->bfs_cnt, 1);
 
   if (slow_amp_pack (hashcat_ctx) == false) return 1;
 

@@ -37,6 +37,73 @@ static int sp_comp_val (const void *p1, const void *p2)
   return 0;
 }
 
+// How many of the mask's first positions a bridge that walks the amplifier itself takes
+// (BRIDGE_TYPE_MASK_AMP), or 0 for none: as few as hold the amp_min candidates it asks for, at most
+// its pos_max, and at least one position less than the mask so that there is a base word. Only
+// positions whose every charset holds the whole of the mask's own count, whichever character came
+// before: that is what makes the amplifier the product of its charsets, which a bridge can walk in
+// an order of its own. Under --markov-threshold a position can take fewer characters after some
+// predecessors than after others, and the walk stops in front of it. il_pos is 32 bits, so is the
+// amplifier.
+
+static u32 mp_bridge_amp_cnt (hashcat_ctx_t *hashcat_ctx, const u32 css_cnt_orig)
+{
+  bridge_ctx_t               *bridge_ctx         = hashcat_ctx->bridge_ctx;
+  const hashconfig_t         *hashconfig         = hashcat_ctx->hashconfig;
+  const mask_ctx_t           *mask_ctx           = hashcat_ctx->mask_ctx;
+  const user_options_extra_t *user_options_extra = hashcat_ctx->user_options_extra;
+
+  if (bridge_ctx->enabled == false) return 0;
+
+  if ((hashconfig->bridge_type & BRIDGE_TYPE_MASK_AMP) == 0) return 0;
+
+  if (user_options_extra->attack_kern != ATTACK_KERN_BF) return 0;
+
+  u32 pos_max = 0;
+  u64 amp_min = 0;
+
+  if (bridge_ctx->get_mask_amp (hashcat_ctx, bridge_ctx->platform_context, &pos_max, &amp_min) == false) return 0;
+
+  u32 cnt   = 0;
+  u64 items = 1;
+
+  while ((cnt < pos_max) && ((cnt + 1) < css_cnt_orig) && (items < amp_min))
+  {
+    const u32 len = mask_ctx->css_buf[cnt].cs_len;
+
+    if (mask_ctx->root_css_buf[cnt].cs_len != len) break;
+
+    bool full = true;
+
+    if (cnt > 0)
+    {
+      const cs_t *prev = &mask_ctx->css_buf[cnt - 1];
+
+      for (u32 i = 0; i < prev->cs_len; i++)
+      {
+        const u32 k = prev->cs_buf[i];
+
+        if (mask_ctx->markov_css_buf[((cnt - 1) * CHARSIZ) + k].cs_len != len)
+        {
+          full = false;
+
+          break;
+        }
+      }
+    }
+
+    if (full == false) break;
+
+    if ((items * len) > 0xffffffff) break;
+
+    items *= len;
+
+    cnt++;
+  }
+
+  return cnt;
+}
+
 static void mp_css_split_cnt (hashcat_ctx_t *hashcat_ctx, const u32 css_cnt_orig, u32 css_cnt_lr[2])
 {
   const mask_ctx_t     *mask_ctx     = hashcat_ctx->mask_ctx;
@@ -45,6 +112,8 @@ static void mp_css_split_cnt (hashcat_ctx_t *hashcat_ctx, const u32 css_cnt_orig
 
   u32 css_cnt_l = mask_ctx->css_cnt;
   u32 css_cnt_r;
+
+  hashcat_ctx->mask_ctx->bridge_amp_active = false;
 
   if (user_options->slow_candidates == true)
   {
@@ -91,6 +160,18 @@ static void mp_css_split_cnt (hashcat_ctx_t *hashcat_ctx, const u32 css_cnt_orig
     else
     {
       css_cnt_r = 1;
+
+      // A bridge that walks the amplifier on its own hardware takes as much of the mask as it asks
+      // for, since each of its launches then covers base words times the whole amplifier.
+
+      const u32 amp_cnt = mp_bridge_amp_cnt (hashcat_ctx, css_cnt_orig);
+
+      if (amp_cnt > 0)
+      {
+        css_cnt_r = amp_cnt;
+
+        hashcat_ctx->mask_ctx->bridge_amp_active = true;
+      }
 
       /* unfinished code?
       int sum = css_buf[css_cnt_r - 1].cs_len;
@@ -2727,6 +2808,17 @@ int mask_ctx_update_loop (hashcat_ctx_t *hashcat_ctx)
         status_set_rc_error (hashcat_ctx, mask_error);
 
         return -1;
+      }
+
+      // The amplifier as a bridge that walks it itself sees it, for this round only.
+
+      if (mask_ctx->bridge_amp_active == true)
+      {
+        mask_ctx->bridge_amp.pos_cnt        = css_cnt_lr[1];
+        mask_ctx->bridge_amp.cnt            = mask_ctx->bfs_cnt;
+        mask_ctx->bridge_amp.css            = mask_ctx->root_css_buf;
+        mask_ctx->bridge_amp.root_css_buf   = mask_ctx->root_css_buf;
+        mask_ctx->bridge_amp.markov_css_buf = mask_ctx->markov_css_buf;
       }
 
       // Everything a lookup needs is here and nowhere else: the tables the run will enumerate, the

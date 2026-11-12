@@ -834,6 +834,14 @@ typedef enum bridge_type
 
   BRIDGE_TYPE_LOOP_CHUNKED           = (1ULL <<  3),
 
+  // The bridge's hardware walks an attack mode 3 mask's amplifier itself, so a launch hands it base
+  // words and the amplifier's charsets rather than finished candidates. hashcat makes the amplifier as
+  // large as get_mask_amp () asks, calls launch_loop_amp () once per batch of base words for all of
+  // it, and counts every candidate of the amplifier as tested by that launch. Every other launch, the
+  // self test's and those of the other attack modes, still goes to launch_loop ().
+
+  BRIDGE_TYPE_MASK_AMP               = (1ULL <<  4),
+
   BRIDGE_TYPE_LAUNCH_INIT            = (1ULL << 10), // attention! not yet implemented
   BRIDGE_TYPE_LAUNCH_LOOP            = (1ULL << 11),
   BRIDGE_TYPE_LAUNCH_LOOP2           = (1ULL << 12),
@@ -3387,6 +3395,27 @@ typedef struct combi_lookup
 
 } combi_lookup_t;
 
+// An attack mode 3 amplifier as a bridge that walks it itself sees it (BRIDGE_TYPE_MASK_AMP).
+//
+// The amplifier is the candidate's first pos_cnt characters, and position p takes every character of
+// css[p], whatever the characters before it are: hashcat gives a bridge only amplifiers that are the
+// product of their positions' charsets. The base words of the launch hold zero bytes in these
+// positions. hashcat's own walk of the same positions orders each one by its markov statistics, so a
+// bridge that reports a crack turns the candidate's characters into hashcat's item number with
+// bridge_amp_rank () rather than counting items in an order of its own.
+
+typedef struct bridge_amp
+{
+  u32         pos_cnt;
+  u64         cnt;            // items, the product of the positions' charset lengths
+
+  const cs_t *css;            // pos_cnt charsets, css[p] the characters of position p
+
+  const cs_t *root_css_buf;   // hashcat's own walk, which bridge_amp_rank () follows
+  const cs_t *markov_css_buf;
+
+} bridge_amp_t;
+
 typedef struct mask_ctx
 {
   bool   enabled;
@@ -3439,6 +3468,12 @@ typedef struct mask_ctx
 
   cs_t  *root_css_buf;
   cs_t  *markov_css_buf;
+
+  // This round's amplifier, when a bridge walks it itself (BRIDGE_TYPE_MASK_AMP). Set by
+  // mask_ctx_update_loop () with the split, so it is false for every round no such bridge takes.
+
+  bool          bridge_amp_active;
+  bridge_amp_t  bridge_amp;
 
   bool   mask_from_file;
 
@@ -4227,6 +4262,19 @@ typedef struct bridge_ctx
 
   bool      (*launch_loop)        (hashcat_ctx_t *, void *, hc_device_param_t *, hashconfig_t *, hashes_t *, const u32, const u64);
   bool      (*launch_loop2)       (hashcat_ctx_t *, void *, hc_device_param_t *, hashconfig_t *, hashes_t *, const u32, const u64);
+
+  // A bridge that walks a mask's amplifier itself (BRIDGE_TYPE_MASK_AMP), and only such a bridge.
+  //
+  // get_mask_amp says how much of a mask it takes: at most *pos_max positions from the front, and
+  // hashcat stops adding positions once the amplifier holds *amp_min candidates. Return false to have
+  // this mask run like any other, one candidate per work item. It is asked once per mask.
+  //
+  // launch_loop_amp then replaces launch_loop for that mask's launches. The pws_cnt work items are
+  // base words, and the bridge tests every one of them with every item of amp. A crack is reported
+  // the way the module's kernels expect, with the item number bridge_amp_rank () gives.
+
+  bool      (*get_mask_amp)       (hashcat_ctx_t *, void *, u32 *, u64 *);
+  bool      (*launch_loop_amp)    (hashcat_ctx_t *, void *, hc_device_param_t *, hashconfig_t *, hashes_t *, const u32, const u64, const bridge_amp_t *);
 
   const char *(*st_update_pass)  (hashcat_ctx_t *, void *);
   const char *(*st_update_hash)  (hashcat_ctx_t *, void *);
