@@ -76,6 +76,29 @@ Two additional flags affect that contract:
 * `BRIDGE_TYPE_UPDATE_SELFTEST` lets the bridge replace the module's self-test hash and password. Generic language bridges use this when the loaded script supplies its own test.
 * `BRIDGE_TYPE_LOOP_CHUNKED` indicates that `launch_loop()` honours `kernel_param.loop_pos` and `loop_cnt`. Set it only when the bridge can preserve candidate state across chunks. Without it, hashcat hands the bridge the complete iteration range in one call.
 
+### Walking a mask's amplifier on the bridge's hardware
+
+A bridge launch normally holds one finished candidate per work item. That suits slow hashes, but hardware that tests billions of fast-hash candidates per second cannot be fed one candidate at a time. Neither the link nor the host keeps up. `BRIDGE_TYPE_MASK_AMP` lets a bridge generate the candidates itself in attack mode 3. hashcat still owns the mask, the keyspace, the progress and the restore point.
+
+hashcat splits every mask into a base word and an amplifier. The amplifier is the mask's first positions, and the base word is the rest. A slow hash normally gets an amplifier of one position, and hashcat runs one launch for every amplifier item. When the module's `BRIDGE_TYPE` includes `BRIDGE_TYPE_MASK_AMP`, hashcat does the following for each mask:
+
+* It asks the bridge's `get_mask_amp()` how much of the mask to take. The bridge answers with at most `pos_max` positions, and hashcat stops adding positions once the amplifier holds `amp_min` candidates. At least one position is left for the base word, and an amplifier stays below 2^32 items, the range of `il_pos`.
+* It hands each launch to `launch_loop_amp()` instead of `launch_loop()`. The work items are the base words, with zero bytes in the amplifier positions. The bridge tests every base word with every item of the amplifier.
+* It counts the launch as `pws_cnt` times the amplifier size. `Speed.#NN`, the progress and the ETA therefore count real candidates, and `--skip`, `--limit` and restore stay in base words as for any mask.
+
+```c
+  bool (*get_mask_amp)    (hashcat_ctx_t *, void *, u32 *pos_max, u64 *amp_min);
+  bool (*launch_loop_amp) (hashcat_ctx_t *, void *, hc_device_param_t *, hashconfig_t *, hashes_t *, const u32 salt_pos, const u64 pws_cnt, const bridge_amp_t *amp);
+```
+
+`bridge_amp_t` describes the amplifier. Position `p` of `pos_cnt` takes every character of `css[p]`, and `cnt` is the number of items.
+
+hashcat orders each position by its markov statistics. Under the default `--markov-threshold 0`, every position still takes its whole charset whatever character precedes it. The amplifier is then the product of its charsets, and the bridge can walk it in any order it likes. Under a threshold, a position can take fewer characters after some predecessors than after others. hashcat stops the amplifier in front of such a position, and runs a mask whose first position already falls short as an ordinary launch.
+
+To report a crack, the bridge gives the kernels the work item and hashcat's own item number, the `il_pos` that `build_plain()` rebuilds the candidate from. `bridge_amp_rank()` in `bridges.h` turns the found candidate's first `pos_cnt` characters into that number. The module's comp kernel passes it to `mark_hash()`.
+
+Every other launch still goes to `launch_loop()` and holds whole candidates. That includes the self-test, the other attack modes, and a mask that is too short to split. A bridge with this flag implements both callbacks.
+
 Two sets of flags were removed without direct replacements: `BRIDGE_TYPE_MATCH_TUNINGS` and the nine flags from `BRIDGE_TYPE_FORCE_WORKITEMS_001` through `BRIDGE_TYPE_FORCE_WORKITEMS_256`. A bridge using the old symbols no longer compiles. Remove them from `BRIDGE_TYPE` and use the work-item callbacks described below.
 
 Tuning no longer requires an opt-in flag. For every bridge, hashcat sizes launches and device buffers from the value returned by `get_workitem_count()`. This value is an upper bound that hashcat never exceeds.
