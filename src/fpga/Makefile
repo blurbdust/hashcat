@@ -381,6 +381,10 @@ SIM_SCRIPT_wpa2 := wpa2/gateware/wpa2/tb_datapath.py
 
 SIM_TOOL_wpa2 := verilator
 
+SIM_SCRIPT_des_kpa := des_kpa/gateware/des_kpa/tb_datapath.py
+
+SIM_TOOL_des_kpa := verilator
+
 SIM_SCRIPT      := $(SIM_SCRIPT_$(ALGO))
 
 SIM_TOOL        := $(or $(SIM_TOOL_$(ALGO)),$(IVERILOG))
