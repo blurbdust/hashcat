@@ -38,7 +38,7 @@
 `include "descrypt.vh"
 
 module hcfpga_descrypt_engine #(
-  parameter NUM_CORES  = 1,
+  parameter integer NUM_CORES  = 1,
   parameter WITH_CMP   = 1,
   parameter IDLE_FLUSH = 4096
 )(

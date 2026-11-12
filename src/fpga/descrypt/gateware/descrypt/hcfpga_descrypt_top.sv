@@ -20,7 +20,7 @@
 `timescale 1ns / 1ps
 module hcfpga_descrypt_top #(
   // The identity's cores= (the wrapper's core_count): DES rings of 16 candidates each.
-  parameter NUM_CORES = 1,
+  parameter integer NUM_CORES = 1,
 
   parameter WITH_CMP = 1,
 
