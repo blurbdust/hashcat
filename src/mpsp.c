@@ -59,6 +59,12 @@ static u32 mp_bridge_amp_cnt (hashcat_ctx_t *hashcat_ctx, const u32 css_cnt_orig
 
   if (user_options_extra->attack_kern != ATTACK_KERN_BF) return 0;
 
+  // The brain client keeps its own record of what a launch tested, one candidate per work item.
+
+  #ifdef WITH_BRAIN
+  if (hashcat_ctx->user_options->brain_client == true) return 0;
+  #endif
+
   u32 pos_max = 0;
   u64 amp_min = 0;
 
