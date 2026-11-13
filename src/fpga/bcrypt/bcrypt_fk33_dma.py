@@ -152,10 +152,15 @@ class _SystemMonitor(XilinxSystemMonitor):
         assert 2 <= divider <= 255
 
         channel = Signal(6)
+        daddr   = Signal(8)
         eoc     = Signal()
         eos     = Signal()
         drdy    = Signal()
         do      = Signal(16)
+
+        # DADDR is 8 bits wide and CHANNEL 6. Connected directly, the top two address inputs are left
+        # unconnected, and on the part every read then misses the status registers and returns 0.
+        self.comb += daddr.eq(channel)
 
         # The sequencer setup is LiteX's USSystemMonitor's, from UG580, with the clock divider above.
         self.specials += Instance("SYSMONE4",
@@ -187,7 +192,7 @@ class _SystemMonitor(XilinxSystemMonitor):
             i_DWE        = 0,
             i_DEN        = eoc,
             o_DRDY       = drdy,
-            i_DADDR      = channel,
+            i_DADDR      = daddr,
             i_DI         = 0,
             o_DO         = do,
         )
