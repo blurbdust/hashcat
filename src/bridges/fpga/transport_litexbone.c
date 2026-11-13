@@ -851,6 +851,13 @@ static int lxb_open_uart (lxb_priv_t *priv)
 
     return -1;
   }
+
+  // every UARTBone read waits a round trip, and an FTDI adapter holds a short reply for its
+  // latency timer, 16 ms by default; AppleUSBFTDI takes this as the timer in ms, a CDC-ACM port may refuse it
+
+  unsigned long latency = 1;
+
+  ioctl (fd, IOSSDATALAT, &latency);
   #endif
 
   const int flags = fcntl (fd, F_GETFL);
