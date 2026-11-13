@@ -41,7 +41,7 @@ BOARD_SHAPE = {
 
     "num_cores_dist": 0,
 
-    "num_cores_uram": 0,
+    "num_cores_uram": 160,
 
     "feed_group":     32,
 

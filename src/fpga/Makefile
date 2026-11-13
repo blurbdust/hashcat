@@ -28,11 +28,18 @@ CLK_ztex213     := 105
 CORES_artyz7    := 68
 CLK_artyz7      := 91
 
+CORES_fk33      := 760
+CLK_fk33        := 175
+
+# No bitstream is published for this board, so there is no release to check a build against.
+NO_RELEASE_fk33 := 1
+
 CORES           ?= $(or $(CORES_$(BOARD)),240)
 CLK             ?= $(or $(CLK_$(BOARD)),155)
 
 LANES_ypcb      := 1
 LANES_zc706     := 1
+LANES_fk33      := 4
 PCIE_LANES      ?= $(LANES_$(BOARD))
 
 STARTUPCLK      ?= Cclk
@@ -261,7 +268,7 @@ EXTRA_ARGS      ?=
 
 FEED_ARGS       := $(if $(HAS_SHAPE),--din-bits $(DIN_BITS) --feed-group $(FEED_GROUP) --feed-shard $(FEED_SHARD) --collect-group $(COLLECT_GROUP) --num-cores-dist $(NUM_CORES_DIST) --init-batch $(INIT_BATCH),)$(if $(filter-out 0,$(NO_DUMP)), --no-dump,)$(if $(filter-out 0,$(NO_CMP)), --no-cmp,)$(if $(filter-out 1,$(CSLOW)), --cslow $(CSLOW),)$(if $(filter-out 0,$(NUM_CORES_URAM)), --num-cores-uram $(NUM_CORES_URAM),)
 
-build: check-release
+build: $(if $(NO_RELEASE_$(BOARD)),,check-release)
 	@command -v vivado >/dev/null 2>&1 || { echo "vivado not on PATH, source settings64.sh first"; exit 1; }
 	cd $(ALGO) && python3 $(notdir $(TARGET)) --build \
 	  --cores $(CORES) $(PARAM_ARGS) $(FEED_ARGS) \
