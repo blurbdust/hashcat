@@ -3679,6 +3679,26 @@ void status_display_status_json (hashcat_ctx_t *hashcat_ctx)
   hcfree (hashcat_status);
 }
 
+// Whether any active bridge unit computes in waves. Units can differ, a 1 core board next to a
+// 48 core one, so unit 0 alone does not say.
+
+static bool bridge_wide_units (hashcat_ctx_t *hashcat_ctx)
+{
+  const backend_ctx_t *backend_ctx = hashcat_ctx->backend_ctx;
+
+  for (int device_id = 0; device_id < backend_ctx->backend_devices_cnt; device_id++)
+  {
+    const hc_device_param_t *device_param = &backend_ctx->devices_param[device_id];
+
+    if (device_param->skipped         == true) continue;
+    if (device_param->skipped_warning == true) continue;
+
+    if (bridge_workitem_multiple (hashcat_ctx, device_param->bridge_link_device) > 1) return true;
+  }
+
+  return false;
+}
+
 // The per device speed lines for a run that is driven by a bridge.
 //
 // A bridge does the work, so the backend device's thread and vector geometry says nothing about it.
@@ -3693,7 +3713,7 @@ void status_display_status_json (hashcat_ctx_t *hashcat_ctx)
 
 static void status_display_bridge_speed (hashcat_ctx_t *hashcat_ctx, const hashcat_status_t *hashcat_status)
 {
-  const bool wide_units = (bridge_workitem_multiple (hashcat_ctx, 0) > 1);
+  const bool wide_units = bridge_wide_units (hashcat_ctx);
 
   // count the ACTIVE units, not every unit the platform has. -d can leave a single unit running out
   // of many, and testing the total there would fold the one line away while the total line below is
@@ -4361,7 +4381,7 @@ void status_display (hashcat_ctx_t *hashcat_ctx)
   // single line only repeats it. A bridge of many narrow units printed no line for them above, so
   // there the total is the only speed line.
 
-  const bool bridge_folded = (bridge_ctx->enabled == true) && (hashcat_status->device_info_active > 1) && (bridge_workitem_multiple (hashcat_ctx, 0) == 1);
+  const bool bridge_folded = (bridge_ctx->enabled == true) && (hashcat_status->device_info_active > 1) && (bridge_wide_units (hashcat_ctx) == false);
 
   if ((hashcat_status->group_info_active > 1) || (bridge_folded == true))
   {
