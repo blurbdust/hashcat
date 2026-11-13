@@ -6,6 +6,8 @@
 `timescale 1ns / 1ps
 module tb_core_c2;
 
+  parameter S_STYLE = "block";
+
   reg CLK = 0;
   always #5 CLK = ~CLK;
 
@@ -22,7 +24,7 @@ module tb_core_c2;
 
   wire [1:0] init_ready_vc, crypt_ready_vc, empty_vc, dout_vc;
 
-  bcrypt_core_c2 #(.DIN_BITS(32)) core (
+  bcrypt_core_c2 #(.DIN_BITS(32), .S_STYLE(S_STYLE)) core (
     .CLK(CLK), .rst(rst), .phase(phase),
     .din(din), .byte_wr_en(byte_wr_en), .start(start), .wr_sel(wr_sel),
     .rd_en_vc(rd_en_vc),

@@ -12,7 +12,7 @@ from litex.soc.interconnect.csr import *
 from litex.soc.interconnect import stream
 
 class BcryptDmaWrapper(LiteXModule):
-    def __init__(self, platform, num_cores=1, num_cores_dist=0, din_bits=32,
+    def __init__(self, platform, num_cores=1, num_cores_dist=0, num_cores_uram=0, din_bits=32,
                  feed_group=0, feed_shard=0, collect_group=0, init_batch=0, with_dump=1,
                  with_cmp=1, cslow=1):
         self.sink   = stream.Endpoint([("data", 32)])
@@ -49,6 +49,8 @@ class BcryptDmaWrapper(LiteXModule):
             p_NUM_CORES      = num_cores,
 
             p_NUM_CORES_DIST = num_cores_dist,
+
+            p_NUM_CORES_URAM = num_cores_uram,
 
             p_DIN_BITS       = din_bits,
 

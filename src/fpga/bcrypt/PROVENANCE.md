@@ -78,6 +78,7 @@ Apart from the changes above, the Blowfish datapath, the S-box and P-array logic
 - a zero flag per virtual core replaces the reset and hold of the S read register.
 - the collision exception's re-read moves from MC[81] to MC[82], directly before its use, because the shared read latch cannot keep one virtual core's value across the other's cycle. That needs a new PN address opcode, `PNAR_LD_ADDR_P_PLUS1`.
 - the state dump is not carried, and `mode_cmp` is gone.
+- each S bank is a module of its own, `S_bank_c2`, so that `S_STYLE` can put a core's four banks in block RAM, UltraRAM or distributed RAM. One bank needs a write and a read in the same cycle, which is all an UltraRAM's two ports give, so an UltraRAM core takes four of them. `NUM_CORES_URAM` and `NUM_CORES_DIST` in `gateware/bcrypt/hcfpga_cores.v` pick the style per core.
 
 Everything else in its microcode is `fsm.v`'s, the MC[0] change included. Its header explains the design. The YPCB ships it, see `CSLOW` in `src/fpga/Makefile`.
 

@@ -15,6 +15,7 @@ module tb_datapath;
   parameter integer DIN_BITS   = 8;
 
   parameter integer NUM_CORES_DIST = 0;
+  parameter integer NUM_CORES_URAM = 0;
   parameter integer INIT_BATCH     = 0;
   parameter integer COLLECT_GROUP  = 0;
 
@@ -42,7 +43,7 @@ module tb_datapath;
   reg         m_ready = 1;
   wire        m_last;
 
-  hcfpga_top #(.NUM_CORES(NUM_CORES), .NUM_CORES_DIST(NUM_CORES_DIST), .INIT_BATCH(INIT_BATCH), .DIN_BITS(DIN_BITS), .FEED_GROUP(FEED_GROUP), .FEED_SHARD(FEED_SHARD), .COLLECT_GROUP(COLLECT_GROUP), .WITH_DUMP(WITH_DUMP), .WITH_CMP(WITH_CMP), .CSLOW(CSLOW)) dut (
+  hcfpga_top #(.NUM_CORES(NUM_CORES), .NUM_CORES_DIST(NUM_CORES_DIST), .NUM_CORES_URAM(NUM_CORES_URAM), .INIT_BATCH(INIT_BATCH), .DIN_BITS(DIN_BITS), .FEED_GROUP(FEED_GROUP), .FEED_SHARD(FEED_SHARD), .COLLECT_GROUP(COLLECT_GROUP), .WITH_DUMP(WITH_DUMP), .WITH_CMP(WITH_CMP), .CSLOW(CSLOW)) dut (
     .CLK(CLK), .CLK_CORE(CLK_CORE), .rst(rst), .mode_dump(1'b0),
     .s_data(s_data), .s_valid(s_valid), .s_ready(s_ready), .s_last(s_last),
     .frame_status(frame_status),

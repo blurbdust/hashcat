@@ -14,6 +14,8 @@ module hcfpga_cores #(
 
   parameter NUM_CORES_DIST = 0,
 
+  parameter NUM_CORES_URAM = 0,
+
   parameter WITH_CMP = 1,
 
   parameter CSLOW = 1,
@@ -118,9 +120,21 @@ module hcfpga_cores #(
 
   initial
   begin
-    if ((CSLOW == 2) && (((NUM_CORES % 2) != 0) || (NUM_CORES_DIST != 0) || (WITH_DUMP != 0) || ((GROUP % 2) != 0) || ((SHARD % 2) != 0)))
+    if ((CSLOW == 2) && (((NUM_CORES % 2) != 0) || ((NUM_CORES_DIST % 2) != 0) || ((NUM_CORES_URAM % 2) != 0) || (WITH_DUMP != 0) || ((GROUP % 2) != 0) || ((SHARD % 2) != 0)))
     begin
-      $display ("hcfpga_cores: CSLOW=2 needs an even NUM_CORES, even GROUP and SHARD, no distributed cores and no dump");
+      $display ("hcfpga_cores: CSLOW=2 needs an even NUM_CORES, NUM_CORES_DIST, NUM_CORES_URAM, GROUP and SHARD, and no dump");
+      $fatal;
+    end
+
+    if ((CSLOW != 2) && (NUM_CORES_URAM != 0))
+    begin
+      $display ("hcfpga_cores: NUM_CORES_URAM needs CSLOW=2");
+      $fatal;
+    end
+
+    if ((NUM_CORES_DIST + NUM_CORES_URAM) > NUM_CORES)
+    begin
+      $display ("hcfpga_cores: NUM_CORES_DIST=%0d and NUM_CORES_URAM=%0d add up to more than NUM_CORES=%0d", NUM_CORES_DIST, NUM_CORES_URAM, NUM_CORES);
       $fatal;
     end
   end
@@ -134,6 +148,9 @@ module hcfpga_cores #(
     localparam integer V1 = 2 * i + 1;
 
     localparam integer GI = (GROUP == 0) ? ((SHARD == 0) ? 0 : (V0 / SHARD)) : (V0 / GROUP);
+
+    localparam PAIR_S_STYLE = (V0 >= (NUM_CORES - NUM_CORES_DIST)) ? "distributed" :
+                              (V0 >= (NUM_CORES - NUM_CORES_DIST - NUM_CORES_URAM)) ? "ultra" : "block";
 
     (* keep = "true" *) reg t = 1'b0;
 
@@ -157,7 +174,7 @@ module hcfpga_cores #(
     wire [1:0] c_init_ready;
     wire [1:0] c_crypt_ready;
 
-    bcrypt_core_c2 #(.DIN_BITS(DIN_BITS)) core (
+    bcrypt_core_c2 #(.DIN_BITS(DIN_BITS), .S_STYLE(PAIR_S_STYLE)) core (
       .CLK(CLK_CORE), .rst(rst_c), .phase(phase),
       .din(g_din[GI]), .byte_wr_en(g_bwe[GI]), .start(g_start[GI]),
       .wr_sel({g_wr_en[GI][V1], g_wr_en[GI][V0]}),

@@ -53,6 +53,7 @@ FEED_GROUP      ?= $(call board_shape,feed_group)
 FEED_SHARD      ?= $(call board_shape,feed_shard)
 COLLECT_GROUP   ?= $(call board_shape,collect_group)
 NUM_CORES_DIST  ?= $(call board_shape,num_cores_dist)
+NUM_CORES_URAM  ?= $(or $(call board_shape,num_cores_uram),0)
 INIT_BATCH      ?= $(call board_shape,init_batch)
 
 NO_DUMP         ?= $(or $(call board_shape,no_dump),0)
@@ -71,7 +72,7 @@ SET             := $(shell awk '/#define FPGA_SET_CURRENT/ { print $$3 }' ../bri
 
 STARTUP_SUFFIX  := _$(shell echo $(STARTUPCLK) | tr 'A-Z' 'a-z')
 
-SHAPE_SUFFIX    := $(if $(filter-out 0,$(FEED_GROUP)),_fg$(FEED_GROUP),)$(if $(filter-out 0,$(NO_DUMP)),_nodump,)$(if $(filter-out 0,$(NO_CMP)),_nocmp,)$(if $(filter-out 8,$(DIN_BITS)),_din$(DIN_BITS),)$(if $(filter-out 0,$(NUM_CORES_DIST)),_d$(NUM_CORES_DIST),)$(if $(filter-out 0,$(FEED_SHARD)),_fs$(FEED_SHARD),)$(if $(filter-out 0,$(COLLECT_GROUP)),_cg$(COLLECT_GROUP),)$(if $(filter-out 0,$(INIT_BATCH)),_ib$(INIT_BATCH),)
+SHAPE_SUFFIX    := $(if $(filter-out 0,$(FEED_GROUP)),_fg$(FEED_GROUP),)$(if $(filter-out 0,$(NO_DUMP)),_nodump,)$(if $(filter-out 0,$(NO_CMP)),_nocmp,)$(if $(filter-out 8,$(DIN_BITS)),_din$(DIN_BITS),)$(if $(filter-out 0,$(NUM_CORES_DIST)),_d$(NUM_CORES_DIST),)$(if $(filter-out 0,$(NUM_CORES_URAM)),_u$(NUM_CORES_URAM),)$(if $(filter-out 0,$(FEED_SHARD)),_fs$(FEED_SHARD),)$(if $(filter-out 0,$(COLLECT_GROUP)),_cg$(COLLECT_GROUP),)$(if $(filter-out 0,$(INIT_BATCH)),_ib$(INIT_BATCH),)
 
 LANES_SUFFIX    := $(if $(PCIE_LANES),_x$(PCIE_LANES),)
 
@@ -123,7 +124,7 @@ check:
 	 echo "  all offline checks pass"; \
 	 echo; \
 	 echo "  not run here, and each needs something this target deliberately does not assume:"; \
-	 echo "    make sim               the merge gate, 55 testbench configurations, needs iverilog"; \
+	 echo "    make sim               the merge gate, 58 testbench configurations, needs iverilog"; \
 	 echo "    make check-published   fetches every declared release, needs the network"; \
 	 echo "    make check-release     answers for one ALGO and BOARD, so build already runs it"
 
@@ -258,7 +259,7 @@ LANES_ARGS      := $(if $(PCIE_LANES),--pcie-lanes $(PCIE_LANES),)
 
 EXTRA_ARGS      ?=
 
-FEED_ARGS       := $(if $(HAS_SHAPE),--din-bits $(DIN_BITS) --feed-group $(FEED_GROUP) --feed-shard $(FEED_SHARD) --collect-group $(COLLECT_GROUP) --num-cores-dist $(NUM_CORES_DIST) --init-batch $(INIT_BATCH),)$(if $(filter-out 0,$(NO_DUMP)), --no-dump,)$(if $(filter-out 0,$(NO_CMP)), --no-cmp,)$(if $(filter-out 1,$(CSLOW)), --cslow $(CSLOW),)
+FEED_ARGS       := $(if $(HAS_SHAPE),--din-bits $(DIN_BITS) --feed-group $(FEED_GROUP) --feed-shard $(FEED_SHARD) --collect-group $(COLLECT_GROUP) --num-cores-dist $(NUM_CORES_DIST) --init-batch $(INIT_BATCH),)$(if $(filter-out 0,$(NO_DUMP)), --no-dump,)$(if $(filter-out 0,$(NO_CMP)), --no-cmp,)$(if $(filter-out 1,$(CSLOW)), --cslow $(CSLOW),)$(if $(filter-out 0,$(NUM_CORES_URAM)), --num-cores-uram $(NUM_CORES_URAM),)
 
 build: check-release
 	@command -v vivado >/dev/null 2>&1 || { echo "vivado not on PATH, source settings64.sh first"; exit 1; }
@@ -403,6 +404,6 @@ help:
 	@echo "  make check                                                every check that needs no network and no board"
 	@echo
 	@echo "  current: $(ALGO) on $(BOARD), $(CORES) cores @ $(CLK) MHz$(if $(PCIE_LANES), PCIe x$(PCIE_LANES),), dist name $(DIST_NAME)"
-	@echo "  shape:   din_bits=$(DIN_BITS) feed_group=$(FEED_GROUP) feed_shard=$(FEED_SHARD) collect_group=$(COLLECT_GROUP) num_cores_dist=$(NUM_CORES_DIST) init_batch=$(INIT_BATCH)"
+	@echo "  shape:   din_bits=$(DIN_BITS) feed_group=$(FEED_GROUP) feed_shard=$(FEED_SHARD) collect_group=$(COLLECT_GROUP) num_cores_dist=$(NUM_CORES_DIST) num_cores_uram=$(NUM_CORES_URAM) init_batch=$(INIT_BATCH)"
 	@echo "           no_dump=$(NO_DUMP) no_cmp=$(NO_CMP) cslow=$(CSLOW)"
 	@echo "  bitstream: $(BITSTREAM)"

@@ -226,6 +226,11 @@ echo "=== two hash core: two virtual cores per physical core, on a clock twice t
 
 run_one "tb_core_c2" g2005 "$CORE/tb_core_c2.v" "$CORE_SRC"
 
+for style in ultra distributed; do
+  run_one "tb_core_c2.$style" g2005 "$CORE/tb_core_c2.v" "$CORE_SRC" \
+    -Ptb_core_c2.S_STYLE=\"$style\"
+done
+
 run_one "tb_datapath.c2" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" \
   -Ptb_datapath.CSLOW=2 -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 -Ptb_datapath.CHECK_ALL_CORES=1
 
@@ -247,6 +252,12 @@ run_one "tb_datapath.c2_one_wave_ragged" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC
 run_one "tb_datapath.c2_no_filter" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" \
   -Ptb_datapath.CSLOW=2 -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 -Ptb_datapath.CHECK_ALL_CORES=1 \
   -Ptb_datapath.WITH_CMP=0
+
+run_one "tb_datapath.c2_mixed_storage" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" \
+  -Ptb_datapath.CSLOW=2 -Ptb_datapath.NUM_CORES=8 -Ptb_datapath.NCAND=16 -Ptb_datapath.CHECK_ALL_CORES=1 \
+  -Ptb_datapath.FEED_SHARD=4 -Ptb_datapath.FEED_GROUP=2 -Ptb_datapath.COLLECT_GROUP=2 \
+  -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 -Ptb_datapath.WITH_CMP=0 \
+  -Ptb_datapath.NUM_CORES_URAM=2 -Ptb_datapath.NUM_CORES_DIST=2
 
 run_one "tb_cmp.c2" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC" \
   -Ptb_cmp.CSLOW=2 -Ptb_cmp.DIN_BITS=32 -Ptb_cmp.WITH_DUMP=0

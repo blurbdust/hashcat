@@ -54,7 +54,8 @@
 
 module bcrypt_core_c2 #(
 	parameter MSB = 31,
-	parameter DIN_BITS = 32
+	parameter DIN_BITS = 32,
+	parameter S_STYLE = "block"
 	)(
 	input CLK,
 	input rst,
@@ -216,7 +217,7 @@ module bcrypt_core_c2 #(
 	//
 	// Main computing unit.
 	//
-	unit_c2 #(.MSB(MSB)) unit(
+	unit_c2 #(.MSB(MSB), .S_STYLE(S_STYLE)) unit(
 		.CLK(CLK), .phase(phase),
 		.din(din_r),
 		.PS_input_select(PS_input_select), .decr(decr),
@@ -421,7 +422,8 @@ endmodule
 
 module unit_c2 #(
 	parameter MSB = 31,
-	parameter ADDR_NBITS = 8
+	parameter ADDR_NBITS = 8,
+	parameter S_STYLE = "block"
 	)(
 	input CLK,
 	input phase,
@@ -489,7 +491,7 @@ module unit_c2 #(
 
 	wire [MSB:0] S_dout;
 
-	S_c2 #( .MSB(MSB), .ADDR_NBITS(ADDR_NBITS)
+	S_c2 #( .MSB(MSB), .ADDR_NBITS(ADDR_NBITS), .S_STYLE(S_STYLE)
 	) S(
 		.CLK(CLK), .phase(phase),
 		.din(S_input),
@@ -599,8 +601,9 @@ module P_c2 #(
 endmodule
 
 
-// The four S-boxes of both virtual cores, block RAM only. Each bank is 512 x 32, the virtual core in
-// the top address bit, which fills the RAMB18 the original left half empty.
+// The four S-boxes of both virtual cores. Each bank is 512 x 32, the virtual core in the top address
+// bit, which fills the RAMB18 the original left half empty. S_STYLE picks the storage of all four,
+// see S_bank_c2.
 //
 // The read is the array latch S*_l, then the second stage, U_q = S0 + S1 beside S2_q and S3_q, in
 // fabric after the first adder. The XOR with S2 belongs on the far side of that register: there it is
@@ -613,7 +616,8 @@ endmodule
 // for why none is needed.
 module S_c2 #(
 	parameter MSB = 31,
-	parameter ADDR_NBITS = 8
+	parameter ADDR_NBITS = 8,
+	parameter S_STYLE = "block"
 	)(
 	input CLK,
 	input phase,
@@ -628,33 +632,28 @@ module S_c2 #(
 	output [MSB:0] out
 	);
 
-	(* RAM_STYLE = "block" *) reg [MSB:0] S0 [511:0];
-	(* RAM_STYLE = "block" *) reg [MSB:0] S1 [511:0];
-	(* RAM_STYLE = "block" *) reg [MSB:0] S2 [511:0];
-	(* RAM_STYLE = "block" *) reg [MSB:0] S3 [511:0];
-
-	reg [MSB:0] S0_l = 0, S1_l = 0, S2_l = 0, S3_l = 0;
+	wire [MSB:0] S0_l, S1_l, S2_l, S3_l;
 	reg [MSB:0] U_q = 0, S2_q = 0, S3_q = 0;
+
+	S_bank_c2 #(.MSB(MSB), .S_STYLE(S_STYLE)) S0 (.CLK(CLK),
+		.wr_en(wr_en && addr_wr[9:8] == 2'b00), .addr_wr({phase, addr_wr[7:0]}), .din(din),
+		.rd_en(rd_en), .addr_rd({phase, addr_rd[4*ADDR_NBITS-1 : 3*ADDR_NBITS]}), .dout(S0_l) );
+
+	S_bank_c2 #(.MSB(MSB), .S_STYLE(S_STYLE)) S1 (.CLK(CLK),
+		.wr_en(wr_en && addr_wr[9:8] == 2'b01), .addr_wr({phase, addr_wr[7:0]}), .din(din),
+		.rd_en(rd_en), .addr_rd({phase, addr_rd[3*ADDR_NBITS-1 : 2*ADDR_NBITS]}), .dout(S1_l) );
+
+	S_bank_c2 #(.MSB(MSB), .S_STYLE(S_STYLE)) S2 (.CLK(CLK),
+		.wr_en(wr_en && addr_wr[9:8] == 2'b10), .addr_wr({phase, addr_wr[7:0]}), .din(din),
+		.rd_en(rd_en), .addr_rd({phase, addr_rd[2*ADDR_NBITS-1 : ADDR_NBITS]}), .dout(S2_l) );
+
+	S_bank_c2 #(.MSB(MSB), .S_STYLE(S_STYLE)) S3 (.CLK(CLK),
+		.wr_en(wr_en && addr_wr[9:8] == 2'b11), .addr_wr({phase, addr_wr[7:0]}), .din(din),
+		.rd_en(rd_en), .addr_rd({phase, addr_rd[ADDR_NBITS-1 : 0]}), .dout(S3_l) );
 
 	reg z1 = 1, z = 1;
 
 	always @(posedge CLK) begin
-		if (wr_en && addr_wr[9:8] == 2'b00)
-			S0 [{phase, addr_wr[7:0]}] <= din;
-		if (wr_en && addr_wr[9:8] == 2'b01)
-			S1 [{phase, addr_wr[7:0]}] <= din;
-		if (wr_en && addr_wr[9:8] == 2'b10)
-			S2 [{phase, addr_wr[7:0]}] <= din;
-		if (wr_en && addr_wr[9:8] == 2'b11)
-			S3 [{phase, addr_wr[7:0]}] <= din;
-
-		if (rd_en) begin
-			S0_l <= S0 [{phase, addr_rd[4*ADDR_NBITS-1 : 3*ADDR_NBITS]}];
-			S1_l <= S1 [{phase, addr_rd[3*ADDR_NBITS-1 : 2*ADDR_NBITS]}];
-			S2_l <= S2 [{phase, addr_rd[2*ADDR_NBITS-1 : ADDR_NBITS]}];
-			S3_l <= S3 [{phase, addr_rd[ADDR_NBITS-1 : 0]}];
-		end
-
 		z1 <= rst_rd ? 1'b1 : (rd_en ? 1'b0 : z);
 		z  <= z1;
 
@@ -671,6 +670,59 @@ module S_c2 #(
 	end
 
 	assign out = S3_q + (S2_q ^ U_q);
+
+endmodule
+
+
+// One S bank of both virtual cores, 512 x 32, and its array latch. The storage is block RAM, UltraRAM
+// or distributed RAM. A synthesis attribute takes a literal, so each style is its own branch around the
+// same write and the same latched read. An UltraRAM bank leaves most of the block empty, it is there
+// for its ports: one bank needs a write and a read in the same cycle, and a block has exactly two.
+module S_bank_c2 #(
+	parameter MSB = 31,
+	parameter S_STYLE = "block"
+	)(
+	input CLK,
+	input wr_en,
+	input [8:0] addr_wr,
+	input [MSB:0] din,
+	input rd_en,
+	input [8:0] addr_rd,
+	output reg [MSB:0] dout = 0
+	);
+
+	generate
+	if (S_STYLE == "ultra") begin : ultra
+		(* RAM_STYLE = "ultra" *) reg [MSB:0] S [511:0];
+
+		always @(posedge CLK) begin
+			if (wr_en)
+				S [addr_wr] <= din;
+			if (rd_en)
+				dout <= S [addr_rd];
+		end
+	end
+	else if (S_STYLE == "distributed") begin : distributed
+		(* RAM_STYLE = "distributed" *) reg [MSB:0] S [511:0];
+
+		always @(posedge CLK) begin
+			if (wr_en)
+				S [addr_wr] <= din;
+			if (rd_en)
+				dout <= S [addr_rd];
+		end
+	end
+	else begin : block
+		(* RAM_STYLE = "block" *) reg [MSB:0] S [511:0];
+
+		always @(posedge CLK) begin
+			if (wr_en)
+				S [addr_wr] <= din;
+			if (rd_en)
+				dout <= S [addr_rd];
+		end
+	end
+	endgenerate
 
 endmodule
 
