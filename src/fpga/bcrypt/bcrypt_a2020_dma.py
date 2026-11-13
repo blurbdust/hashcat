@@ -89,9 +89,12 @@ class _CRG(LiteXModule):
             self.cd_core = ClockDomain()
             pll.create_clkout(self.cd_core, 2 * sys_clk_freq)
 
-        # The SoC reset reaching the PLL reset is the only path from sys to clk100, asynchronous
-        # by construction.
-        platform.add_false_path_constraints(self.cd_sys.clk, clk100)
+        # The SoC reset reaching the PLL reset is the only path from sys to clk100, and the PLL
+        # lock reaching each domain's reset synchroniser the only path back. Both are asynchronous
+        # by construction. Each domain is cut from clk100 on its own, because sys and core must stay
+        # timed against each other.
+        for cd in [self.cd_sys, self.cd_mgmt] + ([self.cd_core] if cslow == 2 else []):
+            platform.add_false_path_constraints(cd.clk, clk100)
 
         # The temperature and chip ID cross from mgmt to sys through synchronisers.
         platform.toolchain.additional_sdc_commands += [
