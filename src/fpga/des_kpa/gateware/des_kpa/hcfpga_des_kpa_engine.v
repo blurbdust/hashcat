@@ -479,23 +479,25 @@ module hcfpga_des_kpa_engine #(
     localparam integer C0 = g * GROUP;
     localparam integer CN = ((C0 + GROUP) <= NUM_CORES) ? GROUP : (NUM_CORES - C0);
 
-    // The group's copy of everything the cores share.
-    reg [63:0]               pt_ip  = 0;
-    reg [64*NUM_TARGETS-1:0] tgt_ip = 0;
-    reg [NUM_TARGETS-1:0]    tgt_en = 0;
+    // The group's copy of everything the cores share. Every group's copy holds the same values, so
+    // synthesis would merge them into one register driving every core on the chip: dont_merge keeps
+    // one per group, next to its cores.
+    (* dont_merge *) reg [63:0]               pt_ip  = 0;
+    (* dont_merge *) reg [64*NUM_TARGETS-1:0] tgt_ip = 0;
+    (* dont_merge *) reg [NUM_TARGETS-1:0]    tgt_en = 0;
 
-    reg [27:0] amp_hi    = 0;
-    reg        amp_valid = 0;
-    reg [31:0] bus_item  = 0;
-    reg        bus_parity = 0;
+    (* dont_merge *) reg [27:0] amp_hi    = 0;
+    (* dont_merge *) reg        amp_valid = 0;
+    (* dont_merge *) reg [31:0] bus_item  = 0;
+    (* dont_merge *) reg        bus_parity = 0;
 
-    reg        ws    = 0;
-    reg [CW:0] wjobs = 0;
-    reg        grst  = 1;
+    (* dont_merge *) reg        ws    = 0;
+    (* dont_merge *) reg [CW:0] wjobs = 0;
+    (* dont_merge *) reg        grst  = 1;
 
-    reg [55:0] ld_base = 0;
-    reg        ld_we   = 0;
-    reg [CW-1:0] ld_core = 0;
+    (* dont_merge *) reg [55:0] ld_base = 0;
+    (* dont_merge *) reg        ld_we   = 0;
+    (* dont_merge *) reg [CW-1:0] ld_core = 0;
 
     always @(posedge CLK)
     begin
@@ -517,8 +519,9 @@ module hcfpga_des_kpa_engine #(
       ld_core    <= ld_core_q;
     end
 
-    // The item each core holds in C2: the bus, CORE_LAT cycles later.
-    reg [32:0] trk [0:CORE_LAT-1];
+    // The item each core holds in C2: the bus, CORE_LAT cycles later, a delay line per group for the
+    // same reason.
+    (* dont_merge *) reg [32:0] trk [0:CORE_LAT-1];
 
     always @(posedge CLK)
     begin
