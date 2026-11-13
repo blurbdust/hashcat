@@ -67,7 +67,7 @@ An FPGA must be configured with a **bitstream** before its hardware interface ex
 | ZTEX USB-FPGA 2.13 | USB | **hashcat, when not configured** | [ZTEX 2.13](#ztex-213) |
 | Arty Z7-20 | Ethernet | **hashcat, when not configured** | [Arty Z7-20](#arty-z7-20) |
 
-You program four of these boards yourself, and hashcat identifies the design already running on each FPGA. Programming removes and recreates the PCIe endpoint, so the host has to **reboot** before it can use the device. Those four also need a locally built **kernel driver**, signed with a trusted key when Secure Boot is enabled.
+You program four of these boards yourself, and hashcat identifies the design already running on each FPGA. Programming removes and recreates the PCIe endpoint, so the host has to **reboot** before it can use the device. The ForestKitten 33 only needs a PCIe rescan, see its section. Those four also need a locally built **kernel driver**, signed with a trusted key when Secure Boot is enabled.
 
 hashcat uploads the design to the other four boards itself. The Alveo is programmed at every start that uses it. A ZTEX board or an Arty that an earlier run left running the design is reused, so only the first start after a power cycle uploads to it. An Arty bitstream built before its shell reported an identity is the exception and is programmed at every start that uses the board. A board that `-d` leaves out is listed but not driven: hashcat reads its identity and leaves it free for another hashcat run. An Arty that is left out is not programmed when it already runs a design of this build's ABI, but a blank Arty, or one running another design, is programmed during discovery whether or not `-d` selects it, because hashcat cannot identify it otherwise. The bitstream must be installed before the bridge can initialise. The configuration is volatile, so a power cycle clears it. The ZTEX boards and Arty need no kernel driver. The Alveo requires XRT's kernel drivers. Programming these boards does not require a reboot.
 
@@ -215,9 +215,17 @@ The default build is 760 cores at 175 MHz, two per hash core as on the YPCB. Blo
 
 The card keeps its factory design in its configuration flash. Load the hashcat design into SRAM over JTAG, which leaves the flash untouched:
 
-1. If `lspci` lists the card, unload the driver and remove the device: `echo 1 > /sys/bus/pci/devices/<address>/remove`.
-2. Load it through the card's FT2232H USB port with `make -C src/fpga load BOARD=fk33`, which runs OpenOCD. LiteX-Boards uses OpenOCD for this card because openFPGALoader reports `done 1` on it while the design is not configured.
-3. Reboot, then [build the driver](#4-build-and-load-the-kernel-driver) and [set permissions](#5-device-permissions). `lspci -nn -d 10ee:` should list the card as `10ee:9034`.
+1. If `lspci` lists the card, remove the device: `echo 1 > /sys/bus/pci/devices/<address>/remove`. A reload resets the card's configuration space, so the old device entry no longer works.
+2. Load it through the card's FT2232H USB port with OpenOCD 0.12 or later and LiteX-Boards' `litex_boards/prog/openocd_xcvu33p_ft2232.cfg`. The load takes about 40 s, and `make -C src/fpga load BOARD=fk33` runs the same command. openFPGALoader does not support this part.
+
+   ```
+   openocd -f openocd_xcvu33p_ft2232.cfg -c "init; pld load 0 <build>.bit; exit"
+   ```
+
+3. Rescan: `echo 1 > /sys/bus/pci/rescan`. The card comes back at once as `10ee:9034`, `lspci -nn -d 10ee:` lists it, and no reboot is needed.
+4. [Build the driver](#4-build-and-load-the-kernel-driver) and [set permissions](#5-device-permissions).
+
+If the card is listed but the bridge reads an identity of `0xff` bytes, check its root port with `lspci -vv -s <root port>`. A rescan has been seen to leave `Memory behind bridge: [disabled]` although the kernel assigned the window, so no register read reaches the card. Writing the window the kernel logged back into the root port fixes it, for a window at `0xb0000000`: `setpci -s <root port> MEMORY_BASE.l=0xb000b000`.
 
 With its factory design the card is `1e24:1533`, which hashcat ignores.
 
