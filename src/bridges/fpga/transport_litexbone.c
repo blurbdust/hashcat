@@ -22,7 +22,7 @@ bool fpga_transport_litexbone_tried (void)
   return LXB_TRIED;
 }
 
-#if defined (__linux__)
+#if defined (__linux__) || defined (__APPLE__)
 
 #include <dirent.h>
 #include <errno.h>
@@ -39,6 +39,11 @@ bool fpga_transport_litexbone_tried (void)
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+
+#if defined (__APPLE__)
+#include <sys/select.h>
+#include <IOKit/serial/ioss.h>
+#endif
 
 // A LiteX board without PCIe: hashcat's bcrypt wrapper sits behind HcfpgaMemStream, two rings in CSR
 // space, and every access goes over a LiteX bus bridge. Etherbone over UDP, or UARTBone over a
@@ -248,6 +253,26 @@ static u32 lxb_get32 (const u8 *p)
 
 static bool lxb_wait_in (const int fd, const u32 ms)
 {
+  #if defined (__APPLE__)
+
+  // poll() does not report input on a macOS tty
+
+  fd_set rfds;
+
+  FD_ZERO (&rfds);
+  FD_SET (fd, &rfds);
+
+  struct timeval tv;
+
+  tv.tv_sec  = ms / 1000;
+  tv.tv_usec = (ms % 1000) * 1000;
+
+  if (select (fd + 1, &rfds, NULL, NULL, &tv) <= 0) return false;
+
+  return FD_ISSET (fd, &rfds) != 0;
+
+  #else
+
   struct pollfd pfd;
 
   pfd.fd      = fd;
@@ -261,6 +286,8 @@ static bool lxb_wait_in (const int fd, const u32 ms)
   if ((pfd.revents & POLLIN) == 0) return false;
 
   return true;
+
+  #endif
 }
 
 // hashcat does not ignore SIGPIPE, so a peer that hung up must not raise it
@@ -690,6 +717,20 @@ static bool lxb_write1 (lxb_priv_t *priv, const u32 addr, const u32 val, const l
 
 // Links
 
+#if defined (__APPLE__)
+
+// speed_t is the rate itself, and lxb_open_uart sets the rates above B230400 with IOSSIOSPEED
+
+#define B460800   460800
+#define B500000   500000
+#define B921600   921600
+#define B1000000  1000000
+#define B1500000  1500000
+#define B2000000  2000000
+#define B3000000  3000000
+
+#endif
+
 typedef struct lxb_speed
 {
   u32     baud;
@@ -783,6 +824,10 @@ static int lxb_open_uart (lxb_priv_t *priv)
   tio.c_cc[VMIN]  = 0;
   tio.c_cc[VTIME] = 0;
 
+  #if defined (__APPLE__)
+  if (speed > B230400) speed = B230400;
+  #endif
+
   cfsetispeed (&tio, speed);
   cfsetospeed (&tio, speed);
 
@@ -794,6 +839,19 @@ static int lxb_open_uart (lxb_priv_t *priv)
 
     return -1;
   }
+
+  #if defined (__APPLE__)
+  speed_t rate = (speed_t) priv->baud;
+
+  if (ioctl (fd, IOSSIOSPEED, &rate) < 0)
+  {
+    snprintf (priv->why, sizeof (priv->why), "%s", strerror (errno));
+
+    close (fd);
+
+    return -1;
+  }
+  #endif
 
   const int flags = fcntl (fd, F_GETFL);
 
