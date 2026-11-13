@@ -245,8 +245,9 @@ def main():
         placement_margin = args.placement_margin,
     )
 
+    # In picoseconds: Quartus takes everything after a dot in a revision name for an extension.
     if args.placement_margin != PLACEMENT_MARGIN:
-        name += f"_m{args.placement_margin:g}"
+        name += f"_m{round(args.placement_margin * 1000)}"
 
     if args.fitter_seed is not None:
         soc.platform.toolchain.additional_qsf_commands += [f"set_global_assignment -name SEED {args.fitter_seed}"]
