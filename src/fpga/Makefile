@@ -38,6 +38,16 @@ EXT_storeypeak           := rbf
 NO_STARTUPCLK_storeypeak := 1
 NO_RELEASE_storeypeak    := 1
 
+CORES_a2020     := 64
+CLK_a2020       := 250
+
+# Quartus Prime Pro board: a .sof loaded with the Quartus Programmer, and no published bitstream.
+TOOL_a2020          := quartus_syn
+TOOL_HINT_a2020     := put Quartus Prime Pro's quartus/bin and qsys/bin on PATH, with a license that covers Stratix 10
+EXT_a2020           := sof
+NO_STARTUPCLK_a2020 := 1
+NO_RELEASE_a2020    := 1
+
 CORES           ?= $(or $(CORES_$(BOARD)),240)
 CLK             ?= $(or $(CLK_$(BOARD)),155)
 
