@@ -30,7 +30,7 @@ from litepcie.software       import generate_litepcie_software_headers
 from gateware.bcrypt_dma_wrapper import BcryptDmaWrapper
 
 from hcfpga_abi import fpga_abi_current
-from hcfpga_litepcie import PCIE_CLASS_CODE, add_debug_jtagbone, vivado_build_args, clock_mhz
+from hcfpga_litepcie import PCIE_CLASS_CODE, PCIE_CLASS_MENU_BASE, PCIE_CLASS_MENU_SUB, add_debug_jtagbone, vivado_build_args, clock_mhz
 
 BOARD = "fk33"
 
@@ -295,8 +295,14 @@ class BcryptSoC(SoCMini):
             speed      = "gen3",
             data_width = {4: 128, 8: 256}[pcie_lanes],
             bar0_size  = 0x10_0000)
+        # PF0_CLASS_CODE is derived in this IP and setting it is ignored, so the class goes in through the
+        # menu parameters it is derived from.
         self.pcie_phy.update_config({
-            "PF0_CLASS_CODE" : "%04X00" % PCIE_CLASS_CODE,
+            "pf0_base_class_menu"          : PCIE_CLASS_MENU_BASE,
+            "pf0_sub_class_interface_menu" : PCIE_CLASS_MENU_SUB,
+            "pf0_class_code_base"          : "%02X" % ((PCIE_CLASS_CODE >> 8) & 0xff),
+            "pf0_class_code_sub"           : "%02X" % ((PCIE_CLASS_CODE >> 0) & 0xff),
+            "pf0_class_code_interface"     : "00",
         })
         self.add_pcie(phy=self.pcie_phy, ndmas=1, address_width=64)
 
