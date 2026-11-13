@@ -181,9 +181,10 @@ class StoreyPeakSoC(SoCMini):
             self.dma_up.source.connect(self.pcie_dma0.sink),
         ]
 
-# The build tested on the card: 96 cores at 250 MHz, one key per core and clock, 24 G keys/s. The
-# placement margin closes timing at every corner; past 250 MHz LitePCIe's DMA is what fails first.
-UNITS            = 96
+# The build tested on the card: 108 cores at 250 MHz, one key per core and clock, 27 G keys/s. The
+# placement margin closes timing at every corner; past 250 MHz LitePCIe's DMA is what fails first, and
+# 112 cores no longer close at 250.
+UNITS            = 108
 SYS_CLK_FREQ     = 250e6
 PLACEMENT_MARGIN = 0.3
 
