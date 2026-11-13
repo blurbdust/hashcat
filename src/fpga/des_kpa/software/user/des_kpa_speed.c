@@ -59,7 +59,7 @@
 #define C2H_FLAG_EOB      0x8000u
 
 // One job in RING_PLANT holds a key that hits.
-#define RING_PLANT        97
+#define RING_PLANT        2
 
 #ifndef HCFPGA_ABI
 #define HCFPGA_ABI 4
@@ -130,6 +130,68 @@ static bool probe_identity (const int fd, char *buf, const size_t buf_size)
 static double temp_c (const uint32_t raw)
 {
   return ((double) raw) * 503.975 / 4096.0 - 273.15;
+}
+
+typedef struct
+{
+  uint32_t       amp_cnt;
+  uint32_t       ring_jobs;
+  uint64_t       want_item;
+  const uint8_t *pkey;
+  const uint8_t *pt;
+  const uint8_t *tct;
+
+  uint64_t good, bad, eob;
+
+} check_t;
+
+// Every hit names a planted job, the planted item and target 0, and its key encrypts the plaintext
+// to the target.
+
+static void take_hits (struct litepcie_dma_ctrl *dma, const int fd, check_t *c)
+{
+  const ssize_t rlen = read (fd, dma->buf_rd, DMA_BUFFER_TOTAL_SIZE);
+
+  for (ssize_t off = 0; off + C2H_REC_BYTES <= rlen; off += C2H_REC_BYTES)
+  {
+    const uint32_t *f = (const uint32_t *) (dma->buf_rd + off);
+
+    if ((f[0] == 0) && (f[1] == 0) && (f[7] == 0)) continue;
+
+    if ((f[7] >> 16) == C2H_FLAG_EOB)
+    {
+      c->eob++;
+
+      continue;
+    }
+
+    const uint32_t id   = f[0];
+    const uint32_t item = f[1];
+    const uint32_t tgt  = f[2] & 0xff;
+
+    uint8_t b[8], key[8], ct[8];
+
+    memcpy (b, c->pkey, 8);
+
+    if ((id < c->ring_jobs) && ((id % RING_PLANT) != 0)) job_base (id, c->amp_cnt, b);
+
+    for (uint32_t p = 0; p < c->amp_cnt; p++) b[p] = 0;
+
+    amp_key (b, c->amp_cnt, item, key);
+
+    hcfpga_deskpa_encrypt (key, c->pt, ct);
+
+    if ((id < c->ring_jobs) && ((id % RING_PLANT) == 0) && (item == c->want_item) && (tgt == 0) && (memcmp (ct, c->tct, 8) == 0))
+    {
+      c->good++;
+    }
+    else
+    {
+      c->bad++;
+
+      if (c->bad <= 8) printf ("[> BAD hit: job %u item %u target %u core %u\n", id, item, tgt, f[7] & 0xffff);
+    }
+  }
 }
 
 int main (int argc, char **argv)
@@ -276,7 +338,7 @@ int main (int argc, char **argv)
   dma.reader_enable = 1;
   dma.writer_enable = 1;
 
-  uint64_t good = 0, bad = 0;
+  check_t chk = { amp_cnt, ring_jobs, want_item, pkey, pt, tct, 0, 0, 0 };
 
   size_t wr_off = 0;
 
@@ -312,49 +374,7 @@ int main (int argc, char **argv)
       if (wr_off >= ring_bytes) wr_off = 0;
     }
 
-    if ((pr > 0) && (dma.fds.revents & POLLIN))
-    {
-      const ssize_t rlen = read (fd, dma.buf_rd, DMA_BUFFER_TOTAL_SIZE);
-
-      for (ssize_t off = 0; off + C2H_REC_BYTES <= rlen; off += C2H_REC_BYTES)
-      {
-        const uint32_t *f = (const uint32_t *) (dma.buf_rd + off);
-
-        if ((f[0] == 0) && (f[1] == 0) && (f[7] == 0)) continue;
-
-        if ((f[7] >> 16) == C2H_FLAG_EOB) continue;
-
-        const uint32_t id   = f[0];
-        const uint32_t item = f[1];
-        const uint32_t tgt  = f[2] & 0xff;
-
-        uint8_t b[8], key[8], ct[8];
-
-        if (id < ring_jobs)
-        {
-          memcpy (b, pkey, 8);
-
-          if ((id % RING_PLANT) != 0) job_base (id, amp_cnt, b);
-
-          for (uint32_t p = 0; p < amp_cnt; p++) b[p] = 0;
-        }
-
-        amp_key (b, amp_cnt, item, key);
-
-        hcfpga_deskpa_encrypt (key, pt, ct);
-
-        if ((id < ring_jobs) && ((id % RING_PLANT) == 0) && (item == want_item) && (tgt == 0) && (memcmp (ct, tct, 8) == 0))
-        {
-          good++;
-        }
-        else
-        {
-          bad++;
-
-          if (bad <= 8) printf ("[> BAD hit: job %u item %u target %u core %u\n", id, item, tgt, f[7] & 0xffff);
-        }
-      }
-    }
+    if ((pr > 0) && (dma.fds.revents & POLLIN)) take_hits (&dma, fd, &chk);
 
     if (now - t_tick >= 1000)
     {
@@ -381,7 +401,7 @@ int main (int argc, char **argv)
       }
 
       printf ("  t=%3llds  %10.3f Gkeys/s  jobs %u  hits %llu good %llu bad  %.1f C%s%s\n",
-        (long long) ((now - t0) / 1000), rate / 1e9, retired, (unsigned long long) good, (unsigned long long) bad, t,
+        (long long) ((now - t0) / 1000), rate / 1e9, retired, (unsigned long long) chk.good, (unsigned long long) chk.bad, t,
         (status & STATUS_THERM_STOP) ? "  THERMAL STOP" : "", (status & STATUS_LOST_HIT) ? "  LOST HIT" : "");
 
       fflush (stdout);
@@ -392,6 +412,36 @@ int main (int argc, char **argv)
 
   const uint32_t ret_end = litepcie_readl (fd, CSR_RETIRED);
   const uint32_t status  = litepcie_readl (fd, CSR_STATUS);
+
+  // The host sees C2H data DMA_BUFFER_PER_IRQ buffers at a time, a megabyte, so the last hits are
+  // still on their way. Arming a batch makes the device close it with end-of-batch records, padded
+  // to a whole interrupt's worth, which pushes them out.
+
+  litepcie_writel (fd, CSR_PAD_RECS, (DMA_BUFFER_PER_IRQ * DMA_BUFFER_SIZE) / C2H_REC_BYTES);
+  litepcie_writel (fd, CSR_BATCH_TARGET, 1);
+
+  const int64_t t_flush = get_time_ms ();
+
+  while ((chk.eob == 0) && ((get_time_ms () - t_flush) < 5000))
+  {
+    litepcie_dma_writer (fd, 1, &dma.writer_hw_count, &dma.writer_sw_count);
+    litepcie_dma_reader (fd, 1, &dma.reader_hw_count, &dma.reader_sw_count);
+
+    const int pr = poll (&dma.fds, 1, 100);
+
+    if ((pr > 0) && (dma.fds.revents & POLLOUT))
+    {
+      const ssize_t wn = write (fd, bw + wr_off, DMA_BUFFER_SIZE);
+
+      (void) wn;
+
+      wr_off += DMA_BUFFER_SIZE;
+
+      if (wr_off >= ring_bytes) wr_off = 0;
+    }
+
+    if ((pr > 0) && (dma.fds.revents & POLLIN)) take_hits (&dma, fd, &chk);
+  }
 
   dma.reader_enable = 0;
   dma.writer_enable = 0;
@@ -412,11 +462,11 @@ int main (int argc, char **argv)
   const double want_hits = jobs / RING_PLANT;
 
   printf ("[> %.0f jobs in %.1f s: %.3f Gkeys/s (%.1f Mkeys/s a core)\n", jobs, secs_scored, rate / 1e9, rate / 1e6 / (cores ? cores : 1));
-  printf ("[> hits: %llu good, %llu bad (about %.0f planted jobs ran), lost-hit flag %u\n",
-    (unsigned long long) good, (unsigned long long) bad, want_hits, (status & STATUS_LOST_HIT) ? 1 : 0);
+  printf ("[> hits: %llu good, %llu bad (about %.0f planted jobs ran by the scored end), lost-hit flag %u\n",
+    (unsigned long long) chk.good, (unsigned long long) chk.bad, want_hits, (status & STATUS_LOST_HIT) ? 1 : 0);
   printf ("[> die temperature: %.1f C at most, thermal stop held %llu of the 1 s readings\n", temp_max, (unsigned long long) therm_ticks);
 
-  const bool pass = (bad == 0) && (good > 0) && ((status & STATUS_LOST_HIT) == 0);
+  const bool pass = (chk.bad == 0) && (chk.good > 0) && ((status & STATUS_LOST_HIT) == 0);
 
   printf ("[> %s\n", pass ? "PASS" : "FAIL");
 
