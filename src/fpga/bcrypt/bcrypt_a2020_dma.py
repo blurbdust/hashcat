@@ -148,11 +148,14 @@ class BcryptSoC(SoCMini):
         ]
 
         # Extra setup uncertainty squeezes placement. Only the fitter sees it, so the Timing Analyzer
-        # reports the design's real slack.
+        # reports the design's real slack. With two hash cores the round loop runs on core_clk.
         if placement_margin:
             platform.toolchain.additional_sdc_commands += [
                 "if {$::TimeQuestInfo(nameofexecutable) eq \"quartus_fit\"} {",
-                f"    set_clock_uncertainty -add -setup -from [get_clocks sys_clk] -to [get_clocks sys_clk] {placement_margin:.3f}",
+            ] + [
+                f"    set_clock_uncertainty -add -setup -from [get_clocks {c}] -to [get_clocks {c}] {placement_margin:.3f}"
+                for c in ["sys_clk"] + (["core_clk"] if cslow == 2 else [])
+            ] + [
                 "}",
             ]
 
