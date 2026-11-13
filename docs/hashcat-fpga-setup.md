@@ -12,8 +12,8 @@ The driver procedure targets **Debian-based distributions** such as Debian, Ubun
 
 1. Install a backend that generates the candidates. A CPU OpenCL runtime is enough, see [A standard compute device is still required](#a-standard-compute-device-is-still-required).
 2. Find your board in the table under [Why board-specific setup is required](#why-board-specific-setup-is-required) and open its section under [Per-board setup](#per-board-setup). That section lists every step the board needs, in order.
-3. Download the bitstream for your board and check it against `manifest.json`, see [Get the bitstream](#2-get-the-bitstream).
-4. You program a ZC706, YPCB or Enigma X1 yourself, then reboot and build the kernel driver. hashcat programs the Alveo U50, the ZTEX boards and the Arty Z7 itself once the file is installed.
+3. Download the bitstream for your board and check it against `manifest.json`, see [Get the bitstream](#2-get-the-bitstream). The ForestKitten 33 has none published. Its section shows how to build one.
+4. You program a ZC706, YPCB, Enigma X1 or ForestKitten 33 yourself, then reboot and build the kernel driver. hashcat programs the Alveo U50, the ZTEX boards and the Arty Z7 itself once the file is installed.
 5. Run mode 75000, for example `hashcat -m 75000 hashes.txt wordlist.txt`.
 
 The rest of this guide explains each step in detail. [Troubleshooting](#troubleshooting) covers the failures the bridge reports.
@@ -61,12 +61,13 @@ An FPGA must be configured with a **bitstream** before its hardware interface ex
 | Xilinx ZC706 | PCIe | you, out of band | [ZC706](#zc706) |
 | YPCB-00338-1P1 | PCIe | you, out of band | [YPCB-00338-1P1](#ypcb-00338-1p1) |
 | Enigma X1 | PCIe | you, out of band | [Enigma X1](#enigma-x1) |
+| SQRL ForestKitten 33 | PCIe | you, out of band | [ForestKitten 33](#forestkitten-33) |
 | Alveo U50 | PCIe | **hashcat, every run** | [Alveo U50](#alveo-u50) |
 | ZTEX USB-FPGA 1.15y | USB | **hashcat, when not configured** | [ZTEX 1.15y](#ztex-115y) |
 | ZTEX USB-FPGA 2.13 | USB | **hashcat, when not configured** | [ZTEX 2.13](#ztex-213) |
 | Arty Z7-20 | Ethernet | **hashcat, when not configured** | [Arty Z7-20](#arty-z7-20) |
 
-You program three of these boards yourself, and hashcat identifies the design already running on each FPGA. Programming removes and recreates the PCIe endpoint, so the host has to **reboot** before it can use the device. Those three also need a locally built **kernel driver**, signed with a trusted key when Secure Boot is enabled.
+You program four of these boards yourself, and hashcat identifies the design already running on each FPGA. Programming removes and recreates the PCIe endpoint, so the host has to **reboot** before it can use the device. Those four also need a locally built **kernel driver**, signed with a trusted key when Secure Boot is enabled.
 
 hashcat uploads the design to the other four boards itself. The Alveo is programmed at every start that uses it. A ZTEX board or an Arty that an earlier run left running the design is reused, so only the first start after a power cycle uploads to it. An Arty bitstream built before its shell reported an identity is the exception and is programmed at every start that uses the board. A board that `-d` leaves out is listed but not driven: hashcat reads its identity and leaves it free for another hashcat run. An Arty that is left out is not programmed when it already runs a design of this build's ABI, but a blank Arty, or one running another design, is programmed during discovery whether or not `-d` selects it, because hashcat cannot identify it otherwise. The bitstream must be installed before the bridge can initialise. The configuration is volatile, so a power cycle clears it. The ZTEX boards and Arty need no kernel driver. The Alveo requires XRT's kernel drivers. Programming these boards does not require a reboot.
 
@@ -76,13 +77,13 @@ The bridge distinguishes these failure modes and directs the user to the applica
 
 ## PCIe host requirements
 
-The ZC706, YPCB-00338-1P1 and Enigma X1 require a **Gen2 x1 link and a 1 MB memory window**. The following sections explain the host requirements for these three boards.
+The ZC706, YPCB-00338-1P1, Enigma X1 and ForestKitten 33 need **an x1 link and a 1 MB memory window**. The published bitstreams run at Gen2, and the ForestKitten 33 builds at Gen3. The following sections explain the host requirements for these four boards.
 
 **The Alveo U50 has different host requirements.** Its PCIe endpoint belongs to AMD's Alveo shell, which controls the link width, BARs and DMA engine. hashcat supplies the kernel inside the shell. The U50 is a Gen3 x16 card with a much larger memory footprint. It requires Above 4G Decoding and cannot run on an x1 riser. Follow AMD's host requirements for this board.
 
 ### Link width
 
-The published bitstreams for these three boards train at x1. A bcrypt record is 8 to 80 bytes in, depending on the password length, and 32 bytes out, so 100k H/s is at most about 11 MB/s against roughly 400 MB/s for Gen2 x1. Width has never been the constraint.
+The published bitstreams for the first three train at x1, and the ForestKitten 33's x4 build trains down to whatever the slot or riser provides. A bcrypt record is 8 to 80 bytes in, depending on the password length, and 32 bytes out, so 100k H/s is at most about 11 MB/s against roughly 400 MB/s for Gen2 x1. Width has never been the constraint.
 
 **Any slot works.** A slot wider than x1 trains the link down to x1 by itself. The PCIe specification requires every link to support x1, so an x1 card in an x4, x8 or x16 slot is a supported and ordinary configuration. Check the negotiated width with `lspci`:
 
@@ -101,7 +102,7 @@ The width is a build choice, not a wire format. The `PCIE_LANES` build variable 
 
 ### Memory window, and what breaks when it runs out
 
-Each of the three exposes one 1 MB BAR, 32-bit and non-prefetchable, so it has to live in the host's memory window below 4 GB. That window is shared with every other device, and the things that fill it are a modern GPU and an Alveo card: an Intel Arc A770 asks for a 256 MB window, or 16 GB with Resizable BAR enabled.
+Each of the four exposes one 1 MB BAR, non-prefetchable, so it has to live in the host's memory window below 4 GB. That window is shared with every other device, and the things that fill it are a modern GPU and an Alveo card: an Intel Arc A770 asks for a 256 MB window, or 16 GB with Resizable BAR enabled.
 
 When the window cannot hold everything, the firmware does not report an error. It drops a device. The symptom is **an unrelated device disappearing when a card is added or moved**, and an onboard network adapter going missing is the common case. The FPGA is not at fault and neither is its driver.
 
@@ -199,6 +200,28 @@ This PCILeech DMA card retains its factory firmware in SPI flash. Load the hashc
 3. Reboot, then [build the driver](#4-build-and-load-the-kernel-driver) and [set permissions](#5-device-permissions).
 
 If hashcat does not report the card, it may still be running its PCILeech firmware. In that state, `lspci` identifies it as Ethernet controller `10ee:0666`, which hashcat ignores because it is not running a supported design.
+
+## ForestKitten 33
+
+SQRL ForestKitten 33, Virtex UltraScale+ `xcvu33p` with HBM, PCIe Gen3 x4 on an x16 edge connector. **Program this board manually after each power cycle.**
+
+No bitstream is published for this board. Build one from source with Vivado and a license that covers the part. The build was tested with Vivado 2025.1:
+
+```
+make -C src/fpga bcrypt BOARD=fk33
+```
+
+The default build is 760 cores at 175 MHz, two per hash core as on the YPCB. Block RAM holds the S-boxes of 600 of them and UltraRAM those of the other 160, see `NUM_CORES_URAM` in `src/fpga/Makefile`. The HBM is not used.
+
+The card keeps its factory design in its configuration flash. Load the hashcat design into SRAM over JTAG, which leaves the flash untouched:
+
+1. If `lspci` lists the card, unload the driver and remove the device: `echo 1 > /sys/bus/pci/devices/<address>/remove`.
+2. Load it through the card's FT2232H USB port with `make -C src/fpga load BOARD=fk33`, which runs OpenOCD. LiteX-Boards uses OpenOCD for this card because openFPGALoader reports `done 1` on it while the design is not configured.
+3. Reboot, then [build the driver](#4-build-and-load-the-kernel-driver) and [set permissions](#5-device-permissions). `lspci -nn -d 10ee:` should list the card as `10ee:9034`.
+
+With its factory design the card is `1e24:1533`, which hashcat ignores.
+
+hashcat reports the die temperature and the supply voltages from the FPGA's system monitor, and the FPGA's DNA as the board serial.
 
 ## Alveo U50
 
@@ -362,7 +385,7 @@ The board uses its factory ZTEX microcontroller firmware, so no replacement firm
 
    The rule matches only the vendor ID because the product ID and product string change when hashcat uploads the FPGA design.
 
-No kernel driver or reboot is required. Step 5, [Device permissions](#5-device-permissions), applies only to the three LitePCIe cards.
+No kernel driver or reboot is required. Step 5, [Device permissions](#5-device-permissions), applies only to the four LitePCIe cards.
 
 **Without this rule, hashcat cannot distinguish a 2.13 from a 1.15y.** Identification requires opening the device and reading its descriptor, so permission failures produce a generic ZTEX diagnostic.
 
@@ -376,7 +399,7 @@ No kernel driver or reboot is required. Step 5, [Device permissions](#5-device-p
 
 Its Ethernet connection requires a different setup from the other boards.
 
-Every other supported board gives the fabric a link of its own. The three PCIe cards and the Alveo have a bus, and the ZTEX 2.13 has a USB controller wired to PL pins. An Arty Z7 has neither. Its only high bandwidth connection is an Ethernet PHY, and the board wires that to the PS through MIO 16..27 with MDIO on MIO 52..53. Those are processor pins. The fabric cannot reach the wire.
+Every other supported board gives the fabric a link of its own. The four LitePCIe cards and the Alveo have a bus, and the ZTEX 2.13 has a USB controller wired to PL pins. An Arty Z7 has neither. Its only high bandwidth connection is an Ethernet PHY, and the board wires that to the PS through MIO 16..27 with MDIO on MIO 52..53. Those are processor pins. The fabric cannot reach the wire.
 
 So the link runs through the processor. hashcat loads a small application into the Zynq's on-chip memory, and that application feeds the bcrypt array and carries the Ethernet connection. The USB cable is used to get both pieces in, and after that the candidates travel over the network.
 
@@ -439,7 +462,7 @@ HCFPGA_ARTYZ7_IP_<serial>=10.0.5.200 hashcat -m 75000 hash.txt wordlist.txt
 
 All addresses stay inside the first address's /24, so a range starting at `.1` holds up to 254 boards. A board that does not fit is named and left out of the run.
 
-No kernel driver and no reboot is required. Step 5, [Device permissions](#5-device-permissions), applies only to the three LitePCIe cards.
+No kernel driver and no reboot is required. Step 5, [Device permissions](#5-device-permissions), applies only to the four LitePCIe cards.
 
 ### Cooling
 
@@ -465,13 +488,14 @@ The commercial grade junction limit for this part is 85 C, so the 80 C abort exi
 
 ## 1. Hardware and tools
 
-This numbered procedure covers the three manually programmed boards. The table lists all seven boards and directs each to its setup procedure.
+This numbered procedure covers the four manually programmed boards. The table lists all eight boards and directs each to its setup procedure.
 
 | Board | FPGA | Link | Programmed by | Route |
 |---|---|---|---|---|
 | Xilinx ZC706 | xc7z045 | PCIe Gen2 x1 | JTAG, or SD card | this procedure |
 | YPCB-00338-1P1 | xc7k480t | PCIe Gen2 x1 | BPI flash | this procedure |
 | Enigma X1 | xc7a75t | PCIe Gen2 x1 | JTAG only | this procedure |
+| SQRL ForestKitten 33 | xcvu33p | PCIe Gen3 x4, trains down to x1 | JTAG | this procedure, and [ForestKitten 33](#forestkitten-33) |
 | Alveo U50 | xcu50 | PCIe Gen3 x16 | hashcat itself | [Alveo U50](#alveo-u50) |
 | ZTEX USB-FPGA 1.15y | 4x xc6slx150 | USB 2.0 | hashcat itself | [ZTEX 1.15y in detail](#setting-up-a-ztex-115y-in-detail) |
 | ZTEX USB-FPGA 2.13 | xc7a35t and later | USB 2.0 | hashcat itself | [ZTEX 2.13](#ztex-213) |
@@ -792,9 +816,9 @@ If it is enabled and you have no enrolled key, create and enrol one with `mokuti
 
 ### One module drives every board, including a mixed system
 
-**One driver supports all three board types.** A host with a YPCB, ZC706 and Enigma X1 runs one module for all three. Changing boards does not require a driver rebuild.
+**One driver supports all four board types.** A host with a YPCB, ZC706, Enigma X1 and ForestKitten 33 runs one module for all four. Changing boards does not require a driver rebuild.
 
-Every published design that uses this driver generates the same CSR register map. The stored `csr.h` files differ only in generated timestamps. The module reads LiteX peripherals at the same addresses on all three boards, including DMA, MSI, the SoC reset, the identifier ROM, ICAP, and flash SPI. Their `soc.h` files also carry board-specific identities and clock frequencies.
+Every published design that uses this driver generates the same CSR register map. The stored `csr.h` files differ only in generated timestamps. The module reads LiteX peripherals at the same addresses on all four boards, including DMA, MSI, the SoC reset, the identifier ROM, ICAP, and flash SPI. Their `soc.h` files also carry board-specific identities and clock frequencies.
 
 The other four boards do not use this driver at all. The Alveo U50 goes through XRT, the two ZTEX boards over USB, and the Arty Z7 over Ethernet.
 
@@ -1040,9 +1064,10 @@ make -C src/fpga bcrypt CORES=240
 ```
 make -C src/fpga bcrypt BOARD=ypcb                    # 760 cores @ 115 MHz, two per core, as published
 make -C src/fpga bcrypt BOARD=enigmax1                # 32 cores @ 125 MHz, as published
+make -C src/fpga bcrypt BOARD=fk33                    # 760 cores @ 175 MHz, two per core, not published
 ```
 
-Every published LitePCIe bitstream is Gen2 x1, and no current algorithm comes close to needing more. `PCIE_LANES` overrides that on the two boards wired wider, the YPCB up to x8 and the ZC706 up to x4. The Enigma X1's connector is physically x1, so it has no width to choose.
+Every published LitePCIe bitstream is Gen2 x1, and no current algorithm comes close to needing more. `PCIE_LANES` overrides that on the two boards wired wider, the YPCB up to x8 and the ZC706 up to x4. The Enigma X1's connector is physically x1, so it has no width to choose. The ForestKitten 33, which has no published bitstream, builds at Gen3 x4 and takes `PCIE_LANES=8`.
 
 Width is a build choice and not a wire format. A wider card reports the same register map, talks to the same driver and the same bridge, and needs no new headers. The width lands in the build directory name, so two widths cannot overwrite each other's bitstream.
 
