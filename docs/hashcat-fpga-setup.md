@@ -211,7 +211,7 @@ No bitstream is published for this board. Build one from source with Vivado and 
 make -C src/fpga bcrypt BOARD=fk33
 ```
 
-The default build is 760 cores at 175 MHz, two per hash core as on the YPCB. Block RAM holds the S-boxes of 600 of them and UltraRAM those of the other 160, see `NUM_CORES_URAM` in `src/fpga/Makefile`. The HBM is not used.
+The default build is 760 cores at 175 MHz, two per hash core as on the YPCB. Block RAM holds the S-boxes of 600 of them and UltraRAM those of the other 160, see `NUM_CORES_URAM` in `src/fpga/Makefile`. The HBM is not used. Timing closes with about 30 ps to spare, after Vivado's leaf clock delay optimization in the router. If a rebuild reports negative setup slack, `CLK=170` has closed too, at about 3% less speed.
 
 The card keeps its factory design in its configuration flash. Load the hashcat design into SRAM over JTAG, which leaves the flash untouched:
 
