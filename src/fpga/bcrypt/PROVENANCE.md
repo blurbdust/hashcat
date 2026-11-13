@@ -132,8 +132,9 @@ The ZTEX 1.15y bitstream and firmware are John the Ripper's own files, redistrib
 | `ps_app/`, `software/user/dma_ek_test.c` | the Arty Z7 application and the PCIe self test |
 | `software/user/hcfpga_step.c` | the one-batch diagnostic and the wave model measurement |
 | `hcfpga_stratixv.py`, `gateware/stratixv/hcfpga_sv_tsd.v` | the Stratix V temperature and chip ID registers, the PCIe hard IP settings and the flash image conversion |
+| `hcfpga_stratix10.py` | the Stratix 10 temperature and chip ID registers, read from the Secure Device Manager |
 | testbenches and scripts in `gateware/bcrypt/` and `bcrypt_core/` | `tb_core`, `tb_core_c2`, `tb_datapath`, `tb_hetero`, `tb_cmp`, `tb_expand`, `tb_feed_throughput`, their vector generators, `bcrypt_ref.py` and the `run_*.sh` scripts. `run_iverilog_sim.sh` is the merge gate |
 
 ## Toolchain
 
-LiteX, litex-boards and LitePCIe, openFPGALoader to program boards, Vivado or Quartus to synthesise and iverilog to simulate. The tools are used unmodified, with one exception. Writing the Storey Peak's flash needs an openFPGALoader that addresses it with 4-byte commands, which no release does yet. The Stratix V chip ID reader is Intel's `altchip_id`, taken from the Quartus installation at build time. The LitePCIe kernel driver is built with the patches named above.
+LiteX, litex-boards and LitePCIe, openFPGALoader to program boards, Vivado or Quartus to synthesise and iverilog to simulate. The tools are used unmodified, with one exception. Writing the Storey Peak's flash needs an openFPGALoader that addresses it with 4-byte commands, which no release does yet. The Stratix V chip ID reader is Intel's `altchip_id`, taken from the Quartus installation at build time. On Stratix 10, Quartus Prime Pro generates Intel's Reset Release, Temperature Sensor and Chip ID IPs and the PCIe hard IP at build time. The LitePCIe kernel driver is built with the patches named above.
