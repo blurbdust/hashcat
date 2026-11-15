@@ -30,7 +30,9 @@ module hcfpga_des_kpa_top #(
   // Accepted for the shared wrapper; this engine always compares in full.
   parameter WITH_CMP = 1,
 
-  parameter integer GROUP = 8,
+  // Cores per group and groups per region of the engine's bus and collector tree.
+  parameter integer GROUP  = 8,
+  parameter integer REGION = 8,
 
   parameter integer IDLE_FLUSH = 4096,
 
@@ -120,7 +122,7 @@ module hcfpga_des_kpa_top #(
   wire       therm_stop;
   wire       lost;
 
-  hcfpga_des_kpa_engine #(.NUM_CORES(NUM_CORES), .NUM_TARGETS(NUM_TARGETS), .GROUP(GROUP), .IDLE_FLUSH(IDLE_FLUSH),
+  hcfpga_des_kpa_engine #(.NUM_CORES(NUM_CORES), .NUM_TARGETS(NUM_TARGETS), .GROUP(GROUP), .REGION(REGION), .IDLE_FLUSH(IDLE_FLUSH),
                           .THERM_HOT_C(THERM_HOT_C), .THERM_COOL_C(THERM_COOL_C)) engine (
     .CLK(CLK), .rst(rst),
     .die_temp(die_temp), .therm_stop(therm_stop), .lost(lost),

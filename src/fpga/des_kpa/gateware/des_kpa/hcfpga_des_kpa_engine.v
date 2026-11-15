@@ -21,7 +21,8 @@
 //              loader fills a parity only once the collector has retired its previous wave.
 //   generator  digit counters and the four 256-entry tables (written through amp_tab: pos in bits
 //              17:16, index in 15:8, the character in 7:0); the amplifier bytes go out on a bus that
-//              is registered at the root and once per group of GROUP cores.
+//              is registered at the root, twice per region of REGION groups and once per group of
+//              GROUP cores.
 //   collector  sweeps the cores without end, sending every hit their FIFOs hold. Once a wave has
 //              drained, the sweep after that retires its jobs.
 //
@@ -46,7 +47,9 @@
 module hcfpga_des_kpa_engine #(
   parameter integer NUM_CORES   = 1,
   parameter integer NUM_TARGETS = 4,
+  // Cores per group and groups per region, both powers of two.
   parameter integer GROUP       = 8,
+  parameter integer REGION      = 8,
   parameter integer IDLE_FLUSH  = 4096,
 
   parameter integer THERM_HOT_C  = 85,
@@ -92,12 +95,19 @@ module hcfpga_des_kpa_engine #(
   localparam integer SW  = (GROUP <= 1) ? 1 : $clog2(GROUP);
   localparam integer TW  = (NUM_TARGETS <= 2) ? 1 : $clog2(NUM_TARGETS);
 
+  localparam integer NR  = (NG + REGION - 1) / REGION;
+  localparam integer RW  = (NR <= 1) ? 1 : $clog2(NR);
+  localparam integer RGW = (REGION <= 1) ? 1 : $clog2(REGION);
+
+  // A core index as the collector's selection splits it: core in group, group in region, region.
+  localparam integer XW  = SW + RGW + RW;
+
   localparam integer HIT_DEPTH = NUM_TARGETS;
 
   // The core's latency, amplifier bus to compare (hcfpga_des_kpa_core.v), and what lies before it:
-  // the table read, the root register and the group register.
+  // the table read and its output register, the root register, the region's two and the group's.
   localparam integer CORE_LAT = 19;
-  localparam integer BUS_LAT  = 3;
+  localparam integer BUS_LAT  = 6;
   localparam integer DRAIN    = BUS_LAT + CORE_LAT + 4;
 
   localparam IW = $clog2(IDLE_FLUSH + 1);
@@ -108,7 +118,7 @@ module hcfpga_des_kpa_engine #(
   `include "des_kpa_tables.vh"
 
   integer i, p;
-  genvar  c, g, b;
+  genvar  c, g, b, rg;
 
   // ----------------------------------------------------------------------------------------------
   // Thermal stop
@@ -174,8 +184,15 @@ module hcfpga_des_kpa_engine #(
   reg [64*NUM_TARGETS-1:0] tgt_ip_q = 0;
   reg [NUM_TARGETS-1:0]    tgt_en_q = 0;
 
+  // The amplifier's shape, registered once like the batch: the host writes it before the records.
+  reg [2:0]  amp_cnt_q  = 0;
+  reg [31:0] amp_lens_q = 0;
+
   always @(posedge CLK)
   begin
+    amp_cnt_q  <= amp_cnt;
+    amp_lens_q <= amp_lens;
+
     pt_ip_q <= ip64(block(pt));
     for (i = 0; i < NUM_TARGETS; i = i + 1)
       tgt_ip_q[64*i +: 64] <= ip64(block(tgt_ct[64*i +: 64]));
@@ -224,7 +241,7 @@ module hcfpga_des_kpa_engine #(
   always @(*)
   begin
     for (i = 0; i < 8; i = i + 1)
-      ld_word[55 - 7*i -: 7] = ((i < rec_len) && (i >= amp_cnt)) ? pw_bytes[63 - 8*i -: 7] : 7'd0;
+      ld_word[55 - 7*i -: 7] = ((i < rec_len) && (i >= amp_cnt_q)) ? pw_bytes[63 - 8*i -: 7] : 7'd0;
   end
 
   // The record goes to the cores through two registers, root and group.
@@ -272,7 +289,7 @@ module hcfpga_des_kpa_engine #(
   generate
   for (b = 0; b < 4; b = b + 1)
   begin : lens
-    assign len_m1[b] = (b < amp_cnt) ? amp_lens[8*b +: 8] : 8'd0;
+    assign len_m1[b] = (b < amp_cnt_q) ? amp_lens_q[8*b +: 8] : 8'd0;
   end
   endgenerate
 
@@ -429,6 +446,21 @@ module hcfpga_des_kpa_engine #(
     g1_parity <= w_parity;
   end
 
+  // G1b: the tables' output register.
+  reg [6:0]  g1b_ch [0:3];
+  reg [31:0] g1b_item   = 0;
+  reg        g1b_valid  = 0;
+  reg        g1b_parity = 0;
+
+  always @(posedge CLK)
+  begin
+    for (p = 0; p < 4; p = p + 1)
+      g1b_ch[p] <= g1_ch[p];
+    g1b_item   <= g1_item;
+    g1b_valid  <= (rst == 1'b0) & g1_valid;
+    g1b_parity <= g1_parity;
+  end
+
   // The root of the bus (G2): the amplifier's bytes at the front of the key, zero past amp_cnt.
   reg [27:0] g2_hi     = 0;
   reg [31:0] g2_item   = 0;
@@ -441,12 +473,12 @@ module hcfpga_des_kpa_engine #(
 
   always @(posedge CLK)
   begin
-    if (g1_valid == 1'b1)
+    if (g1b_valid == 1'b1)
       for (p = 0; p < 4; p = p + 1)
-        g2_hi[27 - 7*p -: 7] <= (p < amp_cnt) ? g1_ch[p] : 7'd0;
-    g2_item   <= g1_item;
-    g2_valid  <= (rst == 1'b0) & g1_valid;
-    g2_parity <= g1_parity;
+        g2_hi[27 - 7*p -: 7] <= (p < amp_cnt_q) ? g1b_ch[p] : 7'd0;
+    g2_item   <= g1b_item;
+    g2_valid  <= (rst == 1'b0) & g1b_valid;
+    g2_parity <= g1b_parity;
 
     g2_ws     <= (rst == 1'b0) & wave_start;
     g2_jobs   <= w_jobs;
@@ -454,8 +486,14 @@ module hcfpga_des_kpa_engine #(
   end
 
   // ----------------------------------------------------------------------------------------------
-  // Groups and cores
+  // Regions, groups and cores
   // ----------------------------------------------------------------------------------------------
+
+  // Everything the cores share leaves the root on one bus and reaches them through two registers per
+  // region of REGION groups, then the group's own. The region's first copy sits between the root and
+  // its groups and the second beside them, so no hop has to cross the chip. The collector's selection
+  // and its pop strobe ride the same bus, and the hits and the lost flags come back through two
+  // registers per region.
 
   wire [NUM_CORES-1:0] c_hit_valid;
   wire [31:0]          c_hit_item   [0:NUM_CORES-1];
@@ -463,118 +501,241 @@ module hcfpga_des_kpa_engine #(
   wire [TW-1:0]        c_hit_tgt    [0:NUM_CORES-1];
   wire [NUM_CORES-1:0] c_lost;
 
-  reg  [NUM_CORES-1:0] c_pop = 0;
+  // The collector's selection (a core), and its pop of that core's FIFO head.
+  reg  [CW-1:0] sel   = 0;
+  reg           pop_q = 0;
 
-  // The collector's selection, through a register per group and one across groups.
-  reg  [CW-1:0] sel = 0;
+  wire [XW-1:0] sel_x = sel;
 
+  localparam integer BW = 64 + 64*NUM_TARGETS + NUM_TARGETS + 28 + 1 + 32 + 1 + 1 + (CW + 1) + 56 + 1 + CW + XW + 1;
+
+  wire [BW-1:0] root_bus = { pt_ip_q, tgt_ip_q, tgt_en_q,
+                             g2_hi, g2_valid, g2_item, g2_parity,
+                             g2_ws, g2_jobs,
+                             ld_base_q, ld_we_q, ld_core_q,
+                             sel_x, pop_q };
+
+  // The first mux level, per group, and the second, per region, with its second register.
   reg  [NG-1:0] l1_valid  = 0;
   reg  [31:0]   l1_item   [0:NG-1];
   reg  [NG-1:0] l1_parity = 0;
   reg  [TW-1:0] l1_tgt    [0:NG-1];
 
+  reg  [NR-1:0] lr_valid  = 0;
+  reg  [31:0]   lr_item   [0:NR-1];
+  reg  [NR-1:0] lr_parity = 0;
+  reg  [TW-1:0] lr_tgt    [0:NR-1];
+
+  reg  [NR-1:0] lb_valid  = 0;
+  reg  [31:0]   lb_item   [0:NR-1];
+  reg  [NR-1:0] lb_parity = 0;
+  reg  [TW-1:0] lb_tgt    [0:NR-1];
+
+  reg  [NG-1:0] g_lost = 0;
+  reg  [NR-1:0] r_lost = 0;
+  reg  [NR-1:0] b_lost = 0;
+  reg           lost_q = 0;
+
   generate
-  for (g = 0; g < NG; g = g + 1)
-  begin : grp
-    localparam integer C0 = g * GROUP;
-    localparam integer CN = ((C0 + GROUP) <= NUM_CORES) ? GROUP : (NUM_CORES - C0);
+  for (rg = 0; rg < NR; rg = rg + 1)
+  begin : rgn
+    localparam integer G0 = rg * REGION;
+    localparam integer GN = ((G0 + REGION) <= NG) ? REGION : (NG - G0);
 
-    // The group's copy of everything the cores share. Every group's copy holds the same values, so
-    // synthesis would merge them into one register driving every core on the chip: dont_merge keeps
-    // one per group, next to its cores.
-    (* dont_merge *) reg [63:0]               pt_ip  = 0;
-    (* dont_merge *) reg [64*NUM_TARGETS-1:0] tgt_ip = 0;
-    (* dont_merge *) reg [NUM_TARGETS-1:0]    tgt_en = 0;
-
-    (* dont_merge *) reg [27:0] amp_hi    = 0;
-    (* dont_merge *) reg        amp_valid = 0;
-    (* dont_merge *) reg [31:0] bus_item  = 0;
-    (* dont_merge *) reg        bus_parity = 0;
-
-    (* dont_merge *) reg        ws    = 0;
-    (* dont_merge *) reg [CW:0] wjobs = 0;
-    (* dont_merge *) reg        grst  = 1;
-
-    (* dont_merge *) reg [55:0] ld_base = 0;
-    (* dont_merge *) reg        ld_we   = 0;
-    (* dont_merge *) reg [CW-1:0] ld_core = 0;
+    // Every region's copies hold the same values, so synthesis would merge them back into one
+    // register driving the whole chip: dont_merge keeps them apart, as for the groups below.
+    (* dont_merge *) reg [BW-1:0] bus_a = 0;
+    (* dont_merge *) reg [BW-1:0] bus_b = 0;
+    (* dont_merge *) reg          rst_a = 1;
+    (* dont_merge *) reg          rst_b = 1;
 
     always @(posedge CLK)
     begin
-      pt_ip      <= pt_ip_q;
-      tgt_ip     <= tgt_ip_q;
-      tgt_en     <= tgt_en_q;
-
-      amp_hi     <= g2_hi;
-      amp_valid  <= g2_valid;
-      bus_item   <= g2_item;
-      bus_parity <= g2_parity;
-
-      ws         <= g2_ws;
-      wjobs      <= g2_jobs;
-      grst       <= g2_rst;
-
-      ld_base    <= ld_base_q;
-      ld_we      <= ld_we_q;
-      ld_core    <= ld_core_q;
+      bus_a <= root_bus;
+      bus_b <= bus_a;
+      rst_a <= g2_rst;
+      rst_b <= rst_a;
     end
 
-    // The item each core holds in C2: the bus, CORE_LAT cycles later, a delay line per group for the
-    // same reason.
-    (* dont_merge *) reg [32:0] trk [0:CORE_LAT-1];
+    wire [63:0]               r_pt_ip;
+    wire [64*NUM_TARGETS-1:0] r_tgt_ip;
+    wire [NUM_TARGETS-1:0]    r_tgt_en;
+    wire [27:0]               r_hi;
+    wire                      r_valid;
+    wire [31:0]               r_item;
+    wire                      r_parity;
+    wire                      r_ws;
+    wire [CW:0]               r_jobs;
+    wire [55:0]               r_ld_base;
+    wire                      r_ld_we;
+    wire [CW-1:0]             r_ld_core;
+    wire [XW-1:0]             r_sel;
+    wire                      r_pop;
+
+    assign { r_pt_ip, r_tgt_ip, r_tgt_en,
+             r_hi, r_valid, r_item, r_parity,
+             r_ws, r_jobs,
+             r_ld_base, r_ld_we, r_ld_core,
+             r_sel, r_pop } = bus_b;
+
+    // The group within the region that the selection names, delayed to meet l1.
+    (* dont_merge *) reg [RGW-1:0] r_sel_g1 = 0;
+    (* dont_merge *) reg [RGW-1:0] r_sel_g2 = 0;
 
     always @(posedge CLK)
     begin
-      trk[0] <= {bus_parity, bus_item};
-      for (i = 1; i < CORE_LAT; i = i + 1)
-        trk[i] <= trk[i - 1];
+      r_sel_g1 <= r_sel[SW +: RGW];
+      r_sel_g2 <= r_sel_g1;
     end
 
-    wire [32:0] trk_c2 = trk[CORE_LAT - 1];
+    for (g = G0; g < G0 + GN; g = g + 1)
+    begin : grp
+      localparam integer C0 = g * GROUP;
+      localparam integer CN = ((C0 + GROUP) <= NUM_CORES) ? GROUP : (NUM_CORES - C0);
 
-    for (c = C0; c < C0 + CN; c = c + 1)
-    begin : core
-      localparam [CW:0] CI = c;
+      localparam [RGW+RW-1:0] GI = g;
 
-      hcfpga_des_kpa_core #(.NUM_TARGETS(NUM_TARGETS), .HIT_DEPTH(HIT_DEPTH)) u (
-        .CLK(CLK), .rst(grst),
-        .ld_we(ld_we & (ld_core == CI[CW-1:0])), .ld_base(ld_base),
-        .wave_start(ws), .job_valid(CI < wjobs),
-        .pt_ip(pt_ip), .tgt_ip(tgt_ip), .tgt_en(tgt_en),
-        .amp_hi(amp_hi), .amp_valid(amp_valid),
-        .trk_item(trk_c2[31:0]), .trk_parity(trk_c2[32]),
-        .hit_valid(c_hit_valid[c]), .hit_item(c_hit_item[c]), .hit_parity(c_hit_parity[c]),
-        .hit_tgt(c_hit_tgt[c]), .hit_pop(c_pop[c]),
-        .lost(c_lost[c])
-      );
-    end
+      // The group's copy of everything the cores share, next to its cores.
+      (* dont_merge *) reg [63:0]               pt_ip  = 0;
+      (* dont_merge *) reg [64*NUM_TARGETS-1:0] tgt_ip = 0;
+      (* dont_merge *) reg [NUM_TARGETS-1:0]    tgt_en = 0;
 
-    // First level of the collector's mux.
-    wire [SW-1:0] s = sel[SW-1:0];
-    wire [CW:0]   cs = C0 + s;
+      (* dont_merge *) reg [27:0] amp_hi    = 0;
+      (* dont_merge *) reg        amp_valid = 0;
+      (* dont_merge *) reg [31:0] bus_item  = 0;
+      (* dont_merge *) reg        bus_parity = 0;
 
-    always @(posedge CLK)
-    begin
-      if (cs < C0 + CN)
+      (* dont_merge *) reg        ws    = 0;
+      (* dont_merge *) reg [CW:0] wjobs = 0;
+      (* dont_merge *) reg        grst  = 1;
+
+      (* dont_merge *) reg [55:0] ld_base = 0;
+      (* dont_merge *) reg        ld_we   = 0;
+      (* dont_merge *) reg [CW-1:0] ld_core = 0;
+
+      (* dont_merge *) reg [SW-1:0] g_sel = 0;
+      (* dont_merge *) reg          g_pop = 0;
+
+      always @(posedge CLK)
       begin
-        l1_valid[g]  <= c_hit_valid[cs[CW-1:0]];
-        l1_item[g]   <= c_hit_item[cs[CW-1:0]];
-        l1_parity[g] <= c_hit_parity[cs[CW-1:0]];
-        l1_tgt[g]    <= c_hit_tgt[cs[CW-1:0]];
+        pt_ip      <= r_pt_ip;
+        tgt_ip     <= r_tgt_ip;
+        tgt_en     <= r_tgt_en;
+
+        amp_hi     <= r_hi;
+        amp_valid  <= r_valid;
+        bus_item   <= r_item;
+        bus_parity <= r_parity;
+
+        ws         <= r_ws;
+        wjobs      <= r_jobs;
+        grst       <= rst_b;
+
+        ld_base    <= r_ld_base;
+        ld_we      <= r_ld_we;
+        ld_core    <= r_ld_core;
+
+        g_sel      <= r_sel[SW-1:0];
+        g_pop      <= r_pop & (r_sel[SW +: RGW + RW] == GI);
+      end
+
+      // The item each core holds in C2: the bus, CORE_LAT cycles later, a delay line per group for
+      // the same reason.
+      (* dont_merge *) reg [32:0] trk [0:CORE_LAT-1];
+
+      always @(posedge CLK)
+      begin
+        trk[0] <= {bus_parity, bus_item};
+        for (i = 1; i < CORE_LAT; i = i + 1)
+          trk[i] <= trk[i - 1];
+      end
+
+      wire [32:0] trk_c2 = trk[CORE_LAT - 1];
+
+      for (c = C0; c < C0 + CN; c = c + 1)
+      begin : core
+        localparam [CW:0]   CI = c;
+        localparam [SW-1:0] CL = c - C0;
+
+        hcfpga_des_kpa_core #(.NUM_TARGETS(NUM_TARGETS), .HIT_DEPTH(HIT_DEPTH)) u (
+          .CLK(CLK), .rst(grst),
+          .ld_we(ld_we & (ld_core == CI[CW-1:0])), .ld_base(ld_base),
+          .wave_start(ws), .job_valid(CI < wjobs),
+          .pt_ip(pt_ip), .tgt_ip(tgt_ip), .tgt_en(tgt_en),
+          .amp_hi(amp_hi), .amp_valid(amp_valid),
+          .trk_item(trk_c2[31:0]), .trk_parity(trk_c2[32]),
+          .hit_valid(c_hit_valid[c]), .hit_item(c_hit_item[c]), .hit_parity(c_hit_parity[c]),
+          .hit_tgt(c_hit_tgt[c]), .hit_pop(g_pop & (g_sel == CL)),
+          .lost(c_lost[c])
+        );
+      end
+
+      // First level of the collector's mux, and the group's lost flag.
+      wire [CW:0] cs = C0 + g_sel;
+
+      always @(posedge CLK)
+      begin
+        if (cs < C0 + CN)
+        begin
+          l1_valid[g]  <= c_hit_valid[cs[CW-1:0]];
+          l1_item[g]   <= c_hit_item[cs[CW-1:0]];
+          l1_parity[g] <= c_hit_parity[cs[CW-1:0]];
+          l1_tgt[g]    <= c_hit_tgt[cs[CW-1:0]];
+        end
+        else
+          l1_valid[g]  <= 1'b0;
+
+        g_lost[g] <= |c_lost[C0 +: CN];
+      end
+    end
+
+    // Second level, the region's, and its second register on the way back.
+    wire [RGW+GW:0] gs = G0 + r_sel_g2;
+
+    always @(posedge CLK)
+    begin
+      if (gs < G0 + GN)
+      begin
+        lr_valid[rg]  <= l1_valid[gs[GW-1:0]];
+        lr_item[rg]   <= l1_item[gs[GW-1:0]];
+        lr_parity[rg] <= l1_parity[gs[GW-1:0]];
+        lr_tgt[rg]    <= l1_tgt[gs[GW-1:0]];
       end
       else
-        l1_valid[g]  <= 1'b0;
+        lr_valid[rg]  <= 1'b0;
+
+      lb_valid[rg]  <= lr_valid[rg];
+      lb_item[rg]   <= lr_item[rg];
+      lb_parity[rg] <= lr_parity[rg];
+      lb_tgt[rg]    <= lr_tgt[rg];
+
+      r_lost[rg] <= |g_lost[G0 +: GN];
+      b_lost[rg] <= r_lost[rg];
     end
   end
   endgenerate
 
-  assign lost = |c_lost;
+  always @(posedge CLK)
+    lost_q <= |b_lost;
+
+  assign lost = lost_q;
 
   // ----------------------------------------------------------------------------------------------
   // Collector
   // ----------------------------------------------------------------------------------------------
 
-  wire [GW-1:0] sel_g = (NG <= 1) ? {GW{1'b0}} : sel[CW-1:SW];
+  // The region the selection names, delayed to meet lb: sel, the two region copies, the group's,
+  // l1, lr and lb.
+  reg [RW-1:0] sel_r [0:5];
+
+  always @(posedge CLK)
+  begin
+    sel_r[0] <= sel_x[SW + RGW +: RW];
+    for (i = 1; i < 6; i = i + 1)
+      sel_r[i] <= sel_r[i - 1];
+  end
+
+  wire [RW-1:0] sel_rg = (NR <= 1) ? {RW{1'b0}} : sel_r[5];
 
   reg          l2_valid  = 0;
   reg [31:0]   l2_item   = 0;
@@ -583,18 +744,26 @@ module hcfpga_des_kpa_engine #(
 
   always @(posedge CLK)
   begin
-    l2_valid  <= l1_valid[sel_g];
-    l2_item   <= l1_item[sel_g];
-    l2_parity <= l1_parity[sel_g];
-    l2_tgt    <= l1_tgt[sel_g];
+    l2_valid  <= lb_valid[sel_rg];
+    l2_item   <= lb_item[sel_rg];
+    l2_parity <= lb_parity[sel_rg];
+    l2_tgt    <= lb_tgt[sel_rg];
   end
 
   reg [31:0] id_q = 0;
 
+  // sel to l2: the two region copies, the group's, l1, lr, lb and l2. pop_q to l2: the two region
+  // copies, the group's pop, the core's count, l1, lr, lb and l2.
+  localparam integer SEL_LAT = 7;
+  localparam integer POP_LAT = 8;
+
+  localparam [3:0] SEL_WAIT = SEL_LAT - 1;
+  localparam [3:0] POP_WAIT = POP_LAT;
+
   localparam [2:0] K_SEL = 3'd0, K_WAIT = 3'd1, K_CHK = 3'd2, K_ID = 3'd3, K_FRM = 3'd4, K_EMIT = 3'd5, K_RET = 3'd6;
 
   reg [2:0]   k_state = K_SEL;
-  reg [1:0]   k_wait  = 0;
+  reg [3:0]   k_wait  = 0;
   reg [255:0] frame   = 0;
   reg [4:0]   bytecnt = 0;
 
@@ -608,7 +777,7 @@ module hcfpga_des_kpa_engine #(
 
   always @(posedge CLK)
   begin
-    c_pop    <= 0;
+    pop_q    <= 1'b0;
     retire   <= 1'b0;
     ret_done <= 1'b0;
 
@@ -625,12 +794,12 @@ module hcfpga_des_kpa_engine #(
     begin
       if ((sel == 0) && (drained[ret_p] == 1'b1) && (ret_armed == 1'b0) && (ret_done == 1'b0))
         ret_armed <= 1'b1;
-      k_wait  <= 2'd1;
+      k_wait  <= SEL_WAIT;
       k_state <= K_WAIT;
     end
 
-    // A new selection reaches l2 two cycles after sel moves: one cycle of waiting covers it. After a
-    // pop, c_pop, the core's count and the two mux levels take three.
+    // A new selection reaches l2 SEL_LAT cycles after sel moves, a pop the core's FIFO head POP_LAT
+    // cycles after pop_q; each wait leaves one cycle to spare.
     K_WAIT:
       if (k_wait == 0) k_state <= K_CHK;
       else             k_wait  <= k_wait - 1'b1;
@@ -674,8 +843,8 @@ module hcfpga_des_kpa_engine #(
       begin
         if (bytecnt == 5'd31)
         begin
-          c_pop[sel] <= 1'b1;
-          k_wait     <= 2'd3;
+          pop_q      <= 1'b1;
+          k_wait     <= POP_WAIT;
           k_state    <= K_WAIT;
         end
         else

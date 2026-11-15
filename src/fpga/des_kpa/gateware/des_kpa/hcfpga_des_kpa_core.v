@@ -116,9 +116,16 @@ module hcfpga_des_kpa_core #(
   // ----------------------------------------------------------------------------------------------
 
   reg [27:0] hi [0:15];
-  reg [31:0] L  [1:16];
+  reg [31:0] L  [2:16];
   reg [31:0] R  [1:16];
   reg        v  [0:16];
+
+  // L after round 1 is the right half of IP(pt) in every core, so synthesis would merge it into one
+  // register driving every core on the chip: dont_merge keeps each core's own.
+  (* dont_merge *) reg [31:0] L1 = 0;
+
+  always @(posedge CLK)
+    L1 <= pt_ip[31:0];
 
   wire item = amp_valid & has_job;
 
@@ -132,7 +139,7 @@ module hcfpga_des_kpa_core #(
   generate
   for (r = 1; r <= 16; r = r + 1)
   begin : rnd
-    wire [31:0] lin = (r == 1) ? pt_ip[63:32] : L[(r == 1) ? 1 : r - 1];
+    wire [31:0] lin = (r == 1) ? pt_ip[63:32] : (r == 2) ? L1 : L[(r <= 2) ? 2 : r - 1];
     wire [31:0] rin = (r == 1) ? pt_ip[31:0]  : R[(r == 1) ? 1 : r - 1];
     wire [55:0] key = {hi[r - 1], base[27:0]};
 
@@ -163,7 +170,7 @@ module hcfpga_des_kpa_core #(
 
     always @(posedge CLK)
     begin
-      L[r] <= rin;
+      if (r > 1) L[(r > 1) ? r : 2] <= rin;
       R[r] <= lin ^ fo;
       v[r] <= (rst == 1'b0) & v[r - 1];
       if (r < 16) hi[(r < 16) ? r : 15] <= hi[r - 1];
