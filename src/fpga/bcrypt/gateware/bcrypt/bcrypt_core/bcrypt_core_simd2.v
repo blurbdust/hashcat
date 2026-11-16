@@ -599,7 +599,7 @@ module bcrypt_simd2_lane (
 	(* preserve *) reg L_input_select = 0, Ltmp_wr_en = 0, LR_zero = 0, L_wr_en = 0, R_wr_en = 0;
 	(* preserve *) reg PS_input_select = 0, PN_wr_en = 0;
 	(* preserve *) reg S_wr_en = 0, S_rd_en = 0, S_rst = 0;
-	(* preserve *) reg [4:0] pn_a1 = `PN_ADDR_P, pd_a1 = `PD_ADDR_EK, PN_wr_addr = `PN_ADDR_P;
+	(* preserve *) reg [4:0] pn_a1 = `PN_ADDR_P, PN_wr_addr = `PN_ADDR_P;
 	(* preserve *) reg [9:0] S_wr_addr = 10'b01;
 	(* preserve *) reg exc = 0;
 	reg exc_r1 = 0, exc_r = 0;
@@ -611,7 +611,6 @@ module bcrypt_simd2_lane (
 		{ L_input_select, Ltmp_wr_en, LR_zero, L_wr_en, R_wr_en,
 		  PS_input_select, PN_wr_en, S_wr_en, S_rd_en, S_rst } <= ctl_next;
 		pn_a1      <= PN_addr_next;
-		pd_a1      <= PD_addr_next;
 		PN_wr_addr <= PN_wr_addr_1;
 		S_wr_addr  <= S_wr_addr_1;
 		din_r      <= din_1;
@@ -623,13 +622,18 @@ module bcrypt_simd2_lane (
 
 
 	//
-	// PD and PN, 64 deep. Read a cycle early, at the other context's index, which is the context the
-	// next cycle serves.
+	// PD and PN, 64 deep, read a cycle early: the context in the second stage this cycle is the one
+	// the next cycle serves only one cycle later, so each read takes the address of the context about
+	// to run.
+	//
+	// PD is a block RAM. It is written only while the group waits for its loads, when nothing uses
+	// what it reads, and its read goes through the block's address register, loaded at the end of a
+	// context's cycle with the address of that context's next one. PN stays a LUTRAM.
 	//
 `ifdef ALTERA_RESERVED_QIS
-	(* RAM_STYLE="DISTRIBUTED", ramstyle = "MLAB, no_rw_check" *)
+	(* RAM_STYLE="block", ramstyle = "M20K, no_rw_check" *)
 `else
-	(* RAM_STYLE="DISTRIBUTED" *)
+	(* RAM_STYLE="block" *)
 `endif
 	reg [31:0] PD [63:0];
 
@@ -653,9 +657,13 @@ module bcrypt_simd2_lane (
 
 	wire [31:0] PN_input = PS_input_select ? Ltmp : din_r;
 
+	reg [31:0] pd_q;
+
 	always @(posedge CLK) begin
 		if (pd_we)
 			PD[{phase, pd_wa}] <= din_r;
+		pd_q <= PD[{phase, PD_addr_next}];
+
 		if (PN_wr_en)
 			PN[{phase, PN_wr_addr}] <= PN_input;
 	end
@@ -663,7 +671,7 @@ module bcrypt_simd2_lane (
 	reg [31:0] PDPN;
 
 	always @(posedge CLK)
-		PDPN <= PD[{~phase, pd_a1}] ^ PN[{~phase, pn_a1}];
+		PDPN <= pd_q ^ PN[{~phase, pn_a1}];
 
 
 	//
@@ -718,8 +726,10 @@ module bcrypt_simd2_lane (
 	// PN and PD are read one cycle before their use, so a word written in one step and used in the
 	// next would be read in the cycle after its write, which a LUTRAM does not promise.
 	reg pn_w1 = 0, pd_w1 = 0, pn_haz = 0, pd_haz = 0;
+	reg [4:0] pd_a1 = 0;
 	reg [5:0] pn_wa1 = 0, pd_wa1 = 0;
 	always @(posedge CLK) begin
+		pd_a1  <= PD_addr_next;
 		pn_w1  <= PN_wr_en;
 		pn_wa1 <= {phase, PN_wr_addr};
 		pd_w1  <= pd_we;
