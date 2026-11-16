@@ -10,7 +10,9 @@ module hcfpga_feed #(
 
   parameter DIN_BITS = 32,
 
-  parameter ADMIT_GATE = 0
+  parameter ADMIT_GATE = 0,
+
+  parameter INIT_ROM = 0
 )(
   input  wire CLK,
   input  wire rst,
@@ -292,7 +294,56 @@ module hcfpga_feed #(
 
   wire streaming = (state == D_STREAM);
 
-  wire [31:0] init_word = initimg[word_idx];
+  wire [31:0] init_word;
+
+  // INIT_ROM=1 keeps the init image in block RAM. A block RAM reads through a register, so the read
+  // takes the address word_idx is about to load, word_idx_d, and returns the word for word_idx on
+  // every cycle, as the read of the array in logic does. word_idx_d follows word_idx's assignments
+  // below.
+  wire [1:0]  last_beat  = (DIN_BITS == 32) ? ((word_idx == 11'd0) ? 2'd2 : 2'd1) : 2'd3;
+  wire [10:0] word_idx_d =
+    (rst == 1'b1) ? 11'd0 :
+    (state == D_CHECK) ? 11'd0 :
+    ((state == D_STREAM) && (byte_idx == last_beat) && (word_idx != (stream_count - 1'b1))) ? (word_idx + 1'b1) :
+    word_idx;
+
+  generate
+  if (INIT_ROM != 0)
+  begin : rom_block
+
+`ifdef ALTERA_RESERVED_QIS
+    (* romstyle = "M20K" *)
+`endif
+    reg [31:0] initimg [0:1053];
+    integer k;
+    initial begin
+      initimg[ 0]=32'h243f6a88; initimg[ 1]=32'h85a308d3; initimg[ 2]=32'h13198a2e; initimg[ 3]=32'h03707344;
+      initimg[ 4]=32'ha4093822; initimg[ 5]=32'h299f31d0; initimg[ 6]=32'h082efa98; initimg[ 7]=32'hec4e6c89;
+      initimg[ 8]=32'h452821e6; initimg[ 9]=32'h38d01377; initimg[10]=32'hbe5466cf; initimg[11]=32'h34e90c6c;
+      initimg[12]=32'hc0ac29b7; initimg[13]=32'hc97c50dd; initimg[14]=32'h3f84d5b5; initimg[15]=32'hb5470917;
+      initimg[16]=32'h9216d5d9; initimg[17]=32'h8979fb1b;
+      for (k=18; k<24; k=k+1) initimg[k] = 32'h0;
+      initimg[24]=32'h65616E42; initimg[25]=32'h4F727068; initimg[26]=32'h64657253;
+      initimg[27]=32'h65686F6C; initimg[28]=32'h6F756274; initimg[29]=32'h63727944;
+      `include "hcfpga_sbox_init.vh"
+    end
+
+    // No power up value: Quartus keeps a ROM in logic when its read register has one.
+    reg [31:0] q;
+
+    always @(posedge CLK)
+      q <= initimg[word_idx_d];
+
+    assign init_word = q;
+
+  end
+  else
+  begin : rom_logic
+
+    assign init_word = initimg[word_idx];
+
+  end
+  endgenerate
 
   reg [31:0] data_word;
   always @(*)

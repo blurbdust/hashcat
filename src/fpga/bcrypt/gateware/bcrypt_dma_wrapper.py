@@ -14,7 +14,7 @@ from litex.soc.interconnect import stream
 class BcryptDmaWrapper(LiteXModule):
     def __init__(self, platform, num_cores=1, num_cores_dist=0, num_cores_uram=0, din_bits=32,
                  feed_group=0, feed_shard=0, collect_group=0, init_batch=0, with_dump=1,
-                 with_cmp=1, cslow=1, simd=0):
+                 with_cmp=1, cslow=1, simd=0, feed_init_rom=0):
         self.simd = simd
 
         self.sink   = stream.Endpoint([("data", 32)])
@@ -70,6 +70,8 @@ class BcryptDmaWrapper(LiteXModule):
             p_CSLOW          = cslow,
 
             **({"p_SIMD": simd} if simd > 1 else {}),
+
+            **({"p_FEED_INIT_ROM": feed_init_rom} if feed_init_rom else {}),
 
             i_CLK      = ClockSignal(),
             i_CLK_CORE = ClockSignal("core") if cslow == 2 else ClockSignal("sys"),

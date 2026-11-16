@@ -11,6 +11,8 @@ module hcfpga_feed_group #(
 
   parameter GROUP = 0,
 
+  parameter INIT_ROM = 0,
+
   parameter NENG = (GROUP == 0) ? 1 : ((NUM_CORES + GROUP - 1) / GROUP)
 )(
   input  wire CLK,
@@ -45,7 +47,7 @@ module hcfpga_feed_group #(
   if (GROUP == 0)
   begin : single
 
-    hcfpga_feed #(.NUM_CORES(NUM_CORES), .INIT_BATCH(INIT_BATCH), .DIN_BITS(DIN_BITS)) f (
+    hcfpga_feed #(.NUM_CORES(NUM_CORES), .INIT_BATCH(INIT_BATCH), .DIN_BITS(DIN_BITS), .INIT_ROM(INIT_ROM)) f (
       .CLK(CLK), .rst(rst),
       .s_data(s_data), .s_valid(s_valid), .s_ready(s_ready), .s_last(s_last),
       .frame_status(frame_status),
@@ -140,7 +142,7 @@ module hcfpga_feed_group #(
     begin : eng
       wire sel = (tgt == g);
 
-      hcfpga_feed #(.NUM_CORES(CPE), .INIT_BATCH(INIT_BATCH), .DIN_BITS(DIN_BITS), .ADMIT_GATE(1)) f (
+      hcfpga_feed #(.NUM_CORES(CPE), .INIT_BATCH(INIT_BATCH), .DIN_BITS(DIN_BITS), .ADMIT_GATE(1), .INIT_ROM(INIT_ROM)) f (
         .CLK(CLK), .rst(rst),
         .s_data(s_data),
         .s_valid(s_valid & sel),
