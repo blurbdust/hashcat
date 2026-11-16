@@ -190,11 +190,29 @@ module hcfpga_cores #(
     wire [NV-1:0] c_init_ready;
     wire [NV-1:0] c_crypt_ready;
 
+    // The bus and rd_en pass one more CLK register next to the group, so a path into CLK_CORE, which
+    // has one core cycle, starts beside the group and not at a register shared by several. preserve
+    // keeps each group's copy: the copies have the same inputs and would otherwise be merged.
+    (* preserve *) reg [DIN_BITS-1:0] din_s   = 0;
+    (* preserve *) reg [3:0]          bwe_s   = 0;
+    (* preserve *) reg                start_s = 0;
+    (* preserve *) reg [NV-1:0]       wr_en_s = 0;
+    (* preserve *) reg [NV-1:0]       rd_en_s = 0;
+
+    always @(posedge CLK)
+    begin
+      din_s   <= g_din[GI];
+      bwe_s   <= g_bwe[GI];
+      start_s <= g_start[GI];
+      wr_en_s <= g_wr_en[GI][B +: NV];
+      rd_en_s <= core_rd_en;
+    end
+
     bcrypt_simd2_group #(.LANES(NL), .IDLE_WAIT(SIMD_IDLE)) g (
       .CLK(CLK_CORE), .rst(rst_c), .phase(phase), .phase_next(phase_next),
-      .din(g_din[GI]), .bwe(g_bwe[GI]), .start(g_start[GI]), .wr_en(g_wr_en[GI][B +: NV]),
+      .din(din_s), .bwe(bwe_s), .start(start_s), .wr_en(wr_en_s),
       .init_ready(c_init_ready), .crypt_ready(c_crypt_ready),
-      .rd_en(core_rd_en), .empty(c_empty), .dout(c_dout)
+      .rd_en(rd_en_s), .empty(c_empty), .dout(c_dout)
     );
 
     reg [NV-1:0] init_ready_s  = {NV{1'b1}};

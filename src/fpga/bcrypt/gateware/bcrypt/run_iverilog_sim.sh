@@ -364,6 +364,21 @@ run_one "tb_cmp.simd2_backpressure" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC" $SIMD_AR
   -Ptb_cmp.COLLECT_GROUP=2 -Ptb_cmp.CMP_ALL=1
 
 echo
+echo "=== feeder with its init image in block RAM ==="
+
+run_one "tb_datapath.feed_init_rom" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" \
+  -Ptb_datapath.FEED_INIT_ROM=1
+
+run_one "tb_datapath.feed_init_rom_simd" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_datapath.FEED_INIT_ROM=1 -Ptb_datapath.SIMD=4 -Ptb_datapath.NUM_CORES=8 -Ptb_datapath.NCAND=16 \
+  -Ptb_datapath.CHECK_ALL_CORES=1 -Ptb_datapath.FEED_SHARD=4 -Ptb_datapath.FEED_GROUP=4 \
+  -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0
+
+run_one "tb_hetero.feed_init_rom" g2005-sv "$HERE/tb_hetero.v" "$DP_SRC" \
+  -Ptb_hetero.FEED_INIT_ROM=1 -Ptb_hetero.FEED_SHARD=2 -Ptb_hetero.FEED_GROUP=2 -Ptb_hetero.DIN_BITS=32 \
+  -Ptb_hetero.COLLECT_GROUP=2 -Ptb_hetero.WITH_DUMP=0
+
+echo
 echo "  $PASS passed, $FAIL failed. Logs in $WORK/run."
 
 if [ "$FAIL" -eq 0 ]; then

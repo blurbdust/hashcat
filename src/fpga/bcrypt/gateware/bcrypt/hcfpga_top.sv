@@ -26,7 +26,9 @@ module hcfpga_top #(
 
   parameter SIMD       = 0,
 
-  parameter SIMD_IDLE  = 4096
+  parameter SIMD_IDLE  = 4096,
+
+  parameter FEED_INIT_ROM = 0
 )(
   input  wire CLK,
   input  wire CLK_CORE,
@@ -75,7 +77,7 @@ module hcfpga_top #(
   wire [NUM_CORES-1:0] dout;
   wire [NUM_CORES-1:0] rd_en;
 
-  hcfpga_feed_group #(.NUM_CORES(NUM_CORES), .INIT_BATCH(INIT_BATCH), .DIN_BITS(DIN_BITS), .GROUP(FEED_SHARD)) feed (
+  hcfpga_feed_group #(.NUM_CORES(NUM_CORES), .INIT_BATCH(INIT_BATCH), .DIN_BITS(DIN_BITS), .GROUP(FEED_SHARD), .INIT_ROM(FEED_INIT_ROM)) feed (
     .CLK(CLK), .rst(rst),
     .s_data(s_data), .s_valid(s_valid), .s_ready(s_ready), .s_last(s_last),
     .frame_status(frame_status),
