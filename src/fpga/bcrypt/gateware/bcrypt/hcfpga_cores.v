@@ -22,6 +22,10 @@ module hcfpga_cores #(
 
   parameter SHARD = 0,
 
+  parameter SIMD = 0,
+
+  parameter SIMD_IDLE = 4096,
+
   parameter NSH = (SHARD == 0) ? 1 : ((NUM_CORES + SHARD - 1) / SHARD)
 )(
   input  wire CLK,
@@ -139,9 +143,166 @@ module hcfpga_cores #(
     end
   end
 
+  initial
+  begin
+    if ((SIMD > 1) && ((DIN_BITS != 32) || (NUM_CORES_DIST != 0) || (WITH_DUMP != 0) ||
+                       ((GROUP != 0) && ((GROUP % (CSLOW * SIMD)) != 0)) || ((SHARD != 0) && ((SHARD % (CSLOW * SIMD)) != 0))))
+    begin
+      $display ("hcfpga_cores: SIMD=%0d needs DIN_BITS=32, no distributed cores, no dump, and GROUP and SHARD multiples of CSLOW x SIMD", SIMD);
+      $fatal;
+    end
+  end
+
   genvar i;
   generate
-  if (CSLOW == 2) begin : c2
+  if ((SIMD > 1) && (CSLOW == 2)) begin : simd2
+
+  // Lockstep groups C-slowed by two, see bcrypt_core_simd2.v: SIMD lanes, each two virtual cores, on
+  // CLK_CORE at twice CLK. A group's first SIMD virtual cores are its context 0, the next SIMD its
+  // context 1. The phase and output capture follow the CSLOW=2 branch below.
+  wire [NBUS-1:0] rst_bus;
+
+  for (g = 0; g < NBUS; g = g + 1) begin : rtree
+    (* preserve *) reg r = 1'b1;
+
+    always @(posedge CLK) r <= rst;
+
+    assign rst_bus[g] = r;
+  end
+
+  for (i = 0; i < (NUM_CORES + 2*SIMD - 1) / (2*SIMD); i = i + 1) begin : grp
+    localparam integer B  = i * 2 * SIMD;
+    localparam integer NV = ((B + 2*SIMD) <= NUM_CORES) ? (2*SIMD) : (NUM_CORES - B);
+    localparam integer NL = NV / 2;
+    localparam integer GI = (GROUP == 0) ? ((SHARD == 0) ? 0 : (B / SHARD)) : (B / GROUP);
+
+    (* preserve *) reg rst_g = 1'b1;
+
+    always @(posedge CLK) rst_g <= rst_bus[GI];
+
+    (* keep = "true" *) reg t = 1'b0;
+
+    always @(posedge CLK) t <= rst_g ? 1'b0 : ~t;
+
+    reg t_d   = 1'b0;
+    reg phase = 1'b0;
+
+    wire phase_next = (t != t_d);
+
+    (* preserve *) reg rst_c = 1'b1;
+
+    always @(posedge CLK_CORE)
+    begin
+      t_d   <= t;
+      phase <= phase_next;
+      rst_c <= rst_g;
+    end
+
+    wire [NV-1:0] core_rd_en;
+    wire [NV-1:0] c_empty;
+    wire [NV-1:0] c_dout;
+    wire [NV-1:0] c_init_ready;
+    wire [NV-1:0] c_crypt_ready;
+
+    bcrypt_simd2_group #(.LANES(NL), .IDLE_WAIT(SIMD_IDLE)) g (
+      .CLK(CLK_CORE), .rst(rst_c), .phase(phase), .phase_next(phase_next),
+      .din(g_din[GI]), .bwe(g_bwe[GI]), .start(g_start[GI]), .wr_en(g_wr_en[GI][B +: NV]),
+      .init_ready(c_init_ready), .crypt_ready(c_crypt_ready),
+      .rd_en(core_rd_en), .empty(c_empty), .dout(c_dout)
+    );
+
+    reg [NV-1:0] init_ready_s  = {NV{1'b1}};
+    reg [NV-1:0] crypt_ready_s = {NV{1'b0}};
+    reg [NV-1:0] core_empty    = {NV{1'b1}};
+    reg [NV-1:0] core_dout     = {NV{1'b0}};
+
+    always @(posedge CLK)
+    begin
+      init_ready_s  <= c_init_ready;
+      crypt_ready_s <= c_crypt_ready;
+      core_empty    <= c_empty;
+      core_dout     <= c_dout;
+    end
+
+    assign init_ready[B +: NV]  = init_ready_s;
+    assign crypt_ready[B +: NV] = crypt_ready_s;
+
+    genvar h;
+    for (h = 0; h < NV; h = h + 1) begin : vc
+      if (WITH_CMP != 0) begin : filt
+        hcfpga_result_filter f (
+          .CLK(CLK), .rst(rst),
+          .bm_we(g_bm_we[GI]), .bm_addr(g_bm_addr[GI]), .bm_din(g_bm_din[GI]),
+          .core_empty(core_empty[h]), .core_dout(core_dout[h]), .core_rd_en(core_rd_en[h]),
+          .f_rd_en(rd_en[B + h]), .f_empty(empty[B + h]), .f_dout(dout[B + h])
+        );
+      end
+      else begin : nofilt
+        assign core_rd_en[h] = rd_en[B + h];
+        assign empty[B + h]  = core_empty[h];
+        assign dout[B + h]   = core_dout[h];
+      end
+    end
+  end
+
+  end
+  else if (SIMD > 1) begin : simd
+
+  // Lockstep groups of SIMD cores, see bcrypt_core_simd.v. A group sits inside one feed group and one
+  // feed engine, so its lanes share one bus and are loaded one at a time. The last group may be short.
+  //
+  // The reset reaches the groups through a register per feed bus and one per group. preserve keeps the
+  // copies apart, where merging or retiming would make one register drive the whole array again.
+  wire [NBUS-1:0] rst_bus;
+
+  for (g = 0; g < NBUS; g = g + 1) begin : rtree
+    (* preserve *) reg r = 1'b1;
+
+    always @(posedge CLK) r <= rst;
+
+    assign rst_bus[g] = r;
+  end
+
+  for (i = 0; i < (NUM_CORES + SIMD - 1) / SIMD; i = i + 1) begin : grp
+    localparam integer B  = i * SIMD;
+    localparam integer NL = ((B + SIMD) <= NUM_CORES) ? SIMD : (NUM_CORES - B);
+    localparam integer GI = (GROUP == 0) ? ((SHARD == 0) ? 0 : (B / SHARD)) : (B / GROUP);
+
+    wire [NL-1:0] c_rd_en;
+    wire [NL-1:0] c_empty;
+    wire [NL-1:0] c_dout;
+
+    (* preserve *) reg rst_g = 1'b1;
+
+    always @(posedge CLK) rst_g <= rst_bus[GI];
+
+    bcrypt_simd_group #(.LANES(NL), .IDLE_WAIT(SIMD_IDLE)) g (
+      .CLK(CLK), .rst(rst_g),
+      .din(g_din[GI]), .bwe(g_bwe[GI]), .start(g_start[GI]), .wr_en(g_wr_en[GI][B +: NL]),
+      .init_ready(init_ready[B +: NL]), .crypt_ready(crypt_ready[B +: NL]),
+      .rd_en(c_rd_en), .empty(c_empty), .dout(c_dout)
+    );
+
+    genvar h;
+    for (h = 0; h < NL; h = h + 1) begin : vc
+      if (WITH_CMP != 0) begin : filt
+        hcfpga_result_filter f (
+          .CLK(CLK), .rst(rst),
+          .bm_we(g_bm_we[GI]), .bm_addr(g_bm_addr[GI]), .bm_din(g_bm_din[GI]),
+          .core_empty(c_empty[h]), .core_dout(c_dout[h]), .core_rd_en(c_rd_en[h]),
+          .f_rd_en(rd_en[B + h]), .f_empty(empty[B + h]), .f_dout(dout[B + h])
+        );
+      end
+      else begin : nofilt
+        assign c_rd_en[h]    = rd_en[B + h];
+        assign empty[B + h]  = c_empty[h];
+        assign dout[B + h]   = c_dout[h];
+      end
+    end
+  end
+
+  end
+  else if (CSLOW == 2) begin : c2
 
   for (i = 0; i < NUM_CORES / 2; i = i + 1) begin : pair
     localparam integer V0 = 2 * i;
