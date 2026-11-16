@@ -200,9 +200,12 @@ class A2020SoC(SoCMini):
             self.dma_up.source.connect(self.pcie_dma0.sink),
         ]
 
-UNITS            = 16
+# The build that closes timing at every corner: 512 cores at 250 MHz, one key per core and clock,
+# 128 G keys/s, at 76% of the ALMs. 576 cores (89%) congest the routing and fail at 240 and 280 MHz;
+# past about 289 MHz LitePCIe's DMA fails first even on an empty die. Not yet run on a card.
+UNITS            = 512
 SYS_CLK_FREQ     = 250e6
-PLACEMENT_MARGIN = 0.0
+PLACEMENT_MARGIN = 0.2
 
 def main():
     Wrapper = load_wrapper()
