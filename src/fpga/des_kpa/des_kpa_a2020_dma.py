@@ -182,15 +182,21 @@ class A2020SoC(SoCMini):
 
         dw = self.pcie_dma0.data_width
 
-        self.dma_down = stream.Converter(dw, 32, reverse=False)
+        # On a full chip the datapath sits across the die from the PCIe core: a register each way
+        # on valid, data and ready lets each stream cross in two steps.
+        self.dma_down     = stream.Converter(dw, 32, reverse=False)
+        self.dma_down_buf = stream.Buffer([("data", 32)], pipe_valid=True, pipe_ready=True)
         self.comb += [
             self.pcie_dma0.source.connect(self.dma_down.sink),
-            self.dma_down.source.connect(wrapper.sink),
+            self.dma_down.source.connect(self.dma_down_buf.sink),
+            self.dma_down_buf.source.connect(wrapper.sink),
         ]
 
-        self.dma_up = stream.Converter(8, dw, reverse=False)
+        self.dma_up     = stream.Converter(8, dw, reverse=False)
+        self.dma_up_buf = stream.Buffer([("data", 8)], pipe_valid=True, pipe_ready=True)
         self.comb += [
-            wrapper.source.connect(self.dma_up.sink),
+            wrapper.source.connect(self.dma_up_buf.sink),
+            self.dma_up_buf.source.connect(self.dma_up.sink),
             self.dma_up.source.connect(self.pcie_dma0.sink),
         ]
 
