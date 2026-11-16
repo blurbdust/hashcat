@@ -14,7 +14,9 @@ from litex.soc.interconnect import stream
 class BcryptDmaWrapper(LiteXModule):
     def __init__(self, platform, num_cores=1, num_cores_dist=0, din_bits=32,
                  feed_group=0, feed_shard=0, collect_group=0, init_batch=0, with_dump=1,
-                 with_cmp=1, cslow=1):
+                 with_cmp=1, cslow=1, simd=0):
+        self.simd = simd
+
         self.sink   = stream.Endpoint([("data", 32)])
         self.source = stream.Endpoint([("data", 8)])
 
@@ -64,6 +66,8 @@ class BcryptDmaWrapper(LiteXModule):
             p_WITH_CMP       = with_cmp,
 
             p_CSLOW          = cslow,
+
+            **({"p_SIMD": simd} if simd > 1 else {}),
 
             i_CLK      = ClockSignal(),
             i_CLK_CORE = ClockSignal("core") if cslow == 2 else ClockSignal("sys"),
@@ -116,6 +120,12 @@ class BcryptDmaWrapper(LiteXModule):
 
         for f in ["bcrypt_core.v", "bcrypt_core_c2.v", "fsm.v", "unit.v", "addr_regs.v", "P_2x32.v", "S.v"]:
             LiteXContext.platform.add_source(os.path.join(core_dir, f))
+
+        # The lockstep groups, only in a build that has them. The C-slowed groups use the plain ones'
+        # microcode.
+        if self.simd > 1:
+            LiteXContext.platform.add_source(os.path.join(core_dir, "bcrypt_core_simd.v"))
+            LiteXContext.platform.add_source(os.path.join(core_dir, "bcrypt_core_simd2.v"))
 
         for f in ["hcfpga_cores.v", "hcfpga_result_filter.v", "hcfpga_feed.v", "hcfpga_feed_group.v", "hcfpga_collect.v", "hcfpga_collect_group.v", "hcfpga_top.sv"]:
             LiteXContext.platform.add_source(os.path.join(bcrypt, f))

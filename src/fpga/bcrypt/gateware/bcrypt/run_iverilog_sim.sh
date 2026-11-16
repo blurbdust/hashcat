@@ -14,7 +14,7 @@ VVP="${VVP:-vvp}"
 
 WORK="${SIM_WORK:-$HERE/../../build/sim}"
 
-CORE_SRC="$CORE/bcrypt_core.v $CORE/bcrypt_core_c2.v $CORE/fsm.v $CORE/unit.v $CORE/S.v $CORE/P_2x32.v $CORE/addr_regs.v"
+CORE_SRC="$CORE/bcrypt_core.v $CORE/bcrypt_core_c2.v $CORE/bcrypt_core_simd.v $CORE/bcrypt_core_simd2.v $CORE/fsm.v $CORE/unit.v $CORE/S.v $CORE/P_2x32.v $CORE/addr_regs.v"
 DP_SRC="$HERE/hcfpga_top.sv $HERE/hcfpga_feed.v $HERE/hcfpga_feed_group.v $HERE/hcfpga_cores.v $HERE/hcfpga_result_filter.v $HERE/hcfpga_collect.v $HERE/hcfpga_collect_group.v $CORE_SRC"
 
 if [ -e "$WORK" ] && [ ! -f "$WORK/.hcfpga-sim" ]; then
@@ -273,6 +273,94 @@ run_one "tb_cmp.c2" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC" \
 
 run_one "tb_cmp.c2_backpressure" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC" \
   -Ptb_cmp.CSLOW=2 -Ptb_cmp.DIN_BITS=32 -Ptb_cmp.WITH_DUMP=0 -Ptb_cmp.READY_DUTY=1 \
+  -Ptb_cmp.COLLECT_GROUP=2 -Ptb_cmp.CMP_ALL=1
+
+echo
+echo "=== lockstep groups: one controller for several cores, see bcrypt_core_simd.v ==="
+
+SIMD_ARGS="-DHC_SIM_CHECKS"
+
+run_one "tb_datapath.simd" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_datapath.SIMD=4 -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 -Ptb_datapath.CHECK_ALL_CORES=1
+
+run_one "tb_datapath.simd_shape" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_datapath.SIMD=2 -Ptb_datapath.NUM_CORES=8 -Ptb_datapath.NCAND=16 -Ptb_datapath.CHECK_ALL_CORES=1 \
+  -Ptb_datapath.FEED_SHARD=4 -Ptb_datapath.FEED_GROUP=2 -Ptb_datapath.COLLECT_GROUP=3 \
+  -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0
+
+# Fewer candidates than lanes: a group starts on its idle timeout with the lanes it has.
+run_one "tb_datapath.simd_partial" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_datapath.SIMD=4 -Ptb_datapath.NUM_CORES=8 -Ptb_datapath.NCAND=5 \
+  -Ptb_datapath.FEED_SHARD=8 -Ptb_datapath.FEED_GROUP=4 -Ptb_datapath.COLLECT_GROUP=3 \
+  -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0
+
+# A second wave that fills only part of a group, and a short last group.
+run_one "tb_datapath.simd_ragged" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_datapath.SIMD=4 -Ptb_datapath.NUM_CORES=7 -Ptb_datapath.NCAND=10 \
+  -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 -Ptb_datapath.WITH_CMP=0
+
+run_one "tb_datapath.simd_no_filter" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_datapath.SIMD=4 -Ptb_datapath.NUM_CORES=8 -Ptb_datapath.NCAND=16 -Ptb_datapath.CHECK_ALL_CORES=1 \
+  -Ptb_datapath.FEED_SHARD=8 -Ptb_datapath.FEED_GROUP=8 -Ptb_datapath.COLLECT_GROUP=4 \
+  -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 -Ptb_datapath.WITH_CMP=0
+
+run_one "tb_hetero.simd" g2005-sv "$HERE/tb_hetero.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_hetero.SIMD=4 -Ptb_hetero.NUM_CORES=7 -Ptb_hetero.CHECK_ALL_CORES=1 \
+  -Ptb_hetero.FEED_SHARD=4 -Ptb_hetero.FEED_GROUP=4 -Ptb_hetero.COLLECT_GROUP=3 \
+  -Ptb_hetero.DIN_BITS=32 -Ptb_hetero.WITH_DUMP=0
+
+run_one "tb_hetero.simd_one_group" g2005-sv "$HERE/tb_hetero.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_hetero.SIMD=8 -Ptb_hetero.NUM_CORES=8 -Ptb_hetero.CHECK_ALL_CORES=1 \
+  -Ptb_hetero.DIN_BITS=32 -Ptb_hetero.WITH_DUMP=0
+
+run_one "tb_expand.simd" g2005-sv "$HERE/tb_expand.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_expand.SIMD=2 -Ptb_expand.FEED_SHARD=2 -Ptb_expand.FEED_GROUP=2 -Ptb_expand.DIN_BITS=32 \
+  -Ptb_expand.COLLECT_GROUP=2 -Ptb_expand.WITH_DUMP=0
+
+run_one "tb_cmp.simd" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_cmp.SIMD=4 -Ptb_cmp.DIN_BITS=32 -Ptb_cmp.WITH_DUMP=0
+
+run_one "tb_cmp.simd_backpressure" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_cmp.SIMD=2 -Ptb_cmp.DIN_BITS=32 -Ptb_cmp.WITH_DUMP=0 -Ptb_cmp.READY_DUTY=1 \
+  -Ptb_cmp.COLLECT_GROUP=2 -Ptb_cmp.CMP_ALL=1
+
+# The same groups C-slowed by two: two contexts per lane, on the core clock.
+run_one "tb_datapath.simd2" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_datapath.SIMD=2 -Ptb_datapath.CSLOW=2 -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 \
+  -Ptb_datapath.CHECK_ALL_CORES=1
+
+run_one "tb_datapath.simd2_shape" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_datapath.SIMD=2 -Ptb_datapath.CSLOW=2 -Ptb_datapath.NUM_CORES=8 -Ptb_datapath.NCAND=16 \
+  -Ptb_datapath.CHECK_ALL_CORES=1 -Ptb_datapath.FEED_SHARD=4 -Ptb_datapath.FEED_GROUP=4 \
+  -Ptb_datapath.COLLECT_GROUP=3 -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0
+
+run_one "tb_datapath.simd2_partial" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_datapath.SIMD=2 -Ptb_datapath.CSLOW=2 -Ptb_datapath.NUM_CORES=8 -Ptb_datapath.NCAND=5 \
+  -Ptb_datapath.FEED_SHARD=8 -Ptb_datapath.FEED_GROUP=4 -Ptb_datapath.COLLECT_GROUP=3 \
+  -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0
+
+run_one "tb_datapath.simd2_ragged" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_datapath.SIMD=4 -Ptb_datapath.CSLOW=2 -Ptb_datapath.NUM_CORES=10 -Ptb_datapath.NCAND=13 \
+  -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 -Ptb_datapath.WITH_CMP=0
+
+run_one "tb_hetero.simd2" g2005-sv "$HERE/tb_hetero.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_hetero.SIMD=2 -Ptb_hetero.CSLOW=2 -Ptb_hetero.NUM_CORES=6 -Ptb_hetero.CHECK_ALL_CORES=1 \
+  -Ptb_hetero.FEED_SHARD=4 -Ptb_hetero.FEED_GROUP=4 -Ptb_hetero.COLLECT_GROUP=3 \
+  -Ptb_hetero.DIN_BITS=32 -Ptb_hetero.WITH_DUMP=0
+
+run_one "tb_hetero.simd2_one_group" g2005-sv "$HERE/tb_hetero.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_hetero.SIMD=4 -Ptb_hetero.CSLOW=2 -Ptb_hetero.NUM_CORES=8 -Ptb_hetero.CHECK_ALL_CORES=1 \
+  -Ptb_hetero.DIN_BITS=32 -Ptb_hetero.WITH_DUMP=0
+
+run_one "tb_expand.simd2" g2005-sv "$HERE/tb_expand.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_expand.SIMD=2 -Ptb_expand.CSLOW=2 -Ptb_expand.FEED_SHARD=4 -Ptb_expand.FEED_GROUP=4 \
+  -Ptb_expand.DIN_BITS=32 -Ptb_expand.COLLECT_GROUP=2 -Ptb_expand.WITH_DUMP=0
+
+run_one "tb_cmp.simd2" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_cmp.SIMD=2 -Ptb_cmp.CSLOW=2 -Ptb_cmp.DIN_BITS=32 -Ptb_cmp.WITH_DUMP=0
+
+run_one "tb_cmp.simd2_backpressure" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_cmp.SIMD=2 -Ptb_cmp.CSLOW=2 -Ptb_cmp.DIN_BITS=32 -Ptb_cmp.WITH_DUMP=0 -Ptb_cmp.READY_DUTY=1 \
   -Ptb_cmp.COLLECT_GROUP=2 -Ptb_cmp.CMP_ALL=1
 
 echo

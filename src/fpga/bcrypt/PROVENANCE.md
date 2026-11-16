@@ -23,6 +23,8 @@ Upstream is **openwall/john**, `src/ztex/fpga-bcrypt/bcrypt/` and its `bcrypt_co
 | `gateware/bcrypt/bcrypt_core/fsm.v` | the include path, the reset, a microcode change at MC[0], the state dump |
 | `gateware/bcrypt/bcrypt.vh` | `SIMULATION` enabled, and the state dump's opcodes and jump condition |
 | `gateware/bcrypt/bcrypt_core/bcrypt_core_c2.v` | derived from the core files above, two hashes per core, see below |
+| `gateware/bcrypt/bcrypt_core/bcrypt_core_simd.v` | derived from the core files above, several cores under one controller, see below |
+| `gateware/bcrypt/bcrypt_core/bcrypt_core_simd2.v` | derived from `bcrypt_core_simd.v` and `bcrypt_core_c2.v`, the same groups C-slowed by two, see below |
 
 All of these but `addr_regs.v`, `P_2x32.v` and the two `S_data.txt` were converted from CRLF to LF line endings. `S_body.vh` drops upstream's `timescale` line, because `S.v` carries it.
 
@@ -91,6 +93,21 @@ Apart from the changes above, the Blowfish datapath, the S-box and P-array logic
 - a `phase_next` input, the value `phase` takes at the next edge. Under `HC_PN_READ_REG`, which `bcrypt_core_c2.v` defines when Quartus defines `ALTERA_RESERVED_QIS`, PN's read address takes its top bit from a register inside the core loaded from `phase_next`, which equals `phase` on every cycle. Quartus builds PN as an M20K only when it can move every register on the read address into the block, and it does not move `phase`, whose register is in `hcfpga_cores.v`. Vivado keeps reading `phase`. The merge gate runs that form too: `tb_core_c2.read_reg` and `tb_datapath.c2_shape_read_reg`.
 
 Everything else in its microcode is `fsm.v`'s, the MC[0] change included. Its header explains the design. The YPCB ships it, see `CSLOW` in `src/fpga/Makefile`.
+
+### Several cores under one controller
+
+`bcrypt_core_simd.v` is derived from `bcrypt_core.v`, `fsm.v`, `unit.v`, `P_2x32.v` and `addr_regs.v`, carries Denis Burykin's header followed by a notice that the derivation is hashcat's, and uses `S.v` and `fsm.v`'s microcode ROM as they are. Every hash of a batch has the same salt and cost, so one fsm, microcode ROM and set of address registers drive a group of lanes in lockstep, and each lane keeps only L, R, Ltmp, PD, PN and its four S banks:
+
+- any lane's S read collision raises the exception for the whole group. A lane that did not collide repeats its round 0 read and gets the same word.
+- the 31 data words load lane by lane through a per lane PD write, and the group starts when every lane has its data, or after an idle timeout with the lanes it has. A lane without data returns no result.
+- one cost counter in the group replaces PN[18] and its decrement.
+- MC[3] sets crypt_ready once and MC[4] waits for the group, MC[5] no longer loads PD, MC[67] has no dump branch, and MC[77] and MC[78] send the lanes out one at a time.
+- PN is a LUTRAM with `MLAB, no_rw_check`, as PD, and MC[39] puts an idle step between MC[46] and MC[42], the one place the original reads a PN word in the cycle after writing it.
+- the state dump is not carried.
+
+Its header explains the design. `SIMD` in `src/fpga/Makefile` builds it, off by default.
+
+`bcrypt_core_simd2.v` C-slows those groups by two as `bcrypt_core_c2.v` C-slows the core, with the same Denis Burykin header and notice: two contexts per lane, each a lockstep group with its own microcode state, every register a two stage chain, the context the top address bit of every memory, and `bcrypt_core_c2.v`'s re-read change at MC[81] and MC[82]. PD and PN are read one cycle early and their XOR registered, and the collision is ORed across the group between the two stages of its register. `SIMD` with `CSLOW=2` builds it.
 
 ## Other material derived from John the Ripper
 

@@ -52,6 +52,8 @@ BOARD_SHAPE = {
     "no_cmp":         1,
 
     "cslow":          1,
+
+    "simd":           0,
 }
 
 # Extra setup uncertainty, in ns, that the fitter places sys_clk against.
@@ -103,7 +105,7 @@ class _CRG(LiteXModule):
         ]
 
 class BcryptSoC(SoCMini):
-    def __init__(self, sys_clk_freq=200e6, num_cores=1, with_led=True, feed_group=0, feed_shard=0, collect_group=0, init_batch=0, num_cores_dist=0, with_dump=1, with_cmp=1, din_bits=32, abi=1, cslow=1, pcie_speed="gen2", pcie_lanes=8, placement_margin=0.0):
+    def __init__(self, sys_clk_freq=200e6, num_cores=1, with_led=True, feed_group=0, feed_shard=0, collect_group=0, init_batch=0, num_cores_dist=0, with_dump=1, with_cmp=1, din_bits=32, abi=1, cslow=1, simd=0, pcie_speed="gen2", pcie_lanes=8, placement_margin=0.0):
         platform = microsoft_a2020.Platform()
 
         # The SDM clients come first: the CRG needs the Reset Release IP's ninit_done.
@@ -169,7 +171,7 @@ class BcryptSoC(SoCMini):
             num_cores_dist=num_cores_dist, din_bits=din_bits, feed_group=feed_group,
             feed_shard=feed_shard,
             collect_group=collect_group, init_batch=init_batch, with_dump=with_dump, with_cmp=with_cmp,
-            cslow=cslow)
+            cslow=cslow, simd=simd)
         self.bcrypt.add_hdl_sources()
 
         dw = self.pcie_dma0.data_width
@@ -202,6 +204,7 @@ def main():
     parser.add_argument("--sys-clk-freq", type=float, default=200e6, help="System clock (Hz).")
     parser.add_argument("--abi",          type=int,   default=fpga_abi_current(), help="Wire ABI version, stamped into the bitstream identity and refused by the bridge when it does not match.")
     parser.add_argument("--cslow",        type=int,   default=BOARD_SHAPE["cslow"], choices=[1, 2], help="2 builds the array from two hash cores on a second clock at twice --sys-clk-freq. --cores then counts virtual cores.")
+    parser.add_argument("--simd",         type=int,   default=BOARD_SHAPE["simd"], help="Cores per lockstep group, sharing one controller. Zero builds independent cores.")
     parser.add_argument("--pcie-speed",   type=str,   default="gen2", choices=["gen1", "gen2", "gen3"], help="PCIe link rate.")
     parser.add_argument("--pcie-lanes",   type=int,   default=8, choices=[1, 2, 4, 8], help="PCIe link width. The edge is x16, and a narrower endpoint negotiates down in an x16 slot.")
     parser.add_argument("--placement-margin", type=float, default=PLACEMENT_MARGIN, help="Extra ns of setup clock uncertainty on sys_clk to over-constrain placement.")
@@ -226,9 +229,11 @@ def main():
 
     cs_suffix = "_cs2" if args.cslow == 2 else ""
 
+    simd_suffix = f"_simd{args.simd}" if args.simd > 1 else ""
+
     link_suffix = "" if (args.pcie_speed, args.pcie_lanes) == ("gen2", 8) else f"_{args.pcie_speed}x{args.pcie_lanes}"
 
-    name = f"bcrypt_{BOARD}_dma_c{args.cores}_{mhz}mhz{fg_suffix}{nd_suffix}{nc_suffix}{db_suffix}{ds_suffix}{fs_suffix}{cg_suffix}{ib_suffix}{cs_suffix}{link_suffix}"
+    name = f"bcrypt_{BOARD}_dma_c{args.cores}_{mhz}mhz{fg_suffix}{nd_suffix}{nc_suffix}{db_suffix}{ds_suffix}{fs_suffix}{cg_suffix}{ib_suffix}{cs_suffix}{simd_suffix}{link_suffix}"
 
     soc = BcryptSoC(
         sys_clk_freq     = args.sys_clk_freq,
@@ -243,6 +248,7 @@ def main():
         init_batch       = args.init_batch,
         abi              = args.abi,
         cslow            = args.cslow,
+        simd             = args.simd,
         pcie_speed       = args.pcie_speed,
         pcie_lanes       = args.pcie_lanes,
         placement_margin = args.placement_margin,

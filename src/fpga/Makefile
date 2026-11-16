@@ -81,6 +81,8 @@ NO_CMP          ?= $(or $(call board_shape,no_cmp),0)
 
 CSLOW           ?= $(or $(call board_shape,cslow),1)
 
+SIMD            ?= $(or $(call board_shape,simd),0)
+
 RELEASES_DEF    := ../bridges/fpga/fpga_releases.def
 
 THREADS         ?= $(shell n=$$(nproc); [ $$n -gt 32 ] && echo 32 || echo $$n)
@@ -105,7 +107,9 @@ PLACE_SUFFIX    = $(if $(PLACE_DIRECTIVE),$(if $(filter-out $(PLACE_DEFAULT),$(P
 
 CSLOW_SUFFIX    = $(if $(filter-out 1,$(CSLOW)),_cs$(CSLOW),)
 
-BUILD_NAME      = $(ALGO)_$(BOARD)_$(FLOW)_c$(CORES)_$(CLK)mhz$(if $(filter-out 0,$(N)),_n$(N)_r$(R)_u$(UNROLL),)$(STARTUP_SUFFIX)$(LANES_SUFFIX)$(SHAPE_SUFFIX)$(PLACE_SUFFIX)$(CSLOW_SUFFIX)
+SIMD_SUFFIX     = $(if $(filter-out 0 1,$(SIMD)),_simd$(SIMD),)
+
+BUILD_NAME      = $(ALGO)_$(BOARD)_$(FLOW)_c$(CORES)_$(CLK)mhz$(if $(filter-out 0,$(N)),_n$(N)_r$(R)_u$(UNROLL),)$(STARTUP_SUFFIX)$(LANES_SUFFIX)$(SHAPE_SUFFIX)$(PLACE_SUFFIX)$(CSLOW_SUFFIX)$(SIMD_SUFFIX)
 BITSTREAM_EXT   := $(or $(EXT_$(BOARD)),$(shell awk -F'[(,)]' '/^FPGA_RELEASE/ { gsub(/[" ]/,""); if ($$2 == "$(ALGO)" && $$3 == "$(BOARD)") print $$6 }' $(RELEASES_DEF) 2>/dev/null | head -1),bit)
 
 BITSTREAM       := $(ALGO)/build/$(BUILD_NAME)/gateware/$(BUILD_NAME).$(BITSTREAM_EXT)
@@ -283,7 +287,7 @@ LANES_ARGS      := $(if $(PCIE_LANES),--pcie-lanes $(PCIE_LANES),)
 
 EXTRA_ARGS      ?=
 
-FEED_ARGS       := $(if $(HAS_SHAPE),--din-bits $(DIN_BITS) --feed-group $(FEED_GROUP) --feed-shard $(FEED_SHARD) --collect-group $(COLLECT_GROUP) --num-cores-dist $(NUM_CORES_DIST) --init-batch $(INIT_BATCH),)$(if $(filter-out 0,$(NO_DUMP)), --no-dump,)$(if $(filter-out 0,$(NO_CMP)), --no-cmp,)$(if $(filter-out 1,$(CSLOW)), --cslow $(CSLOW),)
+FEED_ARGS       := $(if $(HAS_SHAPE),--din-bits $(DIN_BITS) --feed-group $(FEED_GROUP) --feed-shard $(FEED_SHARD) --collect-group $(COLLECT_GROUP) --num-cores-dist $(NUM_CORES_DIST) --init-batch $(INIT_BATCH),)$(if $(filter-out 0,$(NO_DUMP)), --no-dump,)$(if $(filter-out 0,$(NO_CMP)), --no-cmp,)$(if $(filter-out 1,$(CSLOW)), --cslow $(CSLOW),)$(if $(filter-out 0 1,$(SIMD)), --simd $(SIMD),)
 
 build: $(if $(NO_RELEASE_$(BOARD)),,check-release)
 	@command -v $(BUILD_TOOL) >/dev/null 2>&1 || { echo "$(BUILD_TOOL) not on PATH, $(BUILD_TOOL_HINT)"; exit 1; }

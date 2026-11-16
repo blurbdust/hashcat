@@ -6,6 +6,11 @@
 `timescale 1ns / 1ps
 module tb_expand;
 
+  parameter integer CSLOW     = 1;
+
+  parameter integer SIMD      = 0;
+  parameter integer SIMD_IDLE = 256;
+
   parameter integer FEED_GROUP = 0;
   parameter integer FEED_SHARD = 0;
   parameter integer WITH_DUMP  = 1;
@@ -21,6 +26,9 @@ module tb_expand;
 
   reg CLK = 0;
   always #5 CLK = ~CLK;
+
+  reg CLK_CORE = 1;
+  always #2.5 CLK_CORE = ~CLK_CORE;
   reg rst = 1;
 
   reg  [31:0] s_data = 0;
@@ -34,8 +42,8 @@ module tb_expand;
   reg         m_ready = 1;
   wire        m_last;
 
-  hcfpga_top #(.NUM_CORES(NUM_CORES), .NUM_CORES_DIST(NUM_CORES_DIST), .INIT_BATCH(INIT_BATCH), .DIN_BITS(DIN_BITS), .FEED_GROUP(FEED_GROUP), .FEED_SHARD(FEED_SHARD), .COLLECT_GROUP(COLLECT_GROUP), .WITH_DUMP(WITH_DUMP), .WITH_CMP(WITH_CMP)) dut (
-    .CLK(CLK), .rst(rst), .mode_dump(1'b0),
+  hcfpga_top #(.NUM_CORES(NUM_CORES), .NUM_CORES_DIST(NUM_CORES_DIST), .INIT_BATCH(INIT_BATCH), .DIN_BITS(DIN_BITS), .FEED_GROUP(FEED_GROUP), .FEED_SHARD(FEED_SHARD), .COLLECT_GROUP(COLLECT_GROUP), .WITH_DUMP(WITH_DUMP), .WITH_CMP(WITH_CMP), .CSLOW(CSLOW), .SIMD(SIMD), .SIMD_IDLE(SIMD_IDLE)) dut (
+    .CLK(CLK), .CLK_CORE(CLK_CORE), .rst(rst), .mode_dump(1'b0),
     .s_data(s_data), .s_valid(s_valid), .s_ready(s_ready), .s_last(1'b0),
     .frame_status(frame_status),
     .salt0(32'h00010203), .salt1(32'h04050607), .salt2(32'h08090a0b), .salt3(32'h0c0d0e0f),
