@@ -94,8 +94,10 @@ module hcfpga_des_kpa_core #(
   // Job
   // ----------------------------------------------------------------------------------------------
 
-  reg [55:0] next_base = 0;
-  reg [55:0] base      = 0;
+  // Data registers carry no power-up value, which would keep the Hyper-Retimer from moving them;
+  // only the control registers, cleared by rst, have one.
+  reg [55:0] next_base;
+  reg [55:0] base;
   reg        has_job   = 0;
 
   always @(posedge CLK)
@@ -122,7 +124,7 @@ module hcfpga_des_kpa_core #(
 
   // L after round 1 is the right half of IP(pt) in every core, so synthesis would merge it into one
   // register driving every core on the chip: dont_merge keeps each core's own.
-  (* dont_merge *) reg [31:0] L1 = 0;
+  (* dont_merge *) reg [31:0] L1;
 
   always @(posedge CLK)
     L1 <= pt_ip[31:0];
@@ -185,8 +187,8 @@ module hcfpga_des_kpa_core #(
   wire [63:0] preout = {R[16], L[16]};
 
   // C1: per target, 16 nibble compares; C2: all 16 equal.
-  reg [16*NUM_TARGETS-1:0] eq_nib = 0;
-  reg [NUM_TARGETS-1:0]    match  = 0;
+  reg [16*NUM_TARGETS-1:0] eq_nib;
+  reg [NUM_TARGETS-1:0]    match;
   reg                      v1 = 0;
   reg                      v2 = 0;
 

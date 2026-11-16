@@ -94,6 +94,42 @@ module hcfpga_des_kpa_top #(
 
   localparam NUM_TARGETS = 4;
 
+  // The reset, the registers and the status belong to the SoC around the PCIe core, which can sit
+  // across the chip from the engine: each crosses through a register here, the reset through two so
+  // the fitter can place it in steps. Nothing the host does follows a register write that closely.
+  reg rst_q1 = 1;
+  reg rst_q2 = 1;
+
+  reg [11:0]  die_temp_q;
+  reg [63:0]  pt_q;
+  reg [64*NUM_TARGETS-1:0] tgt_q;
+  reg [NUM_TARGETS-1:0]    tgt_mask_q;
+  reg [2:0]   amp_cnt_q;
+  reg [31:0]  amp_lens_q;
+  reg [31:0]  amp_tab_q;
+  reg         amp_tab_we_q = 0;
+  reg [31:0]  batch_target_q;
+  reg         batch_arm_q = 0;
+  reg [15:0]  pad_recs_q;
+
+  always @(posedge CLK)
+  begin
+    rst_q1         <= rst;
+    rst_q2         <= rst_q1;
+
+    die_temp_q     <= die_temp;
+    pt_q           <= {salt1, salt0};
+    tgt_q          <= {tgt3_hi, tgt3_lo, tgt2_hi, tgt2_lo, tgt1_hi, tgt1_lo, tgt0_hi, tgt0_lo};
+    tgt_mask_q     <= tgt_mask[NUM_TARGETS-1:0];
+    amp_cnt_q      <= (amp_cnt > 32'd4) ? 3'd4 : amp_cnt[2:0];
+    amp_lens_q     <= amp_lens;
+    amp_tab_q      <= amp_tab;
+    amp_tab_we_q   <= amp_tab_we;
+    batch_target_q <= batch_target;
+    batch_arm_q    <= batch_arm;
+    pad_recs_q     <= pad_recs;
+  end
+
   wire [31:0] intake_status;
 
   wire        rec_valid;
@@ -104,7 +140,7 @@ module hcfpga_des_kpa_top #(
   wire        rec_taken;
 
   hcfpga_h2c_intake #(.PW_MAX(PW_MAX)) intake (
-    .CLK(CLK), .rst(rst),
+    .CLK(CLK), .rst(rst_q2),
     .s_data(s_data), .s_valid(s_valid), .s_ready(s_ready), .s_last(s_last),
     .frame_status(intake_status),
     .rec_valid(rec_valid), .rec_len(rec_len), .rec_id(rec_id),
@@ -124,30 +160,42 @@ module hcfpga_des_kpa_top #(
 
   hcfpga_des_kpa_engine #(.NUM_CORES(NUM_CORES), .NUM_TARGETS(NUM_TARGETS), .GROUP(GROUP), .REGION(REGION), .IDLE_FLUSH(IDLE_FLUSH),
                           .THERM_HOT_C(THERM_HOT_C), .THERM_COOL_C(THERM_COOL_C)) engine (
-    .CLK(CLK), .rst(rst),
-    .die_temp(die_temp), .therm_stop(therm_stop), .lost(lost),
+    .CLK(CLK), .rst(rst_q2),
+    .die_temp(die_temp_q), .therm_stop(therm_stop), .lost(lost),
     .rec_valid(rec_valid), .rec_len(rec_len), .rec_id(rec_id),
     .pw_rd_addr(pw_rd_addr), .pw_rd_data(pw_rd_data), .rec_taken(rec_taken),
-    .pt({salt1, salt0}),
-    .tgt_ct({tgt3_hi, tgt3_lo, tgt2_hi, tgt2_lo, tgt1_hi, tgt1_lo, tgt0_hi, tgt0_lo}),
-    .tgt_mask(tgt_mask[NUM_TARGETS-1:0]),
-    .amp_cnt((amp_cnt > 32'd4) ? 3'd4 : amp_cnt[2:0]), .amp_lens(amp_lens),
-    .amp_tab(amp_tab), .amp_tab_we(amp_tab_we),
-    .batch_target(batch_target), .batch_arm(batch_arm),
+    .pt(pt_q),
+    .tgt_ct(tgt_q),
+    .tgt_mask(tgt_mask_q),
+    .amp_cnt(amp_cnt_q), .amp_lens(amp_lens_q),
+    .amp_tab(amp_tab_q), .amp_tab_we(amp_tab_we_q),
+    .batch_target(batch_target_q), .batch_arm(batch_arm_q),
     .retire(retire),
     .r_data(r_data), .r_valid(r_valid), .r_ready(r_ready), .r_last(r_last)
   );
 
+  wire [31:0] retired;
+
   hcfpga_c2h_eob eob (
-    .CLK(CLK), .rst(rst),
+    .CLK(CLK), .rst(rst_q2),
     .retire(retire),
-    .batch_target(batch_target), .batch_arm(batch_arm), .pad_recs(pad_recs),
-    .retired_cnt(retired_cnt),
+    .batch_target(batch_target_q), .batch_arm(batch_arm_q), .pad_recs(pad_recs_q),
+    .retired_cnt(retired),
     .r_data(r_data), .r_valid(r_valid), .r_ready(r_ready), .r_last(r_last),
     .m_data(m_data), .m_valid(m_valid), .m_ready(m_ready), .m_last(m_last)
   );
 
   // The shared frame status, bit 16 the thermal stop, bit 17 a lost hit.
-  assign frame_status = {14'd0, lost, therm_stop, intake_status[15:0]};
+  reg [31:0] frame_status_q = 0;
+  reg [31:0] retired_q      = 0;
+
+  always @(posedge CLK)
+  begin
+    frame_status_q <= {14'd0, lost, therm_stop, intake_status[15:0]};
+    retired_q      <= retired;
+  end
+
+  assign frame_status = frame_status_q;
+  assign retired_cnt  = retired_q;
 
 endmodule

@@ -543,11 +543,12 @@ module hcfpga_des_kpa_engine #(
     localparam integer GN = ((G0 + REGION) <= NG) ? REGION : (NG - G0);
 
     // Every region's copies hold the same values, so synthesis would merge them back into one
-    // register driving the whole chip: dont_merge keeps them apart, as for the groups below.
-    (* dont_merge *) reg [BW-1:0] bus_a = 0;
-    (* dont_merge *) reg [BW-1:0] bus_b = 0;
-    (* dont_merge *) reg          rst_a = 1;
-    (* dont_merge *) reg          rst_b = 1;
+    // register driving the whole chip, and retiming would fold them into the root's: preserve keeps
+    // each one, as for the groups below (dont_merge alone does not stop the retiming).
+    (* preserve *) reg [BW-1:0] bus_a = 0;
+    (* preserve *) reg [BW-1:0] bus_b = 0;
+    (* preserve *) reg          rst_a = 1;
+    (* preserve *) reg          rst_b = 1;
 
     always @(posedge CLK)
     begin
@@ -579,8 +580,8 @@ module hcfpga_des_kpa_engine #(
              r_sel, r_pop } = bus_b;
 
     // The group within the region that the selection names, delayed to meet l1.
-    (* dont_merge *) reg [RGW-1:0] r_sel_g1 = 0;
-    (* dont_merge *) reg [RGW-1:0] r_sel_g2 = 0;
+    (* preserve *) reg [RGW-1:0] r_sel_g1 = 0;
+    (* preserve *) reg [RGW-1:0] r_sel_g2 = 0;
 
     always @(posedge CLK)
     begin
@@ -596,25 +597,25 @@ module hcfpga_des_kpa_engine #(
       localparam [RGW+RW-1:0] GI = g;
 
       // The group's copy of everything the cores share, next to its cores.
-      (* dont_merge *) reg [63:0]               pt_ip  = 0;
-      (* dont_merge *) reg [64*NUM_TARGETS-1:0] tgt_ip = 0;
-      (* dont_merge *) reg [NUM_TARGETS-1:0]    tgt_en = 0;
+      (* preserve *) reg [63:0]               pt_ip  = 0;
+      (* preserve *) reg [64*NUM_TARGETS-1:0] tgt_ip = 0;
+      (* preserve *) reg [NUM_TARGETS-1:0]    tgt_en = 0;
 
-      (* dont_merge *) reg [27:0] amp_hi    = 0;
-      (* dont_merge *) reg        amp_valid = 0;
-      (* dont_merge *) reg [31:0] bus_item  = 0;
-      (* dont_merge *) reg        bus_parity = 0;
+      (* preserve *) reg [27:0] amp_hi    = 0;
+      (* preserve *) reg        amp_valid = 0;
+      (* preserve *) reg [31:0] bus_item  = 0;
+      (* preserve *) reg        bus_parity = 0;
 
-      (* dont_merge *) reg        ws    = 0;
-      (* dont_merge *) reg [CW:0] wjobs = 0;
-      (* dont_merge *) reg        grst  = 1;
+      (* preserve *) reg        ws    = 0;
+      (* preserve *) reg [CW:0] wjobs = 0;
+      (* preserve *) reg        grst  = 1;
 
-      (* dont_merge *) reg [55:0] ld_base = 0;
-      (* dont_merge *) reg        ld_we   = 0;
-      (* dont_merge *) reg [CW-1:0] ld_core = 0;
+      (* preserve *) reg [55:0] ld_base = 0;
+      (* preserve *) reg        ld_we   = 0;
+      (* preserve *) reg [CW-1:0] ld_core = 0;
 
-      (* dont_merge *) reg [SW-1:0] g_sel = 0;
-      (* dont_merge *) reg          g_pop = 0;
+      (* preserve *) reg [SW-1:0] g_sel = 0;
+      (* preserve *) reg          g_pop = 0;
 
       always @(posedge CLK)
       begin
