@@ -73,6 +73,8 @@ SIMD            ?= $(or $(call board_shape,simd),0)
 
 FEED_INIT_ROM   ?= $(or $(call board_shape,feed_init_rom),0)
 
+SIMD_PD_LUT     ?= $(or $(call board_shape,simd_pd_lut),0)
+
 RELEASES_DEF    := ../bridges/fpga/fpga_releases.def
 
 THREADS         ?= $(shell n=$$(nproc); [ $$n -gt 32 ] && echo 32 || echo $$n)
@@ -92,7 +94,7 @@ PLACE_SUFFIX    = $(if $(PLACE_DIRECTIVE),$(if $(filter-out $(PLACE_DEFAULT),$(P
 
 CSLOW_SUFFIX    = $(if $(filter-out 1,$(CSLOW)),_cs$(CSLOW),)
 
-SIMD_SUFFIX     = $(if $(filter-out 0 1,$(SIMD)),_simd$(SIMD),)$(if $(filter-out 0,$(FEED_INIT_ROM)),_ir,)
+SIMD_SUFFIX     = $(if $(filter-out 0 1,$(SIMD)),_simd$(SIMD),)$(if $(filter-out 0,$(FEED_INIT_ROM)),_ir,)$(if $(filter-out 0,$(SIMD_PD_LUT)),_pl$(SIMD_PD_LUT),)
 
 BUILD_NAME      = $(ALGO)_$(BOARD)_$(FLOW)_c$(CORES)_$(CLK)mhz$(if $(filter-out 0,$(N)),_n$(N)_r$(R)_u$(UNROLL),)$(STARTUP_SUFFIX)$(LANES_SUFFIX)$(SHAPE_SUFFIX)$(PLACE_SUFFIX)$(CSLOW_SUFFIX)$(SIMD_SUFFIX)
 BITSTREAM_EXT   := $(or $(shell awk -F'[(,)]' '/^FPGA_RELEASE/ { gsub(/[" ]/,""); if ($$2 == "$(ALGO)" && $$3 == "$(BOARD)") print $$6 }' $(RELEASES_DEF) 2>/dev/null | head -1),bit)
@@ -272,7 +274,7 @@ LANES_ARGS      := $(if $(PCIE_LANES),--pcie-lanes $(PCIE_LANES),)
 
 EXTRA_ARGS      ?=
 
-FEED_ARGS       := $(if $(HAS_SHAPE),--din-bits $(DIN_BITS) --feed-group $(FEED_GROUP) --feed-shard $(FEED_SHARD) --collect-group $(COLLECT_GROUP) --num-cores-dist $(NUM_CORES_DIST) --init-batch $(INIT_BATCH),)$(if $(filter-out 0,$(NO_DUMP)), --no-dump,)$(if $(filter-out 0,$(NO_CMP)), --no-cmp,)$(if $(filter-out 1,$(CSLOW)), --cslow $(CSLOW),)$(if $(filter-out 0,$(NUM_CORES_URAM)), --num-cores-uram $(NUM_CORES_URAM),)$(if $(filter-out 0 1,$(SIMD)), --simd $(SIMD),)$(if $(filter-out 0,$(FEED_INIT_ROM)), --feed-init-rom $(FEED_INIT_ROM),)
+FEED_ARGS       := $(if $(HAS_SHAPE),--din-bits $(DIN_BITS) --feed-group $(FEED_GROUP) --feed-shard $(FEED_SHARD) --collect-group $(COLLECT_GROUP) --num-cores-dist $(NUM_CORES_DIST) --init-batch $(INIT_BATCH),)$(if $(filter-out 0,$(NO_DUMP)), --no-dump,)$(if $(filter-out 0,$(NO_CMP)), --no-cmp,)$(if $(filter-out 1,$(CSLOW)), --cslow $(CSLOW),)$(if $(filter-out 0,$(NUM_CORES_URAM)), --num-cores-uram $(NUM_CORES_URAM),)$(if $(filter-out 0 1,$(SIMD)), --simd $(SIMD),)$(if $(filter-out 0,$(FEED_INIT_ROM)), --feed-init-rom $(FEED_INIT_ROM),)$(if $(filter-out 0,$(SIMD_PD_LUT)), --simd-pd-lut $(SIMD_PD_LUT),)
 
 build: $(if $(NO_RELEASE_$(BOARD)),,check-release)
 	@command -v vivado >/dev/null 2>&1 || { echo "vivado not on PATH, source settings64.sh first"; exit 1; }

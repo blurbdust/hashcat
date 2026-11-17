@@ -26,6 +26,10 @@ module hcfpga_cores #(
 
   parameter SIMD_IDLE = 4096,
 
+  // C-slowed groups only: how many groups, counted from the last, keep PD in LUTRAM rather than
+  // block RAM, to balance ALMs against M20Ks.
+  parameter SIMD_PD_LUT = 0,
+
   parameter NSH = (SHARD == 0) ? 1 : ((NUM_CORES + SHARD - 1) / SHARD)
 )(
   input  wire CLK,
@@ -222,7 +226,9 @@ module hcfpga_cores #(
       rd_en_s <= core_rd_en;
     end
 
-    bcrypt_simd2_group #(.LANES(NL), .IDLE_WAIT(SIMD_IDLE)) g (
+    localparam integer NG2 = (NUM_CORES + 2*SIMD - 1) / (2*SIMD);
+
+    bcrypt_simd2_group #(.LANES(NL), .IDLE_WAIT(SIMD_IDLE), .PD_M20K((i >= NG2 - SIMD_PD_LUT) ? 0 : 1)) g (
       .CLK(CLK_CORE), .rst(rst_c), .phase(phase), .phase_next(phase_next),
       .din(din_s), .bwe(bwe_s), .start(start_s), .wr_en(wr_en_s),
       .init_ready(c_init_ready), .crypt_ready(c_crypt_ready),
