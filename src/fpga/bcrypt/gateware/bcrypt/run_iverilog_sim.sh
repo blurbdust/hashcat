@@ -363,6 +363,16 @@ run_one "tb_cmp.simd2_backpressure" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC" $SIMD_AR
   -Ptb_cmp.SIMD=2 -Ptb_cmp.CSLOW=2 -Ptb_cmp.DIN_BITS=32 -Ptb_cmp.WITH_DUMP=0 -Ptb_cmp.READY_DUTY=1 \
   -Ptb_cmp.COLLECT_GROUP=2 -Ptb_cmp.CMP_ALL=1
 
+# PD in LUTRAM in the last group, block RAM in the others.
+run_one "tb_datapath.simd2_pd_lut" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_datapath.SIMD=2 -Ptb_datapath.CSLOW=2 -Ptb_datapath.SIMD_PD_LUT=1 -Ptb_datapath.NUM_CORES=8 \
+  -Ptb_datapath.NCAND=16 -Ptb_datapath.CHECK_ALL_CORES=1 -Ptb_datapath.FEED_SHARD=4 -Ptb_datapath.FEED_GROUP=4 \
+  -Ptb_datapath.COLLECT_GROUP=3 -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0
+
+run_one "tb_hetero.simd2_pd_lut" g2005-sv "$HERE/tb_hetero.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_hetero.SIMD=2 -Ptb_hetero.CSLOW=2 -Ptb_hetero.SIMD_PD_LUT=2 -Ptb_hetero.NUM_CORES=8 \
+  -Ptb_hetero.CHECK_ALL_CORES=1 -Ptb_hetero.DIN_BITS=32 -Ptb_hetero.WITH_DUMP=0
+
 echo
 echo "=== feeder with its init image in block RAM ==="
 

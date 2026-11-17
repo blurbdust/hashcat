@@ -53,6 +53,7 @@
 
 module bcrypt_simd2_group #(
 	parameter LANES = 4,
+	parameter PD_M20K = 1,
 	parameter IDLE_WAIT = 4096,
 	parameter QUIET_WAIT = 32
 	)(
@@ -550,7 +551,7 @@ module bcrypt_simd2_group #(
 	genvar i;
 	generate
 	for (i = 0; i < LANES; i = i + 1) begin : lane
-		bcrypt_simd2_lane l (
+		bcrypt_simd2_lane #(.PD_M20K(PD_M20K)) l (
 			.CLK(CLK), .phase_next(phase_next),
 			.din_1(din_1),
 			.ctl_next(lane_ctl_next),
@@ -572,7 +573,10 @@ endmodule
 // One lane, C-slowed. The read address of PD, PN and the S banks and the write address of every
 // memory take the context as the top bit.
 //
-module bcrypt_simd2_lane (
+module bcrypt_simd2_lane #(
+	// 1 keeps PD in block RAM, 0 in LUTRAM. Block RAM saves about 40 ALMs a lane for one M20K.
+	parameter PD_M20K = 1
+	)(
 	input CLK,
 	input phase_next,
 
@@ -626,16 +630,65 @@ module bcrypt_simd2_lane (
 	// the next cycle serves only one cycle later, so each read takes the address of the context about
 	// to run.
 	//
-	// PD is a block RAM. It is written only while the group waits for its loads, when nothing uses
-	// what it reads, and its read goes through the block's address register, loaded at the end of a
-	// context's cycle with the address of that context's next one. PN stays a LUTRAM.
+	// PD is written only while the group waits for its loads, when nothing uses what it reads. As a
+	// block RAM (PD_M20K) its read goes through the block's address register, loaded at the end of a
+	// context's cycle with the address of that context's next one; as a LUTRAM it reads from a copy
+	// of that address. PN is a LUTRAM.
 	//
+	wire [31:0] pd_rd;
+
+	generate
+	if (PD_M20K) begin : pd_block
+
 `ifdef ALTERA_RESERVED_QIS
-	(* RAM_STYLE="block", ramstyle = "M20K, no_rw_check" *)
+		(* RAM_STYLE="block", ramstyle = "M20K, no_rw_check" *)
 `else
-	(* RAM_STYLE="block" *)
+		(* RAM_STYLE="block" *)
 `endif
-	reg [31:0] PD [63:0];
+		reg [31:0] PD [63:0];
+
+		initial begin
+			PD[31] = 0;
+			PD[63] = 0;
+		end
+
+		reg [31:0] pd_q;
+
+		always @(posedge CLK) begin
+			if (pd_we)
+				PD[{phase, pd_wa}] <= din_r;
+			pd_q <= PD[{phase, PD_addr_next}];
+		end
+
+		assign pd_rd = pd_q;
+
+	end
+	else begin : pd_lut
+
+`ifdef ALTERA_RESERVED_QIS
+		(* RAM_STYLE="DISTRIBUTED", ramstyle = "MLAB, no_rw_check" *)
+`else
+		(* RAM_STYLE="DISTRIBUTED" *)
+`endif
+		reg [31:0] PD [63:0];
+
+		initial begin
+			PD[31] = 0;
+			PD[63] = 0;
+		end
+
+		(* preserve *) reg [4:0] pd_a = `PD_ADDR_EK;
+
+		always @(posedge CLK) begin
+			if (pd_we)
+				PD[{phase, pd_wa}] <= din_r;
+			pd_a <= PD_addr_next;
+		end
+
+		assign pd_rd = PD[{~phase, pd_a}];
+
+	end
+	endgenerate
 
 `ifdef ALTERA_RESERVED_QIS
 	(* RAM_STYLE="DISTRIBUTED", ramstyle = "MLAB, no_rw_check" *)
@@ -645,8 +698,6 @@ module bcrypt_simd2_lane (
 	reg [31:0] PN [63:0];
 
 	initial begin
-		PD[31] = 0;
-		PD[63] = 0;
 		PN[30] = 0;
 		PN[31] = 0;
 		PN[62] = 0;
@@ -657,21 +708,14 @@ module bcrypt_simd2_lane (
 
 	wire [31:0] PN_input = PS_input_select ? Ltmp : din_r;
 
-	reg [31:0] pd_q;
-
-	always @(posedge CLK) begin
-		if (pd_we)
-			PD[{phase, pd_wa}] <= din_r;
-		pd_q <= PD[{phase, PD_addr_next}];
-
+	always @(posedge CLK)
 		if (PN_wr_en)
 			PN[{phase, PN_wr_addr}] <= PN_input;
-	end
 
 	reg [31:0] PDPN;
 
 	always @(posedge CLK)
-		PDPN <= pd_q ^ PN[{~phase, pn_a1}];
+		PDPN <= pd_rd ^ PN[{~phase, pn_a1}];
 
 
 	//

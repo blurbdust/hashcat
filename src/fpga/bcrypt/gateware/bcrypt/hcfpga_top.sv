@@ -28,6 +28,8 @@ module hcfpga_top #(
 
   parameter SIMD_IDLE  = 4096,
 
+  parameter SIMD_PD_LUT = 0,
+
   parameter FEED_INIT_ROM = 0
 )(
   input  wire CLK,
@@ -106,7 +108,7 @@ module hcfpga_top #(
   end
   endgenerate
 
-  hcfpga_cores #(.NUM_CORES(NUM_CORES), .NUM_CORES_DIST(NUM_CORES_DIST), .DIN_BITS(DIN_BITS), .GROUP(FEED_GROUP), .SHARD(FEED_SHARD), .WITH_DUMP(WITH_DUMP), .WITH_CMP(WITH_CMP), .CSLOW(CSLOW), .SIMD(SIMD), .SIMD_IDLE(SIMD_IDLE)) cores (
+  hcfpga_cores #(.NUM_CORES(NUM_CORES), .NUM_CORES_DIST(NUM_CORES_DIST), .DIN_BITS(DIN_BITS), .GROUP(FEED_GROUP), .SHARD(FEED_SHARD), .WITH_DUMP(WITH_DUMP), .WITH_CMP(WITH_CMP), .CSLOW(CSLOW), .SIMD(SIMD), .SIMD_IDLE(SIMD_IDLE), .SIMD_PD_LUT(SIMD_PD_LUT)) cores (
     .CLK(CLK), .CLK_CORE(CLK_CORE), .rst(rst), .mode_dump(mode_dump),
     .c_din(c_din), .c_bwe(c_bwe), .c_start(c_start), .c_wr_en(c_wr_en),
     .bm_we(bm_we), .bm_addr(bm_addr), .bm_din(bm_din),
