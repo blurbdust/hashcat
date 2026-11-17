@@ -378,6 +378,12 @@ run_one "tb_cmp.simd2_backpressure" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC" $SIMD_AR
   -Ptb_cmp.SIMD=2 -Ptb_cmp.CSLOW=2 -Ptb_cmp.DIN_BITS=32 -Ptb_cmp.WITH_DUMP=0 -Ptb_cmp.READY_DUTY=1 \
   -Ptb_cmp.COLLECT_GROUP=2 -Ptb_cmp.CMP_ALL=1
 
+run_one "tb_cmp.simd_shared" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_cmp.SIMD=4 -Ptb_cmp.DIN_BITS=32 -Ptb_cmp.WITH_DUMP=0 -Ptb_cmp.WITH_CMP=2 -Ptb_cmp.COLLECT_GROUP=2
+
+run_one "tb_cmp.simd2_shared" g2005-sv "$HERE/tb_cmp.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_cmp.SIMD=2 -Ptb_cmp.CSLOW=2 -Ptb_cmp.DIN_BITS=32 -Ptb_cmp.WITH_DUMP=0 -Ptb_cmp.WITH_CMP=2 -Ptb_cmp.READY_DUTY=3
+
 echo
 echo "=== feeder with its init image in block RAM ==="
 
