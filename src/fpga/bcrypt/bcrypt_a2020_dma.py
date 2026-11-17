@@ -43,25 +43,25 @@ BOARD_SHAPE = {
 
     "feed_group":     32,
 
-    "feed_shard":     128,
+    "feed_shard":     256,
 
-    "collect_group":  50,
+    "collect_group":  100,
 
     "no_dump":        1,
 
     "no_cmp":         1,
 
-    "cslow":          1,
+    "cslow":          2,
 
-    "simd":           0,
+    "simd":           16,
 
-    "feed_init_rom":  0,
+    "feed_init_rom":  1,
 
     "simd_pd_lut":    0,
 }
 
 # Extra setup uncertainty, in ns, that the fitter places sys_clk against.
-PLACEMENT_MARGIN = 0.0
+PLACEMENT_MARGIN = 0.2
 
 # The A-2020 is a Microsoft card with a Stratix 10 GX 2800, 1SG280LN2F43E2VG, L-Tile, on an x16
 # edge connector. Quartus Prime Pro builds it, with a license that covers Stratix 10.
