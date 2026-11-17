@@ -299,6 +299,13 @@ run_one "tb_datapath.simd_ragged" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD
   -Ptb_datapath.SIMD=4 -Ptb_datapath.NUM_CORES=7 -Ptb_datapath.NCAND=10 \
   -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 -Ptb_datapath.WITH_CMP=0
 
+# Records with gaps, as a slow link delivers them: groups keep closing part loaded while the feed holds
+# the next candidate.
+run_one "tb_datapath.simd_paced" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_datapath.SIMD=4 -Ptb_datapath.NUM_CORES=8 -Ptb_datapath.NCAND=64 -Ptb_datapath.FEED_SHARD=8 \
+  -Ptb_datapath.FEED_GROUP=8 -Ptb_datapath.COLLECT_GROUP=3 -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 \
+  -Ptb_datapath.WITH_CMP=0 -Ptb_datapath.SIMD_IDLE=64 -Ptb_datapath.GAP=300 -Ptb_datapath.TIMEOUT_NS=60000000
+
 run_one "tb_datapath.simd_no_filter" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
   -Ptb_datapath.SIMD=4 -Ptb_datapath.NUM_CORES=8 -Ptb_datapath.NCAND=16 -Ptb_datapath.CHECK_ALL_CORES=1 \
   -Ptb_datapath.FEED_SHARD=8 -Ptb_datapath.FEED_GROUP=8 -Ptb_datapath.COLLECT_GROUP=4 \
@@ -342,6 +349,12 @@ run_one "tb_datapath.simd2_partial" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SI
 run_one "tb_datapath.simd2_ragged" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
   -Ptb_datapath.SIMD=4 -Ptb_datapath.CSLOW=2 -Ptb_datapath.NUM_CORES=10 -Ptb_datapath.NCAND=13 \
   -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 -Ptb_datapath.WITH_CMP=0
+
+run_one "tb_datapath.simd2_paced" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_datapath.SIMD=4 -Ptb_datapath.CSLOW=2 -Ptb_datapath.NUM_CORES=16 -Ptb_datapath.NCAND=96 \
+  -Ptb_datapath.FEED_SHARD=8 -Ptb_datapath.FEED_GROUP=8 -Ptb_datapath.COLLECT_GROUP=5 -Ptb_datapath.DIN_BITS=32 \
+  -Ptb_datapath.WITH_DUMP=0 -Ptb_datapath.WITH_CMP=0 -Ptb_datapath.SIMD_IDLE=64 -Ptb_datapath.GAP=400 \
+  -Ptb_datapath.TIMEOUT_NS=60000000
 
 run_one "tb_datapath.simd2_pd_mlab" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
   -Ptb_datapath.SIMD=2 -Ptb_datapath.CSLOW=2 -Ptb_datapath.NUM_CORES=8 -Ptb_datapath.NCAND=16 \

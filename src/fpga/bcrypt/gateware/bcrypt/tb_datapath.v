@@ -29,6 +29,11 @@ module tb_datapath;
 
   parameter integer CHECK_ALL_CORES = 0;
 
+  // GAP > 0 idles the input for a pseudo-random 0 to GAP-1 cycles after each record, as a slow link
+  // such as JTAG delivers it, so lockstep groups close part loaded while candidates keep coming.
+  parameter integer GAP = 0;
+  parameter integer TIMEOUT_NS = 20000000;
+
   reg CLK = 0;
   always #5 CLK = ~CLK;
 
@@ -100,6 +105,8 @@ module tb_datapath;
     end
   endtask
 
+  reg [15:0] lfsr = 16'hace1;
+
   reg [7:0]  rx [0:31];
   integer    rxpos = 0;
   integer    nframe = 0;
@@ -147,7 +154,15 @@ module tb_datapath;
     rst = 0;
     repeat (4) @(posedge CLK);
 
-    for (i=0; i<NCAND; i=i+1) send_record(EKID_BASE + i);
+    for (i=0; i<NCAND; i=i+1)
+    begin
+      send_record(EKID_BASE + i);
+      if (GAP > 0)
+      begin
+        lfsr = {lfsr[14:0], lfsr[15] ^ lfsr[13] ^ lfsr[12] ^ lfsr[10]};
+        repeat (lfsr % GAP) @(posedge CLK);
+      end
+    end
 
     while (nframe < NCAND) @(posedge CLK);
     repeat (20) @(posedge CLK);
@@ -183,7 +198,7 @@ module tb_datapath;
   end
 
   initial begin
-    #20000000;
+    #(TIMEOUT_NS);
     $display("[tb] TIMEOUT: collected %0d/%0d frames (seen=%b)", nframe, NCAND, seen);
     $finish;
   end
