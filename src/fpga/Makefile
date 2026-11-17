@@ -38,7 +38,7 @@ EXT_storeypeak           := rbf
 NO_STARTUPCLK_storeypeak := 1
 NO_RELEASE_storeypeak    := 1
 
-CORES_a2020     := 4352
+CORES_a2020     := 4832
 CLK_a2020       := 120
 
 # Quartus Prime Pro board: a .sof loaded with the Quartus Programmer, and no published bitstream.

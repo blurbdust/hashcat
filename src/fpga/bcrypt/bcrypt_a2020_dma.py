@@ -57,7 +57,7 @@ BOARD_SHAPE = {
 
     "feed_init_rom":  1,
 
-    "simd_pd_lut":    0,
+    "simd_pd_lut":    74,
 }
 
 # Extra setup uncertainty, in ns, that the fitter places sys_clk against.
