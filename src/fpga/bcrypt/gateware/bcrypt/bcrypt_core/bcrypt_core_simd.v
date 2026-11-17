@@ -386,7 +386,11 @@ module bcrypt_simd_group #(
 				quiet <= quiet + 1'b1;
 		end
 
-		if (rst || (Extra_Controls == `E_RST) || (Extra_Controls == `E_RST_CRYPT_READY))
+		// A group that starts drops every lane's crypt_ready in the same cycle. MC[5] does it a cycle
+		// later, after closing has let go of crypt_ready, which showed the lanes a part loaded group
+		// started without as ready for that cycle: the feed could send one of them a candidate that
+		// the running group then never loads.
+		if (rst || (Extra_Controls == `E_RST) || (Extra_Controls == `E_RST_CRYPT_READY) || (in_load & go))
 			cr <= 0;
 		else if (Extra_Controls == `E_SET_CRYPT_READY)
 			cr <= {LANES{1'b1}};
