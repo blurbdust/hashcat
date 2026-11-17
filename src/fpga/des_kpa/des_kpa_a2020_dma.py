@@ -200,11 +200,11 @@ class A2020SoC(SoCMini):
             self.dma_up.source.connect(self.pcie_dma0.sink),
         ]
 
-# The build that closes timing at every corner: 512 cores at 250 MHz, one key per core and clock,
-# 128 G keys/s, at 76% of the ALMs. 576 cores (89%) failed at 240 and 280 MHz before the engine's copies
-# were kept in place; past about 289 MHz LitePCIe's DMA fails first even on an empty die. Not yet run
-# on a card.
-UNITS            = 512
+# The build that closes timing at every corner: 576 cores at 250 MHz, one key per core and clock,
+# 144 G keys/s, at 85% of the ALMs (512 cores also close, at 76%). 576 cores failed at 240 and 280 MHz
+# before the engine's copies were kept in place; past about 289 MHz LitePCIe's DMA fails first even on
+# an empty die. Not yet run on a card.
+UNITS            = 576
 SYS_CLK_FREQ     = 250e6
 PLACEMENT_MARGIN = 0.2
 
