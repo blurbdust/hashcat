@@ -107,7 +107,7 @@ Everything else in its microcode is `fsm.v`'s, the MC[0] change included. Its he
 
 Its header explains the design. `SIMD` in `src/fpga/Makefile` builds it, off by default.
 
-`bcrypt_core_simd2.v` C-slows those groups by two as `bcrypt_core_c2.v` C-slows the core, with the same Denis Burykin header and notice: two contexts per lane, each a lockstep group with its own microcode state, every register a two stage chain, the context the top address bit of every memory, and `bcrypt_core_c2.v`'s re-read change at MC[81] and MC[82]. PD and PN are read one cycle early and their XOR registered, PD from a block RAM, and the collision is ORed across the group between the two stages of its register. `SIMD` with `CSLOW=2` builds it.
+`bcrypt_core_simd2.v` C-slows those groups by two as `bcrypt_core_c2.v` C-slows the core, with the same Denis Burykin header and notice: two contexts per lane, each a lockstep group with its own microcode state, every register a two stage chain, the context the top address bit of every memory, and `bcrypt_core_c2.v`'s re-read change at MC[81] and MC[82]. PD and PN are read one cycle early and their XOR registered, PD from a block RAM, or from a LUTRAM in the groups `SIMD_PD_MLAB` names, and the collision is ORed across the group between the two stages of its register. `SIMD` with `CSLOW=2` builds it.
 
 ## Other material derived from John the Ripper
 
