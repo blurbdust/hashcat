@@ -414,8 +414,11 @@ module bcrypt_simd2_group #(
 				(closing && (quiet != QUIET_WAIT)) ? quiet + 1'b1 : quiet;
 		end
 
-		// crypt_ready.
-		if (rst || (Extra_Controls == `E_RST) || (Extra_Controls == `E_RST_CRYPT_READY))
+		// crypt_ready. A context that starts drops every lane's crypt_ready in the same step. MC[5]
+		// does it a step later, after closing has let go of crypt_ready, which showed the lanes a
+		// part loaded context started without as ready for that step: the feed could send one of
+		// them a candidate that the running context then never loads.
+		if (rst || (Extra_Controls == `E_RST) || (Extra_Controls == `E_RST_CRYPT_READY) || (in_load & go))
 			cr1 <= 0;
 		else if (Extra_Controls == `E_SET_CRYPT_READY)
 			cr1 <= {LANES{1'b1}};
