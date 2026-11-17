@@ -24,6 +24,10 @@ module hcfpga_cores #(
 
   parameter SIMD_IDLE = 4096,
 
+  // C-slowed groups only: how many groups, the last ones in the array, read PD from a LUTRAM
+  // instead of a block RAM.
+  parameter SIMD_PD_MLAB = 0,
+
   parameter NSH = (SHARD == 0) ? 1 : ((NUM_CORES + SHARD - 1) / SHARD)
 )(
   input  wire CLK,
@@ -208,7 +212,9 @@ module hcfpga_cores #(
       rd_en_s <= core_rd_en;
     end
 
-    bcrypt_simd2_group #(.LANES(NL), .IDLE_WAIT(SIMD_IDLE)) g (
+    localparam integer NG = (NUM_CORES + 2*SIMD - 1) / (2*SIMD);
+
+    bcrypt_simd2_group #(.LANES(NL), .IDLE_WAIT(SIMD_IDLE), .PD_BRAM((i >= NG - SIMD_PD_MLAB) ? 0 : 1)) g (
       .CLK(CLK_CORE), .rst(rst_c), .phase(phase), .phase_next(phase_next),
       .din(din_s), .bwe(bwe_s), .start(start_s), .wr_en(wr_en_s),
       .init_ready(c_init_ready), .crypt_ready(c_crypt_ready),

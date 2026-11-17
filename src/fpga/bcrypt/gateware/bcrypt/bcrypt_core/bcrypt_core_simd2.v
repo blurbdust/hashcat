@@ -54,7 +54,10 @@
 module bcrypt_simd2_group #(
 	parameter LANES = 4,
 	parameter IDLE_WAIT = 4096,
-	parameter QUIET_WAIT = 32
+	parameter QUIET_WAIT = 32,
+	// 1 reads each lane's PD from a block RAM, 0 from a LUTRAM as PN: where block RAM runs out
+	// before logic, a LUTRAM PD trades about 20 ALMs per lane for one M20K.
+	parameter PD_BRAM = 1
 	)(
 	input CLK,
 	input rst,
@@ -550,7 +553,7 @@ module bcrypt_simd2_group #(
 	genvar i;
 	generate
 	for (i = 0; i < LANES; i = i + 1) begin : lane
-		bcrypt_simd2_lane l (
+		bcrypt_simd2_lane #(.PD_BRAM(PD_BRAM)) l (
 			.CLK(CLK), .phase_next(phase_next),
 			.din_1(din_1),
 			.ctl_next(lane_ctl_next),
@@ -572,7 +575,9 @@ endmodule
 // One lane, C-slowed. The read address of PD, PN and the S banks and the write address of every
 // memory take the context as the top bit.
 //
-module bcrypt_simd2_lane (
+module bcrypt_simd2_lane #(
+	parameter PD_BRAM = 1
+	)(
 	input CLK,
 	input phase_next,
 
@@ -626,16 +631,69 @@ module bcrypt_simd2_lane (
 	// the next cycle serves only one cycle later, so each read takes the address of the context about
 	// to run.
 	//
-	// PD is a block RAM. It is written only while the group waits for its loads, when nothing uses
-	// what it reads, and its read goes through the block's address register, loaded at the end of a
-	// context's cycle with the address of that context's next one. PN stays a LUTRAM.
+	// With PD_BRAM, PD is a block RAM. It is written only while the group waits for its loads, when
+	// nothing uses what it reads, and its read goes through the block's address register, loaded at
+	// the end of a context's cycle with the address of that context's next one. Without it, PD is a
+	// LUTRAM read as PN is. PN stays a LUTRAM.
 	//
+	reg [31:0] L1, L, R1, R, Ltmp1, Ltmp;
+
+	wire [31:0] PN_input = PS_input_select ? Ltmp : din_r;
+
+	wire [31:0] pd_word;
+
+	generate
+	if (PD_BRAM) begin : pd_bram
+
 `ifdef ALTERA_RESERVED_QIS
 	(* RAM_STYLE="block", ramstyle = "M20K, no_rw_check" *)
 `else
 	(* RAM_STYLE="block" *)
 `endif
 	reg [31:0] PD [63:0];
+
+	initial begin
+		PD[31] = 0;
+		PD[63] = 0;
+	end
+
+	reg [31:0] pd_q;
+
+	always @(posedge CLK) begin
+		if (pd_we)
+			PD[{phase, pd_wa}] <= din_r;
+		pd_q <= PD[{phase, PD_addr_next}];
+	end
+
+	assign pd_word = pd_q;
+
+	end
+	else begin : pd_lutram
+
+`ifdef ALTERA_RESERVED_QIS
+	(* RAM_STYLE="DISTRIBUTED", ramstyle = "MLAB, no_rw_check" *)
+`else
+	(* RAM_STYLE="DISTRIBUTED" *)
+`endif
+	reg [31:0] PD [63:0];
+
+	initial begin
+		PD[31] = 0;
+		PD[63] = 0;
+	end
+
+	(* preserve *) reg [4:0] pd_a1 = `PD_ADDR_EK;
+
+	always @(posedge CLK) begin
+		if (pd_we)
+			PD[{phase, pd_wa}] <= din_r;
+		pd_a1 <= PD_addr_next;
+	end
+
+	assign pd_word = PD[{~phase, pd_a1}];
+
+	end
+	endgenerate
 
 `ifdef ALTERA_RESERVED_QIS
 	(* RAM_STYLE="DISTRIBUTED", ramstyle = "MLAB, no_rw_check" *)
@@ -645,25 +703,13 @@ module bcrypt_simd2_lane (
 	reg [31:0] PN [63:0];
 
 	initial begin
-		PD[31] = 0;
-		PD[63] = 0;
 		PN[30] = 0;
 		PN[31] = 0;
 		PN[62] = 0;
 		PN[63] = 0;
 	end
 
-	reg [31:0] L1, L, R1, R, Ltmp1, Ltmp;
-
-	wire [31:0] PN_input = PS_input_select ? Ltmp : din_r;
-
-	reg [31:0] pd_q;
-
 	always @(posedge CLK) begin
-		if (pd_we)
-			PD[{phase, pd_wa}] <= din_r;
-		pd_q <= PD[{phase, PD_addr_next}];
-
 		if (PN_wr_en)
 			PN[{phase, PN_wr_addr}] <= PN_input;
 	end
@@ -671,7 +717,7 @@ module bcrypt_simd2_lane (
 	reg [31:0] PDPN;
 
 	always @(posedge CLK)
-		PDPN <= pd_q ^ PN[{~phase, pn_a1}];
+		PDPN <= pd_word ^ PN[{~phase, pn_a1}];
 
 
 	//
@@ -726,16 +772,16 @@ module bcrypt_simd2_lane (
 	// PN and PD are read one cycle before their use, so a word written in one step and used in the
 	// next would be read in the cycle after its write, which a LUTRAM does not promise.
 	reg pn_w1 = 0, pd_w1 = 0, pn_haz = 0, pd_haz = 0;
-	reg [4:0] pd_a1 = 0;
+	reg [4:0] pd_ra1 = 0;
 	reg [5:0] pn_wa1 = 0, pd_wa1 = 0;
 	always @(posedge CLK) begin
-		pd_a1  <= PD_addr_next;
+		pd_ra1 <= PD_addr_next;
 		pn_w1  <= PN_wr_en;
 		pn_wa1 <= {phase, PN_wr_addr};
 		pd_w1  <= pd_we;
 		pd_wa1 <= {phase, pd_wa};
 		pn_haz <= pn_w1 && (pn_wa1 == {~phase, pn_a1});
-		pd_haz <= pd_w1 && (pd_wa1 == {~phase, pd_a1});
+		pd_haz <= pd_w1 && (pd_wa1 == {~phase, pd_ra1});
 		if ((pn_haz || pd_haz) && (L_wr_en || Ltmp_wr_en || S_rd_en)) begin
 			$display("[simd2] %s read in the cycle after its write and used: LUTRAM hazard", pn_haz ? "PN" : "PD");
 			$finish;

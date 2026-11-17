@@ -55,6 +55,8 @@ BOARD_SHAPE = {
     "simd":           0,
 
     "feed_init_rom":  0,
+
+    "simd_pd_mlab":   0,
 }
 
 # Extra setup uncertainty, in ns, that the fitter places 384 cores at 190 MHz against.
@@ -106,7 +108,7 @@ class _CRG(LiteXModule):
         ]
 
 class BcryptSoC(SoCMini):
-    def __init__(self, sys_clk_freq=150e6, num_cores=1, with_led=True, feed_group=0, feed_shard=0, collect_group=0, init_batch=0, num_cores_dist=0, with_dump=1, with_cmp=1, din_bits=32, abi=1, cslow=1, simd=0, feed_init_rom=0, pcie_connector=0, placement_margin=0.0, as_clock_mhz=100):
+    def __init__(self, sys_clk_freq=150e6, num_cores=1, with_led=True, feed_group=0, feed_shard=0, collect_group=0, init_batch=0, num_cores_dist=0, with_dump=1, with_cmp=1, din_bits=32, abi=1, cslow=1, simd=0, feed_init_rom=0, simd_pd_mlab=0, pcie_connector=0, placement_margin=0.0, as_clock_mhz=100):
         platform = microsoft_storey_peak.Platform()
 
         self.crg = _CRG(platform, sys_clk_freq, cslow)
@@ -184,7 +186,7 @@ class BcryptSoC(SoCMini):
             num_cores_dist=num_cores_dist, din_bits=din_bits, feed_group=feed_group,
             feed_shard=feed_shard,
             collect_group=collect_group, init_batch=init_batch, with_dump=with_dump, with_cmp=with_cmp,
-            cslow=cslow, simd=simd, feed_init_rom=feed_init_rom)
+            cslow=cslow, simd=simd, feed_init_rom=feed_init_rom, simd_pd_mlab=simd_pd_mlab)
         self.bcrypt.add_hdl_sources()
 
         dw = self.pcie_dma0.data_width
@@ -221,6 +223,7 @@ def main():
     parser.add_argument("--cslow",        type=int,   default=BOARD_SHAPE["cslow"], choices=[1, 2], help="2 builds the array from two hash cores on a second clock at twice --sys-clk-freq. --cores then counts virtual cores.")
     parser.add_argument("--simd",         type=int,   default=BOARD_SHAPE["simd"], help="Cores per lockstep group, sharing one controller. Zero builds independent cores.")
     parser.add_argument("--feed-init-rom", type=int,  default=BOARD_SHAPE["feed_init_rom"], choices=[0, 1], help="1 keeps each feed engine's init image in block RAM instead of logic.")
+    parser.add_argument("--simd-pd-mlab", type=int,   default=BOARD_SHAPE["simd_pd_mlab"], help="With --simd and --cslow 2: how many lockstep groups, the last ones, keep PD in a LUTRAM instead of block RAM, trading logic for block RAM.")
     parser.add_argument("--pcie-connector", type=int, default=0, choices=[0, 1], help="Which x8 half of the edge connector. 0 carries edge lanes 0-7.")
     parser.add_argument("--placement-margin", type=float, default=PLACEMENT_MARGIN, help="Extra ns of setup clock uncertainty on sys_clk, and the core clock with --cslow 2, to over-constrain placement.")
     parser.add_argument("--fitter-seed",  type=int, default=None, help="Quartus fitter seed. Different seeds give different placements and a spread of Fmax.")
@@ -249,7 +252,9 @@ def main():
 
     ir_suffix = "_ir" if args.feed_init_rom else ""
 
-    name = f"bcrypt_{BOARD}_dma_c{args.cores}_{mhz}mhz{fg_suffix}{nd_suffix}{nc_suffix}{db_suffix}{ds_suffix}{fs_suffix}{cg_suffix}{ib_suffix}{cs_suffix}{simd_suffix}{ir_suffix}"
+    pdm_suffix = f"_pdm{args.simd_pd_mlab}" if args.simd_pd_mlab else ""
+
+    name = f"bcrypt_{BOARD}_dma_c{args.cores}_{mhz}mhz{fg_suffix}{nd_suffix}{nc_suffix}{db_suffix}{ds_suffix}{fs_suffix}{cg_suffix}{ib_suffix}{cs_suffix}{simd_suffix}{ir_suffix}{pdm_suffix}"
 
     soc = BcryptSoC(
         sys_clk_freq     = args.sys_clk_freq,
@@ -266,6 +271,7 @@ def main():
         cslow            = args.cslow,
         simd             = args.simd,
         feed_init_rom    = args.feed_init_rom,
+        simd_pd_mlab     = args.simd_pd_mlab,
         pcie_connector   = args.pcie_connector,
         placement_margin = args.placement_margin,
         as_clock_mhz     = args.as_clock,

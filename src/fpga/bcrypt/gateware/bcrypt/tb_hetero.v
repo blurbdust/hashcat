@@ -10,6 +10,7 @@ module tb_hetero;
 
   parameter integer SIMD      = 0;
   parameter integer SIMD_IDLE = 256;
+  parameter integer SIMD_PD_MLAB = 0;
 
   parameter integer FEED_INIT_ROM = 0;
 
@@ -47,7 +48,7 @@ module tb_hetero;
   reg         m_ready = 1;
   wire        m_last;
 
-  hcfpga_top #(.NUM_CORES(NUM_CORES), .NUM_CORES_DIST(NUM_CORES_DIST), .INIT_BATCH(INIT_BATCH), .DIN_BITS(DIN_BITS), .FEED_GROUP(FEED_GROUP), .FEED_SHARD(FEED_SHARD), .COLLECT_GROUP(COLLECT_GROUP), .WITH_DUMP(WITH_DUMP), .WITH_CMP(WITH_CMP), .CSLOW(CSLOW), .SIMD(SIMD), .SIMD_IDLE(SIMD_IDLE), .FEED_INIT_ROM(FEED_INIT_ROM)) dut (
+  hcfpga_top #(.NUM_CORES(NUM_CORES), .NUM_CORES_DIST(NUM_CORES_DIST), .INIT_BATCH(INIT_BATCH), .DIN_BITS(DIN_BITS), .FEED_GROUP(FEED_GROUP), .FEED_SHARD(FEED_SHARD), .COLLECT_GROUP(COLLECT_GROUP), .WITH_DUMP(WITH_DUMP), .WITH_CMP(WITH_CMP), .CSLOW(CSLOW), .SIMD(SIMD), .SIMD_IDLE(SIMD_IDLE), .SIMD_PD_MLAB(SIMD_PD_MLAB), .FEED_INIT_ROM(FEED_INIT_ROM)) dut (
     .CLK(CLK), .CLK_CORE(CLK_CORE), .rst(rst), .mode_dump(1'b0),
     .s_data(s_data), .s_valid(s_valid), .s_ready(s_ready), .s_last(1'b0),
     .frame_status(),

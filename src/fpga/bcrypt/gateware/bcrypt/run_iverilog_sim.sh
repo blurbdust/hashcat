@@ -343,10 +343,20 @@ run_one "tb_datapath.simd2_ragged" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIM
   -Ptb_datapath.SIMD=4 -Ptb_datapath.CSLOW=2 -Ptb_datapath.NUM_CORES=10 -Ptb_datapath.NCAND=13 \
   -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 -Ptb_datapath.WITH_CMP=0
 
+run_one "tb_datapath.simd2_pd_mlab" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_datapath.SIMD=2 -Ptb_datapath.CSLOW=2 -Ptb_datapath.NUM_CORES=8 -Ptb_datapath.NCAND=16 \
+  -Ptb_datapath.CHECK_ALL_CORES=1 -Ptb_datapath.FEED_SHARD=4 -Ptb_datapath.FEED_GROUP=4 \
+  -Ptb_datapath.COLLECT_GROUP=3 -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 -Ptb_datapath.SIMD_PD_MLAB=2
+
 run_one "tb_hetero.simd2" g2005-sv "$HERE/tb_hetero.v" "$DP_SRC" $SIMD_ARGS \
   -Ptb_hetero.SIMD=2 -Ptb_hetero.CSLOW=2 -Ptb_hetero.NUM_CORES=6 -Ptb_hetero.CHECK_ALL_CORES=1 \
   -Ptb_hetero.FEED_SHARD=4 -Ptb_hetero.FEED_GROUP=4 -Ptb_hetero.COLLECT_GROUP=3 \
   -Ptb_hetero.DIN_BITS=32 -Ptb_hetero.WITH_DUMP=0
+
+run_one "tb_hetero.simd2_pd_mixed" g2005-sv "$HERE/tb_hetero.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_hetero.SIMD=2 -Ptb_hetero.CSLOW=2 -Ptb_hetero.NUM_CORES=8 -Ptb_hetero.CHECK_ALL_CORES=1 \
+  -Ptb_hetero.FEED_SHARD=4 -Ptb_hetero.FEED_GROUP=4 -Ptb_hetero.COLLECT_GROUP=3 \
+  -Ptb_hetero.DIN_BITS=32 -Ptb_hetero.WITH_DUMP=0 -Ptb_hetero.SIMD_PD_MLAB=1
 
 run_one "tb_hetero.simd2_one_group" g2005-sv "$HERE/tb_hetero.v" "$DP_SRC" $SIMD_ARGS \
   -Ptb_hetero.SIMD=4 -Ptb_hetero.CSLOW=2 -Ptb_hetero.NUM_CORES=8 -Ptb_hetero.CHECK_ALL_CORES=1 \
