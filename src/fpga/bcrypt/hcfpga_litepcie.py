@@ -73,3 +73,32 @@ def clock_mhz (freq_hz):
   mhz = int (freq_hz // 1e6)
 
   return mhz
+
+# Vivado builds each of the LitePCIe endpoint's completion buffers, one per outstanding read request
+# and 64 words deep, from block RAM, three RAMB36 apiece at a 64 bit PHY. A board whose core array is
+# bounded by block RAM gets them back by keeping these buffers in LUTRAM. The memories exist only once
+# the endpoint has been finalized, so a target calls this from its do_finalize. The constraint is
+# quiet because Vivado applies it again to the synthesized netlist, where the memory is gone.
+def pcie_buffers_in_lutram (soc, max_depth = 64, min_width = 64):
+  from migen.fhdl.specials import Memory
+
+  found = []
+
+  def walk (module):
+    fragment = getattr (module, "_fragment", None)
+
+    if fragment is not None:
+      for special in fragment.specials:
+        if isinstance (special, Memory) and special.depth <= max_depth and special.width >= min_width:
+          if all (special is not m for m in found):
+            found.append (special)
+
+    for _, sub in getattr (module, "_submodules", []):
+      walk (sub)
+
+  walk (soc.pcie_endpoint)
+
+  for mem in found:
+    soc.platform.add_platform_command ("set_property -quiet RAM_STYLE distributed [get_cells -quiet {mem}_reg]", mem = mem)
+
+  return len (found)
