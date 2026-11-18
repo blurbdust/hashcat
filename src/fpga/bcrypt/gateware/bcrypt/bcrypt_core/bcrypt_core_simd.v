@@ -49,6 +49,17 @@
 
 `include "bcrypt.vh"
 
+// A register copy that synthesis must keep apart from its twins, which have the same input and
+// would otherwise be merged back into one register driving every load. Quartus reads preserve for
+// this and Vivado reads keep.
+`ifndef HC_KEEP
+`ifdef ALTERA_RESERVED_QIS
+`define HC_KEEP (* preserve *)
+`else
+`define HC_KEEP (* keep = "true" *)
+`endif
+`endif
+
 // Condition slots that mean something else in a group: the PD load exit (MC[5] no longer loads) and
 // the state dump (not carried).
 `ifndef JMP_go
@@ -526,12 +537,12 @@ module bcrypt_simd_lane (
 	output reg obit = 0
 	);
 
-	(* preserve *) reg L_input_select = 0, Ltmp_wr_en = 0, LR_zero = 0, L_wr_en = 0, R_wr_en = 0;
-	(* preserve *) reg PS_input_select = 0, PN_wr_en = 0;
-	(* preserve *) reg S_wr_en = 0, S_rd_en = 0, S_rst = 0;
-	(* preserve *) reg [4:0] PN_addr = `PN_ADDR_P, PN_wr_addr = `PN_ADDR_P, PD_addr = `PD_ADDR_EK;
-	(* preserve *) reg [9:0] S_wr_addr = 10'b01;
-	(* preserve *) reg exc = 0, exc_r = 0;
+	`HC_KEEP reg L_input_select = 0, Ltmp_wr_en = 0, LR_zero = 0, L_wr_en = 0, R_wr_en = 0;
+	`HC_KEEP reg PS_input_select = 0, PN_wr_en = 0;
+	`HC_KEEP reg S_wr_en = 0, S_rd_en = 0, S_rst = 0;
+	`HC_KEEP reg [4:0] PN_addr = `PN_ADDR_P, PN_wr_addr = `PN_ADDR_P, PD_addr = `PD_ADDR_EK;
+	`HC_KEEP reg [9:0] S_wr_addr = 10'b01;
+	`HC_KEEP reg exc = 0, exc_r = 0;
 
 	reg [31:0] din_r;
 

@@ -4,6 +4,18 @@
  */
 
 `timescale 1ns / 1ps
+
+// A register copy that synthesis must keep apart from its twins, which have the same input and
+// would otherwise be merged back into one register driving every load. Quartus reads preserve for
+// this and Vivado reads keep.
+`ifndef HC_KEEP
+`ifdef ALTERA_RESERVED_QIS
+`define HC_KEEP (* preserve *)
+`else
+`define HC_KEEP (* keep = "true" *)
+`endif
+`endif
+
 module hcfpga_cores #(
   parameter NUM_CORES = 4,
   parameter DIN_BITS  = 32,
@@ -167,7 +179,7 @@ module hcfpga_cores #(
   wire [NBUS-1:0] rst_bus;
 
   for (g = 0; g < NBUS; g = g + 1) begin : rtree
-    (* preserve *) reg r = 1'b1;
+    `HC_KEEP reg r = 1'b1;
 
     always @(posedge CLK) r <= rst;
 
@@ -180,7 +192,7 @@ module hcfpga_cores #(
     localparam integer NL = NV / 2;
     localparam integer GI = (GROUP == 0) ? ((SHARD == 0) ? 0 : (B / SHARD)) : (B / GROUP);
 
-    (* preserve *) reg rst_g = 1'b1;
+    `HC_KEEP reg rst_g = 1'b1;
 
     always @(posedge CLK) rst_g <= rst_bus[GI];
 
@@ -193,7 +205,7 @@ module hcfpga_cores #(
 
     wire phase_next = (t != t_d);
 
-    (* preserve *) reg rst_c = 1'b1;
+    `HC_KEEP reg rst_c = 1'b1;
 
     always @(posedge CLK_CORE)
     begin
@@ -209,13 +221,13 @@ module hcfpga_cores #(
     wire [NV-1:0] c_crypt_ready;
 
     // The bus and rd_en pass one more CLK register next to the group, so a path into CLK_CORE, which
-    // has one core cycle, starts beside the group and not at a register shared by several. preserve
+    // has one core cycle, starts beside the group and not at a register shared by several. HC_KEEP
     // keeps each group's copy: the copies have the same inputs and would otherwise be merged.
-    (* preserve *) reg [DIN_BITS-1:0] din_s   = 0;
-    (* preserve *) reg [3:0]          bwe_s   = 0;
-    (* preserve *) reg                start_s = 0;
-    (* preserve *) reg [NV-1:0]       wr_en_s = 0;
-    (* preserve *) reg [NV-1:0]       rd_en_s = 0;
+    `HC_KEEP reg [DIN_BITS-1:0] din_s   = 0;
+    `HC_KEEP reg [3:0]          bwe_s   = 0;
+    `HC_KEEP reg                start_s = 0;
+    `HC_KEEP reg [NV-1:0]       wr_en_s = 0;
+    `HC_KEEP reg [NV-1:0]       rd_en_s = 0;
 
     always @(posedge CLK)
     begin
@@ -275,12 +287,12 @@ module hcfpga_cores #(
   // Lockstep groups of SIMD cores, see bcrypt_core_simd.v. A group sits inside one feed group and one
   // feed engine, so its lanes share one bus and are loaded one at a time. The last group may be short.
   //
-  // The reset reaches the groups through a register per feed bus and one per group. preserve keeps the
+  // The reset reaches the groups through a register per feed bus and one per group. HC_KEEP keeps the
   // copies apart, where merging or retiming would make one register drive the whole array again.
   wire [NBUS-1:0] rst_bus;
 
   for (g = 0; g < NBUS; g = g + 1) begin : rtree
-    (* preserve *) reg r = 1'b1;
+    `HC_KEEP reg r = 1'b1;
 
     always @(posedge CLK) r <= rst;
 
@@ -296,7 +308,7 @@ module hcfpga_cores #(
     wire [NL-1:0] c_empty;
     wire [NL-1:0] c_dout;
 
-    (* preserve *) reg rst_g = 1'b1;
+    `HC_KEEP reg rst_g = 1'b1;
 
     always @(posedge CLK) rst_g <= rst_bus[GI];
 
