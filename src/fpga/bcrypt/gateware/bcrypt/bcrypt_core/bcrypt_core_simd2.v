@@ -562,6 +562,11 @@ module bcrypt_simd2_group #(
 	};
 
 
+	// The PD write enable and address of the next cycle, from the first stages of the registers that
+	// make them, for each lane to register its own copy as it does its controls: ld_ptr alone would
+	// otherwise drive the write address of every lane's PD.
+	wire pd_we_next = ~rst & ld_busy1 & wr_b3_1 & (IP1 == 7'd4);
+
 	genvar i;
 	generate
 	for (i = 0; i < LANES; i = i + 1) begin : lane
@@ -571,7 +576,7 @@ module bcrypt_simd2_group #(
 			.ctl_next(lane_ctl_next),
 			.PN_addr_next(PN_addr_next), .PD_addr_next(PD_addr_next),
 			.PN_wr_addr_1(PN_wr_addr1), .S_wr_addr_1(S_wr_addr1),
-			.pd_we(ld_busy & wr_b3 & ld_lane[i] & in_load), .pd_wa(ld_ptr),
+			.pd_we_next(pd_we_next & ld_lane1[i]), .pd_wa_next(ld_ptr1),
 			.act(active[i]),
 			.exc_next(exc_any),
 			.output_cnt(output_cnt),
@@ -602,8 +607,8 @@ module bcrypt_simd2_lane #(
 	input [4:0] PN_wr_addr_1,
 	input [9:0] S_wr_addr_1,
 
-	input pd_we,
-	input [4:0] pd_wa,
+	input pd_we_next,
+	input [4:0] pd_wa_next,
 
 	input act,
 	input exc_next,
@@ -620,12 +625,16 @@ module bcrypt_simd2_lane #(
 	`HC_KEEP reg [4:0] pn_a1 = `PN_ADDR_P, PN_wr_addr = `PN_ADDR_P;
 	`HC_KEEP reg [9:0] S_wr_addr = 10'b01;
 	`HC_KEEP reg exc = 0;
+	`HC_KEEP reg pd_we = 0;
+	`HC_KEEP reg [4:0] pd_wa = 0;
 	reg exc_r1 = 0, exc_r = 0;
 
 	reg [31:0] din_r;
 
 	always @(posedge CLK) begin
 		phase <= phase_next;
+		pd_we <= pd_we_next;
+		pd_wa <= pd_wa_next;
 		{ L_input_select, Ltmp_wr_en, LR_zero, L_wr_en, R_wr_en,
 		  PS_input_select, PN_wr_en, S_wr_en, S_rd_en, S_rst } <= ctl_next;
 		pn_a1      <= PN_addr_next;
