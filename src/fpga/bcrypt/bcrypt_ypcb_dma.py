@@ -54,18 +54,19 @@ BOARD_SHAPE = {
 
     "cslow":          2,
 
-    "simd":           0,
+    "simd":           16,
 
     "feed_init_rom":  0,
 
-    "simd_pd_lut":    0,
+    "simd_pd_lut":    30,
 
-    "pcie_buf_lutram": 0,
+    "pcie_buf_lutram": 1,
 }
 
-# Extra setup uncertainty, in ns, that the placer sees on sys_clk. It is removed again before
-# routing, so the reported slack is the design's own. --core-margin does the same for core_clk.
+# Extra setup uncertainty, in ns, that the placer sees on sys_clk, and with two hash cores on
+# core_clk. It is removed again before routing, so the reported slack is the design's own.
 PLACEMENT_MARGIN = 0.5
+CORE_MARGIN      = 0.2
 
 _pcie_x8_fixed = [
     ("pcie_x8_fixed", 0,
@@ -98,7 +99,7 @@ class _CRG(LiteXModule):
             platform.add_false_path_constraints(self.cd_sys.clk, pll.clkin)
 
 class BcryptSoC(SoCMini):
-    def __init__(self, sys_clk_freq=150e6, num_cores=1, startup_clock="Cclk", with_led=True, pcie_lanes=1, feed_group=0, feed_shard=0, collect_group=0, init_batch=0, num_cores_dist=0, with_dump=1, with_cmp=1, din_bits=32, abi=1, with_jtagbone=False, cslow=1, simd=0, feed_init_rom=0, simd_pd_lut=0, placement_margin=PLACEMENT_MARGIN, core_margin=0.0, pcie_buf_lutram=0):
+    def __init__(self, sys_clk_freq=150e6, num_cores=1, startup_clock="Cclk", with_led=True, pcie_lanes=1, feed_group=0, feed_shard=0, collect_group=0, init_batch=0, num_cores_dist=0, with_dump=1, with_cmp=1, din_bits=32, abi=1, with_jtagbone=False, cslow=1, simd=0, feed_init_rom=0, simd_pd_lut=0, placement_margin=PLACEMENT_MARGIN, core_margin=CORE_MARGIN, pcie_buf_lutram=0):
         platform = ypcb_00338_1p1.Platform()
 
         self.pcie_buf_lutram = pcie_buf_lutram
@@ -235,13 +236,13 @@ def main():
     parser.add_argument("--place-directive", type=str, default="Explore", help="Vivado placer directive. The shipped shape REQUIRES this one to close; see the note by builder.build below, and note that which one closes has inverted twice on this board. The choice lands in the build directory name so two runs cannot overwrite each other.")
     parser.add_argument("--abi",          type=int,   default=fpga_abi_current(), help="Wire ABI version, stamped into the bitstream identity and refused by the bridge when it does not match. Read from FPGA_ABI_CURRENT in src/bridges/fpga/hcfpga.h, which the Makefile reads too, so a direct invocation builds what hashcat accepts.")
     parser.add_argument("--startup-clk",  type=str,   default="Cclk", choices=["JtagClk", "Cclk"], help="PL startup clock. Cclk is the default and serves both JTAG loading and BPI flash boot on this board.")
-    parser.add_argument("--cslow",        type=int,   default=1, choices=[1, 2], help="2 builds the array from two hash cores on a second clock at twice --sys-clk-freq. --cores then counts virtual cores.")
+    parser.add_argument("--cslow",        type=int,   default=BOARD_SHAPE["cslow"], choices=[1, 2], help="2 builds the array from two hash cores on a second clock at twice --sys-clk-freq. --cores then counts virtual cores.")
     parser.add_argument("--pcie-lanes",   type=int,   default=1, choices=[1, 4, 8], help="PCIe link width. Published builds use x1. The x8 option requires the corrected pin list in this target.")
     parser.add_argument("--simd",         type=int,   default=BOARD_SHAPE["simd"], help="Cores per lockstep group, sharing one controller. Zero builds independent cores.")
     parser.add_argument("--feed-init-rom", type=int,  default=BOARD_SHAPE["feed_init_rom"], choices=[0, 1], help="1 keeps each feed engine's init image in block RAM instead of logic.")
     parser.add_argument("--simd-pd-lut",  type=int,   default=BOARD_SHAPE["simd_pd_lut"], help="With --cslow 2: groups, counted from the last, whose lanes keep PD in LUTRAM instead of block RAM.")
     parser.add_argument("--placement-margin", type=float, default=PLACEMENT_MARGIN, help="Extra ns of setup clock uncertainty on sys_clk while placing.")
-    parser.add_argument("--core-margin",  type=float, default=0.0, help="With --cslow 2: extra ns of setup clock uncertainty on core_clk while placing.")
+    parser.add_argument("--core-margin",  type=float, default=CORE_MARGIN, help="With --cslow 2: extra ns of setup clock uncertainty on core_clk while placing.")
     parser.add_argument("--pcie-buf-lutram", type=int, default=BOARD_SHAPE["pcie_buf_lutram"], choices=[0, 1], help="1 keeps the PCIe endpoint's completion buffers in LUTRAM, which frees about 19 block RAM tiles for the cores.")
     args = parser.parse_args()
 
@@ -274,7 +275,7 @@ def main():
     if args.placement_margin != PLACEMENT_MARGIN:
         simd_suffix += f"_m{round(args.placement_margin * 1000)}"
 
-    if args.core_margin:
+    if args.core_margin != CORE_MARGIN:
         simd_suffix += f"_cm{round(args.core_margin * 1000)}"
 
     if args.pcie_buf_lutram != BOARD_SHAPE["pcie_buf_lutram"]:

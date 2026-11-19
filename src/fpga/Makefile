@@ -13,7 +13,7 @@ FLOW_artyz7     := ps
 
 FLOW            = $(or $(FLOW_$(BOARD)),dma)
 
-CORES_ypcb      := 760
+CORES_ypcb      := 936
 CLK_ypcb        := 115
 
 CORES_zc706     := 240
