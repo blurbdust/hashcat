@@ -61,7 +61,7 @@ BOARD_SHAPE = {
 }
 
 # Extra setup uncertainty, in ns, that the fitter places sys_clk against.
-PLACEMENT_MARGIN = 0.2
+PLACEMENT_MARGIN = 0.202
 
 # The A-2020 is a Microsoft card with a Stratix 10 GX 2800, 1SG280LN2F43E2VG, L-Tile, on an x16
 # edge connector. Quartus Prime Pro builds it, with a license that covers Stratix 10.
