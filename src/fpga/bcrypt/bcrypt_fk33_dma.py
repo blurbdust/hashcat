@@ -30,7 +30,7 @@ from litepcie.software       import generate_litepcie_software_headers
 from gateware.bcrypt_dma_wrapper import BcryptDmaWrapper
 
 from hcfpga_abi import fpga_abi_current
-from hcfpga_litepcie import PCIE_CLASS_CODE, PCIE_CLASS_MENU_BASE, PCIE_CLASS_MENU_SUB, add_debug_jtagbone, vivado_build_args, clock_mhz
+from hcfpga_litepcie import PCIE_CLASS_CODE, PCIE_CLASS_MENU_BASE, PCIE_CLASS_MENU_SUB, add_debug_jtagbone, vivado_build_args, clock_mhz, pcie_buffers_in_lutram
 
 BOARD = "fk33"
 
@@ -54,7 +54,19 @@ BOARD_SHAPE = {
     "no_cmp":         1,
 
     "cslow":          2,
+
+    "simd":           0,
+
+    "feed_init_rom":  0,
+
+    "simd_pd_lut":    0,
+
+    "pcie_buf_lutram": 0,
 }
+
+# Extra setup uncertainty, in ns, that the placer sees on sys_clk. It is removed again before
+# routing, so the reported slack is the design's own. --core-margin does the same for core_clk.
+PLACEMENT_MARGIN = 0.5
 
 # The register map that every LitePCIe board in this tree shares is the one the 7 series boards
 # generate, and the driver and the tools are built against it. Three blocks differ on UltraScale+,
@@ -276,8 +288,10 @@ class _CRG(LiteXModule):
             platform.add_false_path_constraints(self.cd_sys.clk, pll.clkin)
 
 class BcryptSoC(SoCMini):
-    def __init__(self, sys_clk_freq=150e6, num_cores=1, startup_clock="Cclk", with_led=True, pcie_lanes=4, feed_group=0, feed_shard=0, collect_group=0, init_batch=0, num_cores_dist=0, num_cores_uram=0, with_dump=1, with_cmp=1, din_bits=32, abi=1, with_jtagbone=False, cslow=1):
+    def __init__(self, sys_clk_freq=150e6, num_cores=1, startup_clock="Cclk", with_led=True, pcie_lanes=4, feed_group=0, feed_shard=0, collect_group=0, init_batch=0, num_cores_dist=0, num_cores_uram=0, with_dump=1, with_cmp=1, din_bits=32, abi=1, with_jtagbone=False, cslow=1, simd=0, feed_init_rom=0, simd_pd_lut=0, placement_margin=PLACEMENT_MARGIN, core_margin=0.0, pcie_buf_lutram=0):
         platform = sqrl_fk33.Platform()
+
+        self.pcie_buf_lutram = pcie_buf_lutram
 
         self.crg = _CRG(platform, sys_clk_freq, cslow)
 
@@ -319,8 +333,12 @@ class BcryptSoC(SoCMini):
         else:
             platform.add_period_constraint(self.crg.cd_sys.clk, 1e9/sys_clk_freq)
 
-        platform.toolchain.pre_placement_commands.append("set_clock_uncertainty 0.500 [get_clocks sys_clk]")
+        platform.toolchain.pre_placement_commands.append(f"set_clock_uncertainty {placement_margin:.3f} [get_clocks sys_clk]")
         platform.toolchain.pre_routing_commands.append("set_clock_uncertainty 0 [get_clocks sys_clk]")
+
+        if cslow == 2 and core_margin:
+            platform.toolchain.pre_placement_commands.append(f"set_clock_uncertainty {core_margin:.3f} [get_clocks core_clk]")
+            platform.toolchain.pre_routing_commands.append("set_clock_uncertainty 0 [get_clocks core_clk]")
 
         platform.toolchain.bitstream_commands.append("set_property BITSTREAM.CONFIG.UNUSEDPIN PULLNONE [current_design]")
 
@@ -338,7 +356,7 @@ class BcryptSoC(SoCMini):
             num_cores_dist=num_cores_dist, num_cores_uram=num_cores_uram, din_bits=din_bits, feed_group=feed_group,
             feed_shard=feed_shard,
             collect_group=collect_group, init_batch=init_batch, with_dump=with_dump, with_cmp=with_cmp,
-            cslow=cslow)
+            cslow=cslow, simd=simd, feed_init_rom=feed_init_rom, simd_pd_lut=simd_pd_lut)
         self.bcrypt.add_hdl_sources()
 
         dw = self.pcie_dma0.data_width
@@ -354,6 +372,12 @@ class BcryptSoC(SoCMini):
             self.bcrypt.source.connect(self.dma_up.sink),
             self.dma_up.source.connect(self.pcie_dma0.sink),
         ]
+
+    def do_finalize(self):
+        if self.pcie_buf_lutram:
+            pcie_buffers_in_lutram(self)
+
+        SoCMini.do_finalize(self)
 
 def make_programmer(platform):
     prog = platform.create_programmer()
@@ -388,6 +412,12 @@ def main():
     parser.add_argument("--startup-clk",  type=str,   default="Cclk", choices=["JtagClk", "Cclk"], help="Accepted because the Makefile passes it to every board, and kept in the build name. Vivado has no BITSTREAM.STARTUP.STARTUPCLK for this device, so it changes nothing here.")
     parser.add_argument("--cslow",        type=int,   default=1, choices=[1, 2], help="2 builds the array from two hash cores on a second clock at twice --sys-clk-freq. --cores then counts virtual cores.")
     parser.add_argument("--pcie-lanes",   type=int,   default=4, choices=[4, 8], help="PCIe link width, Gen3. The card's edge is x16 and it trains whatever the slot offers up to this.")
+    parser.add_argument("--simd",         type=int,   default=BOARD_SHAPE["simd"], help="Cores per lockstep group, sharing one controller. Zero builds independent cores.")
+    parser.add_argument("--feed-init-rom", type=int,  default=BOARD_SHAPE["feed_init_rom"], choices=[0, 1], help="1 keeps each feed engine's init image in block RAM instead of logic.")
+    parser.add_argument("--simd-pd-lut",  type=int,   default=BOARD_SHAPE["simd_pd_lut"], help="With --cslow 2: groups, counted from the last, whose lanes keep PD in LUTRAM instead of block RAM.")
+    parser.add_argument("--placement-margin", type=float, default=PLACEMENT_MARGIN, help="Extra ns of setup clock uncertainty on sys_clk while placing.")
+    parser.add_argument("--core-margin",  type=float, default=0.0, help="With --cslow 2: extra ns of setup clock uncertainty on core_clk while placing.")
+    parser.add_argument("--pcie-buf-lutram", type=int, default=BOARD_SHAPE["pcie_buf_lutram"], choices=[0, 1], help="1 keeps the PCIe endpoint's completion buffers in LUTRAM, which frees block RAM tiles for the cores.")
     args = parser.parse_args()
 
     mhz  = clock_mhz(args.sys_clk_freq)
@@ -411,7 +441,22 @@ def main():
 
     if args.cslow == 2: pd_suffix += "_cs2"
 
-    name = f"bcrypt_{BOARD}_dma_c{args.cores}_{mhz}mhz_{args.startup_clk.lower()}{lanes_suffix}{fg_suffix}{nd_suffix}{nc_suffix}{db_suffix}{ds_suffix}{us_suffix}{fs_suffix}{cg_suffix}{ib_suffix}{pd_suffix}"
+    simd_suffix = f"_simd{args.simd}" if args.simd > 1 else ""
+
+    simd_suffix += "_ir" if args.feed_init_rom else ""
+
+    simd_suffix += f"_pl{args.simd_pd_lut}" if args.simd_pd_lut else ""
+
+    if args.placement_margin != PLACEMENT_MARGIN:
+        simd_suffix += f"_m{round(args.placement_margin * 1000)}"
+
+    if args.core_margin:
+        simd_suffix += f"_cm{round(args.core_margin * 1000)}"
+
+    if args.pcie_buf_lutram != BOARD_SHAPE["pcie_buf_lutram"]:
+        simd_suffix += f"_pbl{args.pcie_buf_lutram}"
+
+    name = f"bcrypt_{BOARD}_dma_c{args.cores}_{mhz}mhz_{args.startup_clk.lower()}{lanes_suffix}{fg_suffix}{nd_suffix}{nc_suffix}{db_suffix}{ds_suffix}{us_suffix}{fs_suffix}{cg_suffix}{ib_suffix}{pd_suffix}{simd_suffix}"
 
     soc = BcryptSoC(
         sys_clk_freq = args.sys_clk_freq,
@@ -430,6 +475,12 @@ def main():
         pcie_lanes   = args.pcie_lanes,
         with_jtagbone = args.with_jtagbone,
         cslow        = args.cslow,
+        simd         = args.simd,
+        feed_init_rom = args.feed_init_rom,
+        simd_pd_lut  = args.simd_pd_lut,
+        placement_margin = args.placement_margin,
+        core_margin  = args.core_margin,
+        pcie_buf_lutram = args.pcie_buf_lutram,
     )
 
     builder = Builder(soc, output_dir=os.path.join("build", name))
