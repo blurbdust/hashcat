@@ -65,6 +65,10 @@
 module bcrypt_simd2_group #(
 	parameter LANES = 4,
 	parameter PD_M20K = 1,
+	// The last LANES_DIST lanes keep their S banks in distributed RAM and the LANES_ULTRA before
+	// them in UltraRAM, see S_bank_simd2. The others use block RAM.
+	parameter LANES_ULTRA = 0,
+	parameter LANES_DIST = 0,
 	parameter IDLE_WAIT = 4096,
 	parameter QUIET_WAIT = 32
 	)(
@@ -570,7 +574,10 @@ module bcrypt_simd2_group #(
 	genvar i;
 	generate
 	for (i = 0; i < LANES; i = i + 1) begin : lane
-		bcrypt_simd2_lane #(.PD_M20K(PD_M20K)) l (
+		localparam LANE_S_STYLE = (i >= LANES - LANES_DIST) ? "distributed" :
+		                          (i >= LANES - LANES_DIST - LANES_ULTRA) ? "ultra" : "block";
+
+		bcrypt_simd2_lane #(.PD_M20K(PD_M20K), .S_STYLE(LANE_S_STYLE)) l (
 			.CLK(CLK), .phase_next(phase_next),
 			.din_1(din_1),
 			.ctl_next(lane_ctl_next),
@@ -594,7 +601,9 @@ endmodule
 //
 module bcrypt_simd2_lane #(
 	// 1 keeps PD in block RAM, 0 in LUTRAM. Block RAM saves about 40 ALMs a lane for one M20K.
-	parameter PD_M20K = 1
+	parameter PD_M20K = 1,
+	// The S banks' storage, see S_bank_simd2.
+	parameter S_STYLE = "block"
 	)(
 	input CLK,
 	input phase_next,
@@ -747,7 +756,7 @@ module bcrypt_simd2_lane #(
 	wire [31:0] S_dout;
 	wire [31:0] L_in;
 
-	S_simd2 S(
+	S_simd2 #(.S_STYLE(S_STYLE)) S(
 		.CLK(CLK), .phase(phase),
 		.din(PN_input),
 		.addr_wr(S_wr_addr), .wr_en(S_wr_en),
@@ -817,7 +826,9 @@ endmodule
 // The four S banks of both contexts, as S_c2, without power up values on the data registers so the
 // retimer may move them.
 //
-module S_simd2 (
+module S_simd2 #(
+	parameter S_STYLE = "block"
+	)(
 	input CLK,
 	input phase,
 	input [31:0] din,
@@ -831,40 +842,28 @@ module S_simd2 (
 	output [31:0] out
 	);
 
-`ifdef ALTERA_RESERVED_QIS
-	(* RAM_STYLE = "block", ramstyle = "M20K" *) reg [31:0] S0 [511:0];
-	(* RAM_STYLE = "block", ramstyle = "M20K" *) reg [31:0] S1 [511:0];
-	(* RAM_STYLE = "block", ramstyle = "M20K" *) reg [31:0] S2 [511:0];
-	(* RAM_STYLE = "block", ramstyle = "M20K" *) reg [31:0] S3 [511:0];
-`else
-	(* RAM_STYLE = "block" *) reg [31:0] S0 [511:0];
-	(* RAM_STYLE = "block" *) reg [31:0] S1 [511:0];
-	(* RAM_STYLE = "block" *) reg [31:0] S2 [511:0];
-	(* RAM_STYLE = "block" *) reg [31:0] S3 [511:0];
-`endif
-
-	reg [31:0] S0_l, S1_l, S2_l, S3_l;
+	wire [31:0] S0_l, S1_l, S2_l, S3_l;
 	reg [31:0] U_q, S2_q, S3_q;
+
+	S_bank_simd2 #(.S_STYLE(S_STYLE)) S0 (.CLK(CLK),
+		.wr_en(wr_en && addr_wr[9:8] == 2'b00), .addr_wr({phase, addr_wr[7:0]}), .din(din),
+		.rd_en(rd_en), .addr_rd({phase, addr_rd[31:24]}), .dout(S0_l) );
+
+	S_bank_simd2 #(.S_STYLE(S_STYLE)) S1 (.CLK(CLK),
+		.wr_en(wr_en && addr_wr[9:8] == 2'b01), .addr_wr({phase, addr_wr[7:0]}), .din(din),
+		.rd_en(rd_en), .addr_rd({phase, addr_rd[23:16]}), .dout(S1_l) );
+
+	S_bank_simd2 #(.S_STYLE(S_STYLE)) S2 (.CLK(CLK),
+		.wr_en(wr_en && addr_wr[9:8] == 2'b10), .addr_wr({phase, addr_wr[7:0]}), .din(din),
+		.rd_en(rd_en), .addr_rd({phase, addr_rd[15:8]}), .dout(S2_l) );
+
+	S_bank_simd2 #(.S_STYLE(S_STYLE)) S3 (.CLK(CLK),
+		.wr_en(wr_en && addr_wr[9:8] == 2'b11), .addr_wr({phase, addr_wr[7:0]}), .din(din),
+		.rd_en(rd_en), .addr_rd({phase, addr_rd[7:0]}), .dout(S3_l) );
 
 	reg z1 = 1, z = 1;
 
 	always @(posedge CLK) begin
-		if (wr_en && addr_wr[9:8] == 2'b00)
-			S0 [{phase, addr_wr[7:0]}] <= din;
-		if (wr_en && addr_wr[9:8] == 2'b01)
-			S1 [{phase, addr_wr[7:0]}] <= din;
-		if (wr_en && addr_wr[9:8] == 2'b10)
-			S2 [{phase, addr_wr[7:0]}] <= din;
-		if (wr_en && addr_wr[9:8] == 2'b11)
-			S3 [{phase, addr_wr[7:0]}] <= din;
-
-		if (rd_en) begin
-			S0_l <= S0 [{phase, addr_rd[31:24]}];
-			S1_l <= S1 [{phase, addr_rd[23:16]}];
-			S2_l <= S2 [{phase, addr_rd[15:8]}];
-			S3_l <= S3 [{phase, addr_rd[7:0]}];
-		end
-
 		z1 <= rst_rd ? 1'b1 : (rd_en ? 1'b0 : z);
 		z  <= z1;
 
@@ -881,6 +880,77 @@ module S_simd2 (
 	end
 
 	assign out = S3_q + (S2_q ^ U_q);
+
+endmodule
+
+
+//
+// One S bank of both contexts, 512 x 32, and its read latch, as S_bank_c2 but without a power up value
+// on the latch. S_STYLE is "block", "ultra" or "distributed": block RAM, UltraRAM or LUTRAM. A synthesis
+// attribute takes a literal, so each style is its own branch around the same write and latched read.
+// An UltraRAM bank leaves most of the block empty, it is there for its two ports. UltraRAM is
+// Vivado's, Quartus builds that branch from M20K.
+//
+module S_bank_simd2 #(
+	parameter S_STYLE = "block"
+	)(
+	input CLK,
+	input wr_en,
+	input [8:0] addr_wr,
+	input [31:0] din,
+	input rd_en,
+	input [8:0] addr_rd,
+	output reg [31:0] dout
+	);
+
+	generate
+	if (S_STYLE == "ultra") begin : ultra
+
+		(* RAM_STYLE = "ultra" *) reg [31:0] S [511:0];
+
+		always @(posedge CLK) begin
+			if (wr_en)
+				S [addr_wr] <= din;
+			if (rd_en)
+				dout <= S [addr_rd];
+		end
+
+	end
+	else if (S_STYLE == "distributed") begin : distributed
+
+`ifdef ALTERA_RESERVED_QIS
+		(* RAM_STYLE = "distributed", ramstyle = "MLAB" *)
+`else
+		(* RAM_STYLE = "distributed" *)
+`endif
+		reg [31:0] S [511:0];
+
+		always @(posedge CLK) begin
+			if (wr_en)
+				S [addr_wr] <= din;
+			if (rd_en)
+				dout <= S [addr_rd];
+		end
+
+	end
+	else begin : block
+
+`ifdef ALTERA_RESERVED_QIS
+		(* RAM_STYLE = "block", ramstyle = "M20K" *)
+`else
+		(* RAM_STYLE = "block" *)
+`endif
+		reg [31:0] S [511:0];
+
+		always @(posedge CLK) begin
+			if (wr_en)
+				S [addr_wr] <= din;
+			if (rd_en)
+				dout <= S [addr_rd];
+		end
+
+	end
+	endgenerate
 
 endmodule
 

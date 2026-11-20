@@ -377,6 +377,20 @@ run_one "tb_hetero.simd2_pd_lut" g2005-sv "$HERE/tb_hetero.v" "$DP_SRC" $SIMD_AR
   -Ptb_hetero.SIMD=2 -Ptb_hetero.CSLOW=2 -Ptb_hetero.SIMD_PD_LUT=2 -Ptb_hetero.NUM_CORES=8 \
   -Ptb_hetero.CHECK_ALL_CORES=1 -Ptb_hetero.DIN_BITS=32 -Ptb_hetero.WITH_DUMP=0
 
+# S banks in UltraRAM and distributed RAM, by lane: the first group ends in an UltraRAM lane, the
+# second has two UltraRAM lanes and two distributed ones, and its PD is in LUTRAM.
+run_one "tb_datapath.simd2_mixed_storage" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_datapath.SIMD=4 -Ptb_datapath.CSLOW=2 -Ptb_datapath.NUM_CORES=16 -Ptb_datapath.NCAND=32 \
+  -Ptb_datapath.CHECK_ALL_CORES=1 -Ptb_datapath.FEED_SHARD=8 -Ptb_datapath.FEED_GROUP=8 -Ptb_datapath.COLLECT_GROUP=3 \
+  -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 -Ptb_datapath.WITH_CMP=0 \
+  -Ptb_datapath.NUM_CORES_URAM=6 -Ptb_datapath.NUM_CORES_DIST=4 -Ptb_datapath.SIMD_PD_LUT=1
+
+# The same with a short last group, all of it UltraRAM and distributed RAM, and a second wave.
+run_one "tb_datapath.simd2_mixed_ragged" g2005-sv "$HERE/tb_datapath.v" "$DP_SRC" $SIMD_ARGS \
+  -Ptb_datapath.SIMD=4 -Ptb_datapath.CSLOW=2 -Ptb_datapath.NUM_CORES=14 -Ptb_datapath.NCAND=20 \
+  -Ptb_datapath.DIN_BITS=32 -Ptb_datapath.WITH_DUMP=0 -Ptb_datapath.WITH_CMP=0 \
+  -Ptb_datapath.NUM_CORES_URAM=4 -Ptb_datapath.NUM_CORES_DIST=2
+
 echo
 echo "=== feeder with its init image in block RAM ==="
 

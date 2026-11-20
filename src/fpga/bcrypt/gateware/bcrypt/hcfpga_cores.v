@@ -161,10 +161,10 @@ module hcfpga_cores #(
 
   initial
   begin
-    if ((SIMD > 1) && ((DIN_BITS != 32) || (NUM_CORES_DIST != 0) || (WITH_DUMP != 0) ||
+    if ((SIMD > 1) && ((DIN_BITS != 32) || ((CSLOW != 2) && (NUM_CORES_DIST != 0)) || (WITH_DUMP != 0) ||
                        ((GROUP != 0) && ((GROUP % (CSLOW * SIMD)) != 0)) || ((SHARD != 0) && ((SHARD % (CSLOW * SIMD)) != 0))))
     begin
-      $display ("hcfpga_cores: SIMD=%0d needs DIN_BITS=32, no distributed cores, no dump, and GROUP and SHARD multiples of CSLOW x SIMD", SIMD);
+      $display ("hcfpga_cores: SIMD=%0d needs DIN_BITS=32, distributed cores only with CSLOW=2, no dump, and GROUP and SHARD multiples of CSLOW x SIMD", SIMD);
       $fatal;
     end
   end
@@ -240,7 +240,17 @@ module hcfpga_cores #(
 
     localparam integer NG2 = (NUM_CORES + 2*SIMD - 1) / (2*SIMD);
 
-    bcrypt_simd2_group #(.LANES(NL), .IDLE_WAIT(SIMD_IDLE), .PD_M20K((i >= NG2 - SIMD_PD_LUT) ? 0 : 1)) g (
+    // S storage by lane, as the CSLOW=2 branch below gives it by pair: the array's last
+    // NUM_CORES_DIST / 2 lanes keep their S banks in distributed RAM and the NUM_CORES_URAM / 2 lanes
+    // before them in UltraRAM. Lane l of this group is lane i x SIMD + l of the array.
+    localparam integer LD0 = NUM_CORES / 2 - NUM_CORES_DIST / 2;
+    localparam integer LU0 = LD0 - NUM_CORES_URAM / 2;
+    localparam integer L0  = i * SIMD;
+    localparam integer ND  = (L0 + NL <= LD0) ? 0 : (L0 >= LD0) ? NL : (L0 + NL - LD0);
+    localparam integer NUD = (L0 + NL <= LU0) ? 0 : (L0 >= LU0) ? NL : (L0 + NL - LU0);
+
+    bcrypt_simd2_group #(.LANES(NL), .IDLE_WAIT(SIMD_IDLE), .PD_M20K((i >= NG2 - SIMD_PD_LUT) ? 0 : 1),
+                         .LANES_ULTRA(NUD - ND), .LANES_DIST(ND)) g (
       .CLK(CLK_CORE), .rst(rst_c), .phase(phase), .phase_next(phase_next),
       .din(din_s), .bwe(bwe_s), .start(start_s), .wr_en(wr_en_s),
       .init_ready(c_init_ready), .crypt_ready(c_crypt_ready),
